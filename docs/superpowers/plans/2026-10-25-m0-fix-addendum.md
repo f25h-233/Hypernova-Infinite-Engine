@@ -846,6 +846,197 @@ Task 6 的 validator 只在 `core_parse_errors` 非空时判 Critical，`skipped
 
 ---
 
+## H. M0.1 收口（最终 review 的 4 条必修）
+
+> 触发：`final-review.md` 的 I-2 / I-4 / I-5 / I-7。四条都**不改 gate 数字**，但都影响"出口仪器可信度"。
+
+### H1. I-5：validator 不许对空输入 PASS
+
+三处一起改：
+
+1. **`schema` 类型严格化**（`validate_manifest.py`）：
+
+```python
+    if type(manifest.get("schema")) is not int or manifest.get("schema") != 1:
+        findings.append(
+            Finding("Critical", "schema", f"expected integer schema 1, got {manifest.get('schema')!r}")
+        )
+```
+
+2. **空 L1 → Critical**：
+
+```python
+    if not layers["L1"]:
+        findings.append(Finding("Critical", "empty_l1", "L1 layer is empty"))
+```
+
+3. **`l1_count` 与层长交叉校验**：
+
+```python
+    stats_l1 = stats.get("l1_count")
+    if stats_l1 is not None and int(stats_l1) != len(layers["L1"]):
+        findings.append(
+            Finding(
+                "Critical",
+                "l1_count_mismatch",
+                f"stats.l1_count={stats_l1} != len(L1)={len(layers['L1'])}",
+            )
+        )
+```
+
+4. `build_manifest` 里空 L1 时不再返回 1.0：
+
+```python
+                "l1_sprite_disk": (l1_disk / len(l1)) if l1 else 0.0,
+```
+
+### H2. I-4：跨层同一引擎 key 唯一性
+
+validator 在层循环之后加：
+
+```python
+    key_layers: dict[str, set[str]] = {}
+    for name in ("L1", "L2", "L3"):
+        for entry in layers[name]:
+            key = str(entry.get("path", "")).casefold()
+            key_layers.setdefault(key, set()).add(name)
+    cross = {k: v for k, v in key_layers.items() if len(v) > 1}
+    if cross:
+        findings.append(
+            Finding(
+                "Important",
+                "cross_layer_duplicate",
+                f"{len(cross)} engine key(s) appear in multiple layers: "
+                + ", ".join(sorted(cross)[:5]),
+            )
+        )
+```
+
+builder 侧记录内容冲突，`stats` 增：
+
+```python
+        "path_conflicts": path_conflicts,  # list[{path, layers, sizes, same_content}]
+```
+
+规则：同一 `path` 在不同层出现时，若 `(w,h)` 不同则标 `content_differs=True`（无需哈希，尺寸差异已足以判定）。
+
+### H3. I-7：skin 解析错误落账
+
+`_build_skin_index` 改为返回 `(index, parse_errors)`：
+
+```python
+def _build_skin_index(mods: list[ModRef]) -> tuple[dict[str, list[AssetRef]], dict[str, str]]:
+    out: dict[str, list[AssetRef]] = {}
+    errors: dict[str, str] = {}
+    for mod in mods:
+        base = mod.folder / "data" / "hulls"
+        if not base.is_dir():
+            continue
+        for dirpath, _dirnames, filenames in os.walk(base):
+            for fn in filenames:
+                if Path(fn).suffix.casefold() != ".skin":
+                    continue
+                absolute = Path(dirpath) / fn
+                try:
+                    data = load(absolute)
+                    if not isinstance(data, dict):
+                        raise ValueError("skin is not an object")
+                    sid = str(data.get("skinHullId") or Path(fn).stem)
+                except Exception as exc:
+                    errors[str(absolute)] = f"{fn}: {exc}"
+                    continue
+                rel = absolute.relative_to(mod.folder).as_posix()
+                for key in {sid, Path(fn).stem}:
+                    out.setdefault(key, []).append(
+                        AssetRef(mod.mod_id, mod.folder, absolute, rel, mod.order)
+                    )
+    return out, errors
+```
+
+`build_lookup` 把 `skin_errors` 挂到 `AssetLookup` 上；`build_closure` 写入 `stats.parse_errors["skin"]`。
+
+### H4. I-2：`--no-core` 时 `MetadataIndex.get` 也要过滤 core
+
+```python
+    def get(self, mod_folder: str, rel: str, exclude_core: bool = False) -> MetadataEntry | None:
+        key = (mod_folder.casefold(), rel.casefold())
+        hit = self.by_key.get(key)
+        if hit is not None:
+            if exclude_core and hit.mod_folder.casefold() == "starsector-core":
+                return None
+            return hit
+        candidates = [
+            me for me in (self.by_rel.get(rel.casefold()) or [])
+            if not (exclude_core and me.mod_folder.casefold() == "starsector-core")
+        ]
+        if len(candidates) == 1:
+            self.fallback_hits += 1
+            return candidates[0]
+        return None
+```
+
+`_sprite_entry` 调用改为 `metadata.get(owner.folder.name, rel, exclude_core=not include_core)`。
+
+### H5. 测试（每条都要能红）
+
+```python
+def test_empty_manifest_fails(mini_game):
+    empty = {
+        "schema": 1,
+        "layers": {"L1": [], "L2": [], "L3": []},
+        "stats": {"l1_count": 0, "coverage": {"l1_sprite_disk": 1.0, "closure_refs": 1.0, "metadata": None}},
+    }
+    codes = {f.code for f in validate(empty, mini_game) if f.severity == "Critical"}
+    assert "empty_l1" in codes
+
+
+def test_schema_true_is_rejected(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["schema"] = True
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "schema" in codes
+
+
+def test_l1_count_mismatch_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["stats"]["l1_count"] = 9999
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "l1_count_mismatch" in codes
+
+
+def test_cross_layer_duplicate_is_important(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    dup = dict(m["layers"]["L1"][0])
+    m["layers"]["L3"].append(dup)
+    sev = {(f.code, f.severity) for f in validate(m, mini_game)}
+    assert ("cross_layer_duplicate", "Important") in sev
+
+
+def test_skin_parse_error_is_recorded(mini_game):
+    from conftest import _write
+    _write(mini_game / "mods" / "mod_a" / "data" / "hulls" / "skins" / "bad.skin", "{not json")
+    scan = scan_mods(mini_game, load_enabled_ids(mini_game))
+    lookup = build_lookup(scan.mods)
+    result = build_closure(["va_one"], lookup)
+    assert any("bad.skin" in k for k in result.stats.parse_errors.get("skin", []))
+
+
+def test_no_core_get_excludes_core_fallback(mini_game):
+    md = read_dds_metadata(mini_game)
+    assert md.get("renamed", "graphics/ships/h_core.png", exclude_core=True) is None
+    assert md.get("renamed", "graphics/ships/h_core.png", exclude_core=False) is not None
+```
+
+预期：`tests/tools` → **84 passed**。修完重跑两份 manifest + 跨 CWD validator，`l1_count` 不变（Base 185 / 260mods 6,614），validator 出现 `cross_layer_duplicate`（44 个 key 的预期 Important，不阻断 exit 0 之外——**若它导致 exit 1 是非预期，需把该 code 定为 Important 且不影响 exit code**）。
+
+---
+
 ## E. 执行顺序（避免 `mod_index.py` 写冲突）
 
 1. 先派 Task 2 fix（A1–A5），等它 commit；
