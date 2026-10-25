@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "eviction": false,
+  "frame_budget_micros": 2000,
+  "telemetry_buffer_lines": 4096,
+  "verbose": false
+}
