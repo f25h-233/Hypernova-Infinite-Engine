@@ -71,6 +71,7 @@ public final class TextureServiceImpl implements TextureService {
                     telemetry.event("loaded", path, 0L, entry.modId());
                     return true;
                 }
+                telemetry.event("failed", path, 0L, "load-returned-but-unregistered");
             } catch (Exception e) {
                 telemetry.event("failed", path, 0L, e.getClass().getSimpleName() + ":" + e.getMessage());
             }
@@ -108,7 +109,7 @@ public final class TextureServiceImpl implements TextureService {
         if (loadingSave.getAsBoolean()) {
             return List.of();
         }
-        List<String> out = new ArrayList<>(Math.min(max, pending.size()));
+        List<String> out = new ArrayList<>(Math.max(0, Math.min(max, pending.size())));
         var it = pending.iterator();
         while (it.hasNext() && out.size() < max) {
             out.add(it.next());

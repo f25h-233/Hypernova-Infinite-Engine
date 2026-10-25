@@ -24,6 +24,7 @@ class TextureServiceImplTest {
         final List<String> calls = new ArrayList<>();
         int failuresLeft;
         long sleepMillis;
+        boolean silentlyIgnoreLoad;
 
         @Override
         public boolean isRegistered(String path) {
@@ -39,6 +40,9 @@ class TextureServiceImplTest {
             if (failuresLeft > 0) {
                 failuresLeft--;
                 throw new java.io.IOException("boom");
+            }
+            if (silentlyIgnoreLoad) {
+                return;
             }
             registered.add(path);
         }
@@ -212,5 +216,34 @@ class TextureServiceImplTest {
         s.ensureLoaded("a.png");
         assertTrue(s.acquire("a.png"));
         s.release("a.png");
+    }
+
+    @Test
+    void loadWithoutRegistrationIsRecordedAsFailed() throws JSONException {
+        FakeBackend b = new FakeBackend();
+        b.silentlyIgnoreLoad = true;
+        RecordingTelemetry t = new RecordingTelemetry();
+        TextureServiceImpl s = service(manifestWith("a.png"), b, t, new AtomicBoolean(false));
+        TextureLoadResult r = s.ensureLoaded("a.png");
+        assertFalse(r.ok());
+        assertEquals(TextureState.FAILED, r.state());
+        assertEquals(2, b.calls.size());
+        assertTrue(t.events.stream()
+                .anyMatch(e -> e.startsWith("failed|a.png|load-returned-but-unregistered")));
+    }
+
+    @Test
+    void drainPendingWithNonPositiveMaxReturnsEmptyAndKeepsPending() throws JSONException {
+        FakeBackend b = new FakeBackend();
+        RecordingTelemetry t = new RecordingTelemetry();
+        AtomicBoolean loading = new AtomicBoolean(true);
+        TextureServiceImpl s = service(manifestWith("a.png", "b.png"), b, t, loading);
+        s.ensureLoaded("a.png");
+        s.ensureLoaded("b.png");
+        loading.set(false);
+        assertEquals(List.of(), s.drainPending(0));
+        assertEquals(2, s.pendingCount());
+        assertEquals(List.of(), s.drainPending(-1));
+        assertEquals(2, s.pendingCount());
     }
 }
