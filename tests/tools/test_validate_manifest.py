@@ -115,22 +115,89 @@ def test_dds_outside_game_root_is_critical(mini_game, tmp_path):
     codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
     assert "dds_outside_root" in codes
 
+    # 未烘焙条目的绝对路径也必须在 game_root 内
+    plain = next(e for e in m["layers"]["L1"] if not e["baked"])
+    outside_png = tmp_path / "elsewhere.png"
+    outside_png.write_bytes(b"\x89PNG\r\n\x1a\n")
+    plain["absolutePath"] = str(outside_png)
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "asset_outside_root" in codes
+
 
 def test_bad_game_root_cli_exits_nonzero(mini_game, tmp_path):
     import subprocess, sys
     from pathlib import Path
     from test_manifest_builder import _seed_core, build_manifest
     _seed_core(mini_game)
-    out = tmp_path / "m.json"
+    work = tmp_path / "work"
+    work.mkdir()
+    out = work / "m.json"
     out.write_text(json.dumps(build_manifest(mini_game, include_l2=False).manifest), encoding="utf-8")
+    missing_root = tmp_path / "absent_root"
     root = Path(__file__).resolve().parents[2]
     proc = subprocess.run(
         [sys.executable, "-I", str(root / "tools" / "validate_manifest.py"),
-         "--manifest", str(out), "--game-root", str(tmp_path / "nope")],
+         "--manifest", str(out), "--game-root", str(missing_root)],
         capture_output=True, text=True, encoding="utf-8",
     )
     assert proc.returncode == 1
-    assert "bad_game_root" in (proc.stdout + proc.stderr)
+    lines = (proc.stdout + proc.stderr).splitlines()
+    assert any(line.startswith("[Critical] bad_game_root:") for line in lines)
+
+
+def test_bad_path_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["layers"]["L1"][0]["path"] = "../escape.png"
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "bad_path" in codes
+
+
+def test_missing_dds_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    baked = next(e for e in m["layers"]["L1"] if e["baked"])
+    baked["ddsPath"] = str(mini_game / "nope.dds")
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "missing_dds" in codes
+
+
+def test_layers_not_dict_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["layers"]["L2"] = "oops"
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "layers" in codes
+
+
+def test_empty_absolute_path_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["layers"]["L1"][0]["absolutePath"] = ""
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "missing_file" in codes
+
+
+def test_coverage_closure_refs_below_threshold_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["stats"]["coverage"]["closure_refs"] = 0.5
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "coverage_closure_refs" in codes
+
+
+def test_coverage_missing_gate_key_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["stats"]["coverage"].pop("closure_refs")
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "missing_coverage" in codes
 
 
 def test_entry_schema_missing_key_is_critical(mini_game):

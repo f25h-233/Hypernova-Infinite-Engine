@@ -46,6 +46,10 @@ def _entry_findings(entry: dict, layer: str, game_root: Path) -> list[Finding]:
         out.append(
             Finding("Critical", "missing_file", f"{layer}: file not found {absolute}")
         )
+    if absolute and Path(absolute).is_file() and not _inside_root(Path(absolute), game_root):
+        out.append(
+            Finding("Critical", "asset_outside_root", f"{layer}: asset outside game root {absolute}")
+        )
     if entry["baked"]:
         dds = entry.get("ddsPath")
         if not dds or not Path(str(dds)).is_file():
@@ -105,6 +109,11 @@ def validate(
             Finding("Critical", "missing_coverage", "manifest.stats.coverage is missing")
         )
         return findings
+    for required in ("l1_sprite_disk", "closure_refs"):
+        if required not in coverage:
+            findings.append(
+                Finding("Critical", "missing_coverage", f"coverage.{required} is missing")
+            )
     l1_count = int(stats.get("l1_count") or len(layers["L1"]))
     if l1_count > max_l1:
         findings.append(
