@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # 用法: bash tools/java/run-tests.sh [TestClassFilter]
+# Filter 是正则的**子串匹配**：传 TextureManifestTest 即可。
+# 过滤器匹配 0 个测试视为失败（否则会出现「什么都没跑却 exit 0」的假绿）。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # Git Bash/MSYS 下 javac/java 是原生 Windows 程序，不认 /d/... 路径，统一转成 D:/...
@@ -16,7 +18,10 @@ CP="$GAME/starfarer.api.jar;$GAME/json.jar;$GAME/lwjgl.jar;$GAME/log4j-1.2.9.jar
 rm -rf "$OUT"; mkdir -p "$OUT"
 find "$ROOT_W/src/main/java" "$ROOT_W/tests/java" -name '*.java' > "$OUT/../test-sources.txt"
 javac --release 17 -encoding UTF-8 -cp "$CP" -d "$OUT" @"$OUT/../test-sources.txt"
+FILTER=".*"
+if [ -n "${1:-}" ]; then FILTER=".*${1}.*"; fi
 java -jar "$LIB/junit-platform-console-standalone.jar" \
   --class-path "$OUT;$GAME/starfarer.api.jar;$GAME/json.jar;$GAME/lwjgl.jar;$GAME/log4j-1.2.9.jar" \
   --scan-class-path "$OUT" \
-  ${1:+--include-classname="$1"}
+  --include-classname="$FILTER" \
+  --fail-if-no-tests
