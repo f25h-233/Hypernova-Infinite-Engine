@@ -75,3 +75,68 @@ def test_core_parse_errors_is_critical(mini_game):
     m["stats"]["core_parse_errors"] = {"planets.json": "bad json"}
     codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
     assert "core_parse_errors" in codes
+
+
+def test_missing_stats_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m.pop("stats", None)
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "missing_stats" in codes
+
+
+def test_missing_coverage_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["stats"].pop("coverage", None)
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "missing_coverage" in codes
+
+
+def test_metadata_coverage_below_one_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["stats"]["coverage"]["metadata"] = 0.5
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "coverage_metadata" in codes
+
+
+def test_dds_outside_game_root_is_critical(mini_game, tmp_path):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    baked = next(e for e in m["layers"]["L1"] if e["baked"])
+    outside = tmp_path / "elsewhere.dds"
+    outside.write_bytes(b"DDS ")
+    baked["ddsPath"] = str(outside)
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "dds_outside_root" in codes
+
+
+def test_bad_game_root_cli_exits_nonzero(mini_game, tmp_path):
+    import subprocess, sys
+    from pathlib import Path
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    out = tmp_path / "m.json"
+    out.write_text(json.dumps(build_manifest(mini_game, include_l2=False).manifest), encoding="utf-8")
+    root = Path(__file__).resolve().parents[2]
+    proc = subprocess.run(
+        [sys.executable, "-I", str(root / "tools" / "validate_manifest.py"),
+         "--manifest", str(out), "--game-root", str(tmp_path / "nope")],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert proc.returncode == 1
+    assert "bad_game_root" in (proc.stdout + proc.stderr)
+
+
+def test_entry_schema_missing_key_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["layers"]["L1"][0].pop("src")
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "entry_schema" in codes

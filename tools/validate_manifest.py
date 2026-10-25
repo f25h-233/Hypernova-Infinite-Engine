@@ -21,6 +21,14 @@ class Finding:
     message: str
 
 
+def _inside_root(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
 def _entry_findings(entry: dict, layer: str, game_root: Path) -> list[Finding]:
     out: list[Finding] = []
     missing = [k for k in REQUIRED_ENTRY if k not in entry]
@@ -43,6 +51,14 @@ def _entry_findings(entry: dict, layer: str, game_root: Path) -> list[Finding]:
         if not dds or not Path(str(dds)).is_file():
             out.append(
                 Finding("Critical", "missing_dds", f"{layer}: baked entry has no DDS {path}")
+            )
+        elif not _inside_root(Path(str(dds)), game_root):
+            out.append(
+                Finding(
+                    "Critical",
+                    "dds_outside_root",
+                    f"{layer}: DDS outside game root {dds}",
+                )
             )
     if int(entry["w"]) < 0 or int(entry["h"]) < 0:
         out.append(Finding("Minor", "bad_size", f"{layer}: negative size {path}"))
@@ -79,8 +95,16 @@ def validate(
                 )
             seen.add(key)
 
-    stats = manifest.get("stats") or {}
-    coverage = stats.get("coverage") or {}
+    stats = manifest.get("stats")
+    if not isinstance(stats, dict):
+        findings.append(Finding("Critical", "missing_stats", "manifest.stats is missing"))
+        return findings
+    coverage = stats.get("coverage")
+    if not isinstance(coverage, dict):
+        findings.append(
+            Finding("Critical", "missing_coverage", "manifest.stats.coverage is missing")
+        )
+        return findings
     l1_count = int(stats.get("l1_count") or len(layers["L1"]))
     if l1_count > max_l1:
         findings.append(
@@ -99,7 +123,7 @@ def validate(
     meta_cov = coverage.get("metadata")
     if meta_cov is not None and float(meta_cov) < 1.0:
         findings.append(
-            Finding("Important", "coverage_metadata", f"metadata={meta_cov} < 1.0")
+            Finding("Critical", "coverage_metadata", f"metadata={meta_cov} < 1.0")
         )
     parse_errors = stats.get("metadata_parse_errors") or {}
     if parse_errors:
@@ -132,6 +156,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-l1", type=int, default=8000)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    if not args.game_root.is_dir():
+        print(
+            f"[Critical] bad_game_root: {args.game_root} is not a directory",
+            file=sys.stderr,
+        )
+        return 1
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     findings = validate(manifest, args.game_root, args.min_coverage, args.max_l1)
     if args.json:
