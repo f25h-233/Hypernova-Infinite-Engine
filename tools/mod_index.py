@@ -60,6 +60,7 @@ class MetadataIndex:
     by_key: dict[tuple[str, str], MetadataEntry] = field(default_factory=dict)
     by_rel: dict[str, list[MetadataEntry]] = field(default_factory=dict)
     fallback_hits: int = 0
+    parse_errors: dict[str, str] = field(default_factory=dict)
 
     def get(self, mod_folder: str, rel: str) -> MetadataEntry | None:
         key = (mod_folder.casefold(), rel.casefold())
@@ -74,7 +75,10 @@ class MetadataIndex:
 
 
 def _norm_rel(rel: str) -> str:
-    return rel.replace("\\", "/").lstrip("/")
+    out = rel.replace("\\", "/").lstrip("/")
+    while "//" in out:
+        out = out.replace("//", "/")
+    return out
 
 
 def load_enabled_ids(game_root: Path) -> list[str]:
@@ -146,6 +150,31 @@ def build_index(
         for asset in iter_assets(mod, subdir, suffixes):
             k = key(asset) if key else Path(asset.rel).stem
             index.setdefault(k, []).append(asset)
+    return index
+
+
+def build_id_index(
+    mods: list[ModRef],
+    subdir: str,
+    suffixes: frozenset[str],
+    id_field: str,
+    extra_subdirs: tuple[str, ...] = (),
+) -> dict[str, list[AssetRef]]:
+    """按文件名 stem 与内部 id 双键索引；内部 id 不符时仍可按文件名命中。"""
+    index: dict[str, list[AssetRef]] = {}
+    for current in (subdir, *extra_subdirs):
+        for mod in mods:
+            for asset in iter_assets(mod, current, suffixes):
+                try:
+                    data = load(asset.absolute)
+                except Exception:
+                    data = {}
+                keys = {Path(asset.rel).stem}
+                internal = data.get(id_field) if isinstance(data, dict) else None
+                if isinstance(internal, str) and internal.strip():
+                    keys.add(internal.strip())
+                for key in keys:
+                    index.setdefault(key, []).append(asset)
     return index
 
 
@@ -224,25 +253,31 @@ def read_dds_metadata(game_root: Path) -> MetadataIndex:
             continue
         try:
             records = load(path)
-        except Exception:
+        except Exception as exc:
+            index.parse_errors[entry.name] = f"{path.name}: {exc}"
             continue
         if not isinstance(records, list):
+            index.parse_errors[entry.name] = f"{path.name}: top-level is not a list"
             continue
-        for record in records:
-            if not isinstance(record, dict):
+        for lineno, record in enumerate(records, 1):
+            try:
+                if not isinstance(record, dict):
+                    raise ValueError("record is not an object")
+                folder = str(record.get("ModFolderName") or entry.name)
+                rel = _norm_rel(str(record.get("RelativeImagePath") or ""))
+                if not rel:
+                    raise ValueError("empty RelativeImagePath")
+                dds_rel = _norm_rel(str(record.get("DDSFilePath") or ""))
+                me = MetadataEntry(
+                    folder,
+                    rel,
+                    dds_rel,
+                    int(record.get("Width") or 0),
+                    int(record.get("Height") or 0),
+                )
+            except Exception as exc:
+                index.parse_errors[entry.name] = f"{path.name} record {lineno}: {exc}"
                 continue
-            folder = str(record.get("ModFolderName") or entry.name)
-            rel = _norm_rel(str(record.get("RelativeImagePath") or ""))
-            if not rel:
-                continue
-            dds_rel = _norm_rel(str(record.get("DDSFilePath") or ""))
-            me = MetadataEntry(
-                folder,
-                rel,
-                dds_rel,
-                int(record.get("Width") or 0),
-                int(record.get("Height") or 0),
-            )
             index.entries.append(me)
             index.by_key[(folder.casefold(), rel.casefold())] = me
             index.by_rel.setdefault(rel.casefold(), []).append(me)

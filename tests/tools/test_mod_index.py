@@ -78,3 +78,53 @@ def test_scope_counts(mini_game):
     assert [me.mod_folder for me in md.entries if in_scope(me, "all_mod_metadata")] == ["mod_a", "mod_a"]
     assert [me.mod_folder for me in md.entries if in_scope(me, "mod_non_shader")] == ["mod_a", "mod_a"]
     assert not in_scope(md.get("starsector-core", "graphics/ships/h_core.png"), "all_mod_metadata")
+
+
+def test_metadata_unique_rel_fallback(mini_game):
+    md = read_dds_metadata(mini_game)
+    hit = md.get("renamed_folder", "graphics/ships/h_alpha.png")
+    assert hit is not None and hit.mod_folder == "mod_a"
+    assert md.fallback_hits == 1
+
+
+def test_metadata_ambiguous_rel_is_rejected(mini_game):
+    import json as _json
+    from conftest import _write
+    _write(
+        mini_game / "mods" / "DDSCache" / "mod_b" / "dds_metadata.json",
+        _json.dumps([{
+            "ModFolderName": "mod_b",
+            "RelativeImagePath": "graphics\\ships\\h_alpha.png",
+            "DDSFilePath": "\\mods\\DDSCache\\mod_b\\graphics\\ships\\h_alpha.dds",
+            "Width": 1, "Height": 1,
+        }]),
+    )
+    md = read_dds_metadata(mini_game)
+    assert md.get("no_such_folder", "graphics/ships/h_alpha.png") is None
+    assert md.fallback_hits == 0
+
+
+def test_metadata_parse_error_is_recorded(mini_game):
+    from conftest import _write
+    _write(mini_game / "mods" / "DDSCache" / "broken" / "dds_metadata.json", "{not json")
+    md = read_dds_metadata(mini_game)
+    assert "broken" in md.parse_errors
+    assert len(md.entries) == 3
+
+
+def test_metadata_bad_record_does_not_abort(mini_game):
+    import json as _json
+    from conftest import _write
+    _write(
+        mini_game / "mods" / "DDSCache" / "partly" / "dds_metadata.json",
+        _json.dumps([
+            {"ModFolderName": "partly", "RelativeImagePath": "graphics\\ok.png", "Width": 1, "Height": 1},
+            {"ModFolderName": "partly", "RelativeImagePath": "graphics\\bad.png", "Width": "oops", "Height": 1},
+            {"ModFolderName": "partly", "RelativeImagePath": "graphics\\ok2.png", "Width": 2, "Height": 2},
+        ]),
+    )
+    md = read_dds_metadata(mini_game)
+    assert "partly" in md.parse_errors
+    assert [me.rel for me in md.entries if me.mod_folder == "partly"] == [
+        "graphics/ok.png", "graphics/ok2.png",
+    ]
