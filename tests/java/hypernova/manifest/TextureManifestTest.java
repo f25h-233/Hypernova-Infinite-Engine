@@ -85,6 +85,17 @@ class TextureManifestTest {
     }
 
     @Test
+    void containsReflectsIndex() throws JSONException {
+        JSONObject root = manifest(
+                "L1", List.of(entry("graphics/ui/a.png", "core", 10, 10)),
+                "L2", List.of(),
+                "L3", List.of());
+        TextureManifest m = TextureManifest.fromJson(root);
+        assertTrue(m.contains("graphics/ui/a.png"));
+        assertFalse(m.contains("graphics/nope.png"));
+    }
+
+    @Test
     void pathsInLayerPreserveManifestOrder() throws JSONException {
         JSONObject root = manifest(
                 "L1", List.of(entry("a.png", "m", 1, 1), entry("b.png", "m", 1, 1)),

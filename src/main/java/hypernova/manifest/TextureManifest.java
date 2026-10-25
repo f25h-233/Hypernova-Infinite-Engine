@@ -82,6 +82,10 @@ public final class TextureManifest {
         return byPath.get(path);
     }
 
+    public boolean contains(String path) {
+        return byPath.containsKey(path);
+    }
+
     public Layer lookupLayer(String path) {
         TextureEntry e = byPath.get(path);
         return e == null ? null : e.layer();
