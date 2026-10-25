@@ -31,3 +31,5 @@ desktop.ini
 
 # 本地测试包压缩文件（体积巨大，永不入库）
 *.7z
+build/java/
+lib/

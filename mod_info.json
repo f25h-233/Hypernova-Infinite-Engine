@@ -1,0 +1,10 @@
+{
+  "id": "hypernova_infinite_engine",
+  "name": "Hypernova Infinite Engine",
+  "version": { "major": 0, "minor": 1, "patch": 0 },
+  "author": "f25h",
+  "description": "Runtime texture prefetch and fallback for Starsector 0.98a.",
+  "gameVersion": "0.98a-RC8",
+  "jars": ["jars/hypernova.jar"],
+  "modPlugin": "hypernova.HypernovaPlugin"
+}
