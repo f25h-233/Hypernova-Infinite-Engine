@@ -9,12 +9,14 @@ import java.util.Deque;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 
 public final class FrameBudgetScheduler implements PrefetchScheduler {
     private final TextureService service;
     private final long budgetNanos;
     private final int perTickCap;
     private final LongSupplier clock;
+    private final Predicate<String> accept;
     private final Map<Layer, Deque<String>> queues = new EnumMap<>(Layer.class);
 
     private long queued;
@@ -24,7 +26,13 @@ public final class FrameBudgetScheduler implements PrefetchScheduler {
     private long nanosLastTick;
 
     public FrameBudgetScheduler(TextureService service, int frameBudgetMicros, int perTickCap, LongSupplier clock) {
+        this(service, frameBudgetMicros, perTickCap, clock, p -> true);
+    }
+
+    public FrameBudgetScheduler(TextureService service, int frameBudgetMicros, int perTickCap,
+                                LongSupplier clock, Predicate<String> accept) {
         this.service = service;
+        this.accept = accept;
         this.budgetNanos = Math.max(1, frameBudgetMicros) * 1_000L;
         this.perTickCap = Math.max(1, perTickCap);
         this.clock = clock;
@@ -37,6 +45,11 @@ public final class FrameBudgetScheduler implements PrefetchScheduler {
     public void enqueue(Iterable<String> paths, Layer layer) {
         Deque<String> q = queues.get(layer);
         for (String p : paths) {
+            // manifest 外的路径不进队、不计入 queued：让 service 侧记录 MISS 即可，
+            // 否则白耗帧预算与 perTickCap。
+            if (!accept.test(p)) {
+                continue;
+            }
             q.addLast(p);
             queued++;
         }

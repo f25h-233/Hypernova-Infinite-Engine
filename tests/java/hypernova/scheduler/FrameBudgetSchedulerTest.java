@@ -171,6 +171,30 @@ class FrameBudgetSchedulerTest {
     }
 
     @Test
+    void enqueueFiltersRejectedPaths() {
+        StubService svc = new StubService(Set.of("good1", "bad1", "good2"));
+        FrameBudgetScheduler s = new FrameBudgetScheduler(svc, 10_000, 100, () -> svc.nowNanos,
+                p -> !p.startsWith("bad"));
+        s.enqueue(List.of("good1", "bad1", "good2"), Layer.L1);
+        assertEquals(2, s.backlog());
+        assertEquals(2, s.stats().queued());
+        s.tick();
+        assertEquals(List.of("good1", "good2"), svc.loaded);
+    }
+
+    @Test
+    void budgetBoundaryIsInclusive() {
+        StubService svc = new StubService(Set.of("p0", "p1"));
+        // 预算恰好等于单张耗时：用完即停（>= 语义），第二张留到下一帧。
+        FrameBudgetScheduler s = new FrameBudgetScheduler(svc, 1_000, 100, () -> svc.nowNanos);
+        s.enqueue(List.of("p0", "p1"), Layer.L1);
+        svc.sleepMillis = 1;
+        s.tick();
+        assertEquals(List.of("p0"), svc.loaded);
+        assertEquals(1, s.backlog());
+    }
+
+    @Test
     void statsAccumulate() {
         StubService svc = new StubService(Set.of("a"));
         FrameBudgetScheduler s = new FrameBudgetScheduler(svc, 10_000_000, 10, () -> svc.nowNanos);
