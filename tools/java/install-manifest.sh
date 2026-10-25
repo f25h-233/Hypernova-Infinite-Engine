@@ -43,5 +43,6 @@ if [ -f "$ROOT/build/java/hypernova.jar" ]; then
   if [ -d "$ROOT/data" ]; then mkdir -p "$MODDIR/data"; cp -r "$ROOT/data/." "$MODDIR/data/"; fi
   echo "installed: $MODDIR/jars/hypernova.jar, mod_info.json, data/"
 else
-  echo "warning: $ROOT/build/java/hypernova.jar not found; 先跑 tools/java/build-mod.sh" >&2
+  echo "ERROR: $ROOT/build/java/hypernova.jar not found; 先跑 tools/java/build-mod.sh" >&2
+  exit 1
 fi
