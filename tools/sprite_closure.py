@@ -5,7 +5,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from hn_json import load
-from mod_index import AssetRef, ModRef, build_image_index, build_index, pick, read_wing_map
+from mod_index import (
+    AssetRef,
+    ModRef,
+    build_id_index,
+    build_image_index,
+    pick,
+    read_wing_map,
+)
 
 WEAPON_SPRITE_FIELDS = (
     "turretSprite",
@@ -80,18 +87,21 @@ def _build_skin_index(mods: list[ModRef]) -> dict[str, list[AssetRef]]:
                     continue
                 sid = str(data.get("skinHullId") or Path(fn).stem)
                 rel = absolute.relative_to(mod.folder).as_posix()
-                out.setdefault(sid, []).append(
-                    AssetRef(mod.mod_id, mod.folder, absolute, rel, mod.order)
-                )
+                for key in {sid, Path(fn).stem}:
+                    out.setdefault(key, []).append(
+                        AssetRef(mod.mod_id, mod.folder, absolute, rel, mod.order)
+                    )
     return out
 
 
 def build_lookup(mods: list[ModRef]) -> AssetLookup:
     return AssetLookup(
-        variants=build_index(mods, "variants", frozenset({".variant"})),
-        ships=build_index(mods, "hulls", frozenset({".ship"})),
+        variants=build_id_index(mods, "variants", frozenset({".variant"}), "variantId"),
+        ships=build_id_index(mods, "hulls", frozenset({".ship"}), "hullId"),
         skins=_build_skin_index(mods),
-        weapons=build_index(mods, "weapons", frozenset({".wpn"})),
+        weapons=build_id_index(
+            mods, "weapons", frozenset({".wpn"}), "id", ("shipsystems/wpn",)
+        ),
         images=build_image_index(mods),
         wings=read_wing_map(mods),
     )
@@ -100,7 +110,10 @@ def build_lookup(mods: list[ModRef]) -> AssetLookup:
 def _norm_path(value) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
-    return value.replace("\\", "/").lstrip("/")
+    rel = value.replace("\\", "/").lstrip("/")
+    while "//" in rel:
+        rel = rel.replace("//", "/")
+    return rel
 
 
 class _Walker:
@@ -121,6 +134,8 @@ class _Walker:
             return
         owner = pick(self.lookup.images.get(key) or [])
         self.result.sprites[key] = SpriteRef(rel, owner)
+        if owner is None:
+            self.result.stats.miss("sprite", rel)
 
     def add_weapon(self, wid) -> None:
         if not isinstance(wid, str) or not wid:

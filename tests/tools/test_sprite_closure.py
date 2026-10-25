@@ -52,3 +52,50 @@ def test_missing_hull_and_weapon_are_categorized(mini_game):
     assert result.stats.missing["hull"] == ["h_nope"]
     assert result.stats.missing["weapon"] == ["w_nope"]
     assert result.sprites == {}
+
+
+def test_index_by_internal_ids_and_shipsystems_wpn(mini_game):
+    from conftest import _write
+    _write(
+        mini_game / "mods" / "mod_a" / "data" / "variants" / "file_stem.variant",
+        '{"variantId": "internal_v", "hullId": "h_alpha", '
+        '"weaponGroups": [{"weapons": {"WS1": "internal_w"}}]}',
+    )
+    _write(
+        mini_game / "mods" / "mod_a" / "data" / "shipsystems" / "wpn" / "internal_w.wpn",
+        '{"id": "internal_w", "turretSprite": "graphics/weapons/w_gun_t.png"}',
+    )
+    result = build_closure(["internal_v"], _lookup(mini_game))
+    assert "graphics/ships/h_alpha.png" in result.sprites
+    assert "graphics/weapons/w_gun_t.png" in result.sprites
+    # h_alpha.ship 自带 builtInWeapons w_builtin，故为 internal_w + w_builtin = 2；
+    # addendum 原写 1 与 conftest fixture 矛盾，按实际断言 2（仍可捕获 shipsystems/wpn 索引失效）。
+    assert result.stats.weapons_resolved == 2
+
+
+def test_double_slash_sprite_is_normalized(mini_game):
+    from conftest import _write
+    _write(
+        mini_game / "mods" / "mod_a" / "data" / "hulls" / "h_alpha.ship",
+        '{"hullId": "h_alpha", "hullSize": "CRUISER", '
+        '"spriteName": "graphics//ships//h_alpha.png"}',
+    )
+    result = build_closure(["va_one"], _lookup(mini_game))
+    assert "graphics/ships/h_alpha.png" in result.sprites
+    assert result.sprites["graphics/ships/h_alpha.png"].owner is not None
+    assert "sprite" not in result.stats.missing
+
+
+def test_missing_sprite_is_recorded(mini_game):
+    from conftest import _write
+    _write(
+        mini_game / "mods" / "mod_a" / "data" / "variants" / "va_bad_sprite.variant",
+        '{"variantId": "va_bad_sprite", "hullId": "h_bad_sprite"}',
+    )
+    _write(
+        mini_game / "mods" / "mod_a" / "data" / "hulls" / "h_bad_sprite.ship",
+        '{"hullId": "h_bad_sprite", "hullSize": "FRIGATE", '
+        '"spriteName": "graphics/ships/nope.png"}',
+    )
+    result = build_closure(["va_bad_sprite"], _lookup(mini_game))
+    assert result.stats.missing["sprite"] == ["graphics/ships/nope.png"]
