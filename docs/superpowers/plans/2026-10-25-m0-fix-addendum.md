@@ -261,6 +261,97 @@ def test_missing_sprite_is_recorded(mini_game):
 - Task 6 validator：`metadata_parse_errors` 非空 → **Critical**。
 - 260mods 实测期望更新：L1 **6,577**、L2 **25,108**；missing 残留 variant 3 / hull 0 / weapon 16；仍须 `L1 ≤ 8,000`、`closure_refs ≥ 0.95`。
 
+## C2. Task 4 fix（planets.json 解析错误落账）
+
+### C2.1 `tools/l1_core.py` — 增加 `CoreAssets` 结果类型
+
+```python
+from dataclasses import dataclass, field
+
+
+@dataclass
+class CoreAssets:
+    paths: list[str] = field(default_factory=list)
+    parse_errors: dict[str, str] = field(default_factory=dict)
+
+
+def _dedupe(paths: list[str]) -> list[str]:
+    seen = set()
+    out = []
+    for path in paths:
+        key = path.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(path)
+    return out
+
+
+def core_assets_result(game_root: Path) -> CoreAssets:
+    paths = list(CORE_STATIC)
+    errors: dict[str, str] = {}
+    config = game_root / "starsector-core" / "data" / "config" / "planets.json"
+    if config.is_file():
+        try:
+            planets = load(config)
+        except Exception as exc:
+            errors[str(config)] = f"{config.name}: {exc}"
+            planets = {}
+        if isinstance(planets, dict):
+            for planet_type in PLANET_TYPES:
+                entry = planets.get(planet_type)
+                if not isinstance(entry, dict):
+                    continue
+                for field_name in PLANET_FIELDS:
+                    value = entry.get(field_name)
+                    if isinstance(value, str) and value.strip():
+                        paths.append(value.replace("\\", "/").lstrip("/"))
+        else:
+            errors[str(config)] = f"{config.name}: top-level is not an object"
+    return CoreAssets(_dedupe(paths), errors)
+
+
+def core_assets(game_root: Path) -> list[str]:
+    return core_assets_result(game_root).paths
+```
+
+保留 `core_assets()` 作为薄包装，现有测试不用改。
+
+### C2.2 Task 4 新增测试（`tests/tools/test_l1_core.py`）
+
+```python
+def test_bad_planets_json_is_recorded_not_swallowed(mini_game):
+    from l1_core import core_assets_result
+    _write(
+        mini_game / "starsector-core" / "data" / "config" / "planets.json",
+        "{not json",
+    )
+    result = core_assets_result(mini_game)
+    assert result.paths == CORE_STATIC
+    assert any("planets.json" in key for key in result.parse_errors)
+
+
+def test_good_planets_json_has_no_errors(mini_game):
+    from l1_core import core_assets_result
+    _write(
+        mini_game / "starsector-core" / "data" / "config" / "planets.json",
+        '{"desert": {"texture": "graphics/planets/desert.jpg"}}',
+    )
+    result = core_assets_result(mini_game)
+    assert result.parse_errors == {}
+    assert "graphics/planets/desert.jpg" in result.paths
+```
+
+预期：`python -I -m pytest tests/tools/test_image_probe.py tests/tools/test_l1_core.py -q` → **8 passed**。
+
+### C2.3 Task 5 消费方式
+
+- `from l1_core import core_assets_result`
+- `core = core_assets_result(game_root)`；L1 遍历 `core.paths`。
+- `stats` 增加 `"core_parse_errors": core.parse_errors`。
+- Task 6 validator：`stats.core_parse_errors` 非空 → **Critical**。
+- Task 8 报告“闭包缺口”节列出 `core_parse_errors`。
+
 ## D. 执行顺序（避免 `mod_index.py` 写冲突）
 
 1. 先派 Task 2 fix（A1–A5），等它 commit；
