@@ -497,6 +497,127 @@ def test_entry_schema_missing_key_is_critical(mini_game):
 
 ---
 
+## D5. Task 6 fix 第二轮（复审 F4 NOT ADDRESSED + 假测试）
+
+> 触发：`task-6-fix-review.md`。F1/F3 有残余，F4 只补了 6 个 code 中的 2 个，另发现 `test_bad_game_root_cli_exits_nonzero` 是**假绿**。
+
+### D5.1 假测试根因与修法
+
+`bad_game_root` 的断言用 `"bad_game_root" in (stdout + stderr)`，而 pytest 的 `tmp_path` 目录名是 `test_bad_game_root_cli_exits_n0`，路径出现在 stderr 里就命中——删掉 CLI 守卫测试仍绿。
+
+修法：
+1. CLI 输出改成带前缀的稳定标记：`[Critical] bad_game_root: <path> is not a directory`（已有 `[Critical]` 前缀，保持不变）。
+2. 测试里断言**精确前缀**，并把临时目录换成中性名字，避免路径污染：
+
+```python
+def test_bad_game_root_cli_exits_nonzero(mini_game, tmp_path):
+    import subprocess, sys
+    from pathlib import Path
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    work = tmp_path / "work"
+    work.mkdir()
+    out = work / "m.json"
+    out.write_text(json.dumps(build_manifest(mini_game, include_l2=False).manifest), encoding="utf-8")
+    missing_root = tmp_path / "absent_root"
+    root = Path(__file__).resolve().parents[2]
+    proc = subprocess.run(
+        [sys.executable, "-I", str(root / "tools" / "validate_manifest.py"),
+         "--manifest", str(out), "--game-root", str(missing_root)],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert proc.returncode == 1
+    lines = (proc.stdout + proc.stderr).splitlines()
+    assert any(line.startswith("[Critical] bad_game_root:") for line in lines)
+```
+
+### D5.2 F1 残余：`coverage={}` 与 gate 键缺失仍放行
+
+在 `validate()` 的 `missing_coverage` 检查之后追加：
+
+```python
+    for required in ("l1_sprite_disk", "closure_refs"):
+        if required not in coverage:
+            findings.append(
+                Finding("Critical", "missing_coverage", f"coverage.{required} is missing")
+            )
+```
+
+（`metadata` 允许缺失——Base 无 DDSCache 时是 N/A。）
+
+### D5.3 F3 残余：未烘焙条目的 `absolutePath` 也要在根内
+
+在 `_entry_findings` 的 `elif not Path(absolute).is_file()` 分支之后、`baked` 判断之前追加：
+
+```python
+    if absolute and Path(absolute).is_file() and not _inside_root(Path(absolute), game_root):
+        out.append(
+            Finding("Critical", "asset_outside_root", f"{layer}: asset outside game root {absolute}")
+        )
+```
+
+### D5.4 F4 残余：补 5 条能红测试
+
+```python
+def test_bad_path_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["layers"]["L1"][0]["path"] = "../escape.png"
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "bad_path" in codes
+
+
+def test_missing_dds_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    baked = next(e for e in m["layers"]["L1"] if e["baked"])
+    baked["ddsPath"] = str(mini_game / "nope.dds")
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "missing_dds" in codes
+
+
+def test_layers_not_dict_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["layers"]["L2"] = "oops"
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "layers" in codes
+
+
+def test_empty_absolute_path_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["layers"]["L1"][0]["absolutePath"] = ""
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "missing_file" in codes
+
+
+def test_coverage_closure_refs_below_threshold_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["stats"]["coverage"]["closure_refs"] = 0.5
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "coverage_closure_refs" in codes
+
+
+def test_coverage_missing_gate_key_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["stats"]["coverage"].pop("closure_refs")
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "missing_coverage" in codes
+```
+
+预期：`test_validate_manifest.py` → **20 passed**；全量 `tests/tools` → **69 passed**。修后必须重跑 Base / 260mods 两个真实环境并记录 exit code。
+
+---
+
 ## E. 执行顺序（避免 `mod_index.py` 写冲突）
 
 1. 先派 Task 2 fix（A1–A5），等它 commit；
