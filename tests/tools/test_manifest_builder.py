@@ -95,6 +95,49 @@ def test_manifest_is_deterministic(mini_game):
     assert a["stats"] == b["stats"]
 
 
+def test_paths_are_absolute(mini_game):
+    m = _build(mini_game)
+    for layer in ("L1", "L2", "L3"):
+        for e in m["layers"][layer]:
+            assert Path(e["absolutePath"]).is_absolute(), e
+            if e["ddsPath"]:
+                assert Path(e["ddsPath"]).is_absolute(), e
+
+
+def test_metadata_counts_share_one_population(mini_game):
+    m = _build(mini_game)
+    s = m["stats"]
+    assert s["metadata_entries"] + s["metadata_entries_core"] == s["metadata_entries_all"]
+    assert s["metadata_entries_all"] == 3  # fixture: mod_a×2 + core×1
+
+
+def test_l3_has_no_duplicate_modid_path(mini_game):
+    m = _build(mini_game)
+    keys = [(e["modId"], e["path"].casefold()) for e in m["layers"]["L3"]]
+    assert len(keys) == len(set(keys))
+
+
+def test_no_core_excludes_core_from_all_layers(mini_game):
+    m = _build(mini_game, include_core=False)
+    for layer in ("L1", "L2", "L3"):
+        assert all(e["modId"] != "core" for e in m["layers"][layer]), layer
+    assert m["stats"]["core_entries"] == 0
+
+
+def test_metadata_parse_error_zeroes_coverage(mini_game):
+    from conftest import _write
+    _seed_core(mini_game)
+    _write(mini_game / "mods" / "DDSCache" / "broken" / "dds_metadata.json", "{not json")
+    m = build_manifest(mini_game, include_l2=False).manifest
+    assert m["stats"]["coverage"]["metadata"] == 0.0
+
+
+def test_variant_limit_truncates_pool(mini_game):
+    a = _build(mini_game, variant_limit=1)
+    b = _build(mini_game)
+    assert len(a["layers"]["L2"]) <= len(b["layers"]["L2"])
+
+
 def test_cli_writes_manifest(mini_game):
     _seed_core(mini_game)
     out = mini_game / "out.json"

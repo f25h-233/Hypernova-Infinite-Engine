@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from image_probe import probe
-from l1_core import core_assets_result
+from l1_core import CoreAssets, core_assets_result
 from mod_index import (
     MetadataEntry,
     MetadataIndex,
@@ -30,9 +30,10 @@ class BuildResult:
 
 
 def _folder_path(game_root: Path, folder: str) -> Path:
+    root = Path(game_root).resolve()
     if folder.casefold() == "starsector-core":
-        return game_root / "starsector-core"
-    return game_root / "mods" / folder
+        return root / "starsector-core"
+    return root / "mods" / folder
 
 
 def _entry(
@@ -63,6 +64,7 @@ def _sprite_entry(
     metadata: MetadataIndex,
     game_root: Path,
 ) -> tuple[dict, tuple[str, str] | None]:
+    root = Path(game_root).resolve()
     owner = pick(lookup.images.get(rel.casefold()) or [])
     meta: MetadataEntry | None = None
     if owner is not None:
@@ -73,10 +75,12 @@ def _sprite_entry(
             meta = candidates[0]
 
     if owner is not None:
-        absolute = owner.absolute.as_posix()
+        absolute = owner.absolute.resolve().as_posix()
         mod_id = owner.mod_id
     elif meta is not None:
-        absolute = (_folder_path(game_root, meta.mod_folder) / meta.rel).as_posix()
+        absolute = (
+            _folder_path(root, meta.mod_folder) / meta.rel
+        ).resolve().as_posix()
         mod_id = "core" if meta.mod_folder.casefold() == "starsector-core" else meta.mod_folder
     else:
         absolute = ""
@@ -91,7 +95,7 @@ def _sprite_entry(
         src = "dds_metadata"
         w, h = meta.width, meta.height
         if meta.dds_rel:
-            dds = (game_root / meta.dds_rel).as_posix()
+            dds = (root / meta.dds_rel).resolve().as_posix()
     elif owner is not None:
         w, h = probe(owner.absolute)
         src = "header_probe" if w and h else "spec_scan"
@@ -105,8 +109,14 @@ def _sprite_entry(
 
 
 def _metadata_entry(me: MetadataEntry, game_root: Path, folder_to_id: dict[str, str]) -> dict:
-    absolute = (_folder_path(game_root, me.mod_folder) / me.rel).as_posix()
-    dds = (game_root / me.dds_rel).as_posix() if me.dds_rel else None
+    absolute = (
+        _folder_path(game_root, me.mod_folder) / me.rel
+    ).resolve().as_posix()
+    dds = (
+        (Path(game_root).resolve() / me.dds_rel).resolve().as_posix()
+        if me.dds_rel
+        else None
+    )
     if me.mod_folder.casefold() == "starsector-core":
         mod_id = "core"
     else:
@@ -130,11 +140,12 @@ def build_manifest(
     include_l2: bool = True,
     variant_limit: int = 0,
 ) -> BuildResult:
-    enabled = load_enabled_ids(game_root)
-    scan = scan_mods(game_root, enabled, include_core=True)
+    root = Path(game_root).resolve()
+    enabled = load_enabled_ids(root)
+    scan = scan_mods(root, enabled, include_core=include_core)
     lookup = build_lookup(scan.mods)
     title = read_title_variants(scan.mods)
-    metadata = read_dds_metadata(game_root)
+    metadata = read_dds_metadata(root)
 
     l1: list[dict] = []
     seen_paths: set[str] = set()
@@ -145,12 +156,12 @@ def build_manifest(
         if key in seen_paths:
             return
         seen_paths.add(key)
-        entry, owner_key = _sprite_entry(rel, lookup, metadata, game_root)
+        entry, owner_key = _sprite_entry(rel, lookup, metadata, root)
         l1.append(entry)
         if owner_key:
             seen_meta.add(owner_key)
 
-    core = core_assets_result(game_root)
+    core: CoreAssets = core_assets_result(root) if include_core else CoreAssets()
     for rel in core.paths:
         add_sprite(rel)
 
@@ -169,25 +180,40 @@ def build_manifest(
             if key in seen_paths:
                 continue
             seen_paths.add(key)
-            entry, owner_key = _sprite_entry(ref.rel, lookup, metadata, game_root)
+            entry, owner_key = _sprite_entry(ref.rel, lookup, metadata, root)
             l2.append(entry)
             if owner_key:
                 seen_meta.add(owner_key)
 
     l3: list[dict] = []
+    l3_keys: set[tuple[str, str]] = set()
+
+    def add_l3(entry: dict) -> None:
+        key = (str(entry["modId"]).casefold(), str(entry["path"]).casefold())
+        if key in l3_keys:
+            return
+        l3_keys.add(key)
+        l3.append(entry)
+
     folder_to_id = {m.folder.name.casefold(): m.mod_id for m in scan.mods}
-    scope_meta = [me for me in metadata.entries if in_scope(me, scope)]
-    core_meta = (
-        [me for me in metadata.entries if me.mod_folder.casefold() == "starsector-core"]
-        if include_core
-        else []
-    )
+    enabled_folders = {m.folder.name.casefold() for m in scan.mods}
+    # 同人口：metadata 计数、磁盘图计数、未烘焙计数都只覆盖已启用 mod（含 core）。
+    scope_meta = [
+        me
+        for me in metadata.entries
+        if in_scope(me, scope) and me.mod_folder.casefold() in enabled_folders
+    ]
+    core_meta = [
+        me
+        for me in metadata.entries
+        if me.mod_folder.casefold() == "starsector-core" and include_core
+    ]
     for me in scope_meta + core_meta:
         key = (me.mod_folder.casefold(), me.rel.casefold())
         if key in seen_meta:
             continue
         seen_meta.add(key)
-        l3.append(_metadata_entry(me, game_root, folder_to_id))
+        add_l3(_metadata_entry(me, root, folder_to_id))
 
     scope_images = []
     core_images = []
@@ -207,11 +233,11 @@ def build_manifest(
         if key in meta_keys or asset.rel.casefold() in seen_paths:
             continue
         w, h = probe(asset.absolute)
-        l3.append(
+        add_l3(
             _entry(
                 asset.mod_id,
                 asset.rel,
-                asset.absolute.as_posix(),
+                asset.absolute.resolve().as_posix(),
                 None,
                 w,
                 h,
@@ -250,10 +276,14 @@ def build_manifest(
         if (me.mod_folder.casefold(), me.rel.casefold()) in seen_meta
     )
     disk_images = len(scope_images)
-    unbaked = 0
-    for asset in scope_images:
-        if metadata.get(asset.folder.name, asset.rel) is None:
-            unbaked += 1
+    scope_meta_keys = {
+        (me.mod_folder.casefold(), me.rel.casefold()) for me in scope_meta
+    }
+    unbaked = sum(
+        1
+        for asset in scope_images
+        if (asset.folder.name.casefold(), asset.rel.casefold()) not in scope_meta_keys
+    )
 
     closure_stats = title_closure.stats
     manifest = {
@@ -271,6 +301,10 @@ def build_manifest(
             "scope": scope,
             "include_core": include_core,
             "metadata_entries": meta_total,
+            "metadata_entries_scope": meta_total,
+            "metadata_entries_core": len(core_meta),
+            "metadata_entries_all": len(metadata.entries),
+            "metadata_unused": len(metadata.entries) - meta_all,
             "baked": meta_total,
             "unbaked": unbaked,
             "disk_images": disk_images,
