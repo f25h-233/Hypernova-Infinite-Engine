@@ -1,6 +1,7 @@
 """L1 的 core 固定资产：标题 UI/字体/光标/背景/行星/目标点。"""
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from hn_json import load
@@ -49,23 +50,13 @@ PLANET_TYPES = [
 PLANET_FIELDS = ("texture", "cloudTexture", "glowTexture")
 
 
-def core_assets(game_root: Path) -> list[str]:
-    paths = list(CORE_STATIC)
-    config = game_root / "starsector-core" / "data" / "config" / "planets.json"
-    if config.is_file():
-        try:
-            planets = load(config)
-        except Exception:
-            planets = {}
-        if isinstance(planets, dict):
-            for planet_type in PLANET_TYPES:
-                entry = planets.get(planet_type)
-                if not isinstance(entry, dict):
-                    continue
-                for field in PLANET_FIELDS:
-                    value = entry.get(field)
-                    if isinstance(value, str) and value.strip():
-                        paths.append(value.replace("\\", "/").lstrip("/"))
+@dataclass
+class CoreAssets:
+    paths: list[str] = field(default_factory=list)
+    parse_errors: dict[str, str] = field(default_factory=dict)
+
+
+def _dedupe(paths: list[str]) -> list[str]:
     seen = set()
     out = []
     for path in paths:
@@ -75,3 +66,31 @@ def core_assets(game_root: Path) -> list[str]:
         seen.add(key)
         out.append(path)
     return out
+
+
+def core_assets_result(game_root: Path) -> CoreAssets:
+    paths = list(CORE_STATIC)
+    errors: dict[str, str] = {}
+    config = game_root / "starsector-core" / "data" / "config" / "planets.json"
+    if config.is_file():
+        try:
+            planets = load(config)
+        except Exception as exc:
+            errors[str(config)] = f"{config.name}: {exc}"
+            planets = {}
+        if isinstance(planets, dict):
+            for planet_type in PLANET_TYPES:
+                entry = planets.get(planet_type)
+                if not isinstance(entry, dict):
+                    continue
+                for field_name in PLANET_FIELDS:
+                    value = entry.get(field_name)
+                    if isinstance(value, str) and value.strip():
+                        paths.append(value.replace("\\", "/").lstrip("/"))
+        else:
+            errors[str(config)] = f"{config.name}: top-level is not an object"
+    return CoreAssets(_dedupe(paths), errors)
+
+
+def core_assets(game_root: Path) -> list[str]:
+    return core_assets_result(game_root).paths
