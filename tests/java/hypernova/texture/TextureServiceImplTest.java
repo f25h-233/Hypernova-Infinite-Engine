@@ -50,9 +50,12 @@ class TextureServiceImplTest {
 
     static final class RecordingTelemetry implements Telemetry {
         final List<String> events = new ArrayList<>();
+        final List<Long> nanos = new ArrayList<>();
 
         @Override
         public void event(String kind, String path, long nanos, String detail) {
+            // 索引与 events 一一对应；nanos 单独存，前缀匹配的既有断言不受影响。
+            this.nanos.add(nanos);
             events.add(kind + "|" + path + "|" + detail);
         }
 
@@ -222,14 +225,62 @@ class TextureServiceImplTest {
     void loadWithoutRegistrationIsRecordedAsFailed() throws JSONException {
         FakeBackend b = new FakeBackend();
         b.silentlyIgnoreLoad = true;
+        b.sleepMillis = 2;
         RecordingTelemetry t = new RecordingTelemetry();
         TextureServiceImpl s = service(manifestWith("a.png"), b, t, new AtomicBoolean(false));
         TextureLoadResult r = s.ensureLoaded("a.png");
         assertFalse(r.ok());
         assertEquals(TextureState.FAILED, r.state());
         assertEquals(2, b.calls.size());
-        assertTrue(t.events.stream()
-                .anyMatch(e -> e.startsWith("failed|a.png|load-returned-but-unregistered")));
+        int found = 0;
+        for (int i = 0; i < t.events.size(); i++) {
+            if (t.events.get(i).startsWith("failed|a.png|load-returned-but-unregistered")) {
+                found++;
+                assertTrue(t.nanos.get(i) >= 1_000_000L,
+                        "unregistered failed event nanos should be >= 1 ms but was " + t.nanos.get(i));
+            }
+        }
+        assertEquals(2, found, "expected one failed event per attempt");
+    }
+
+    @Test
+    void loadedEventCarriesElapsedNanos() throws JSONException {
+        FakeBackend b = new FakeBackend();
+        b.sleepMillis = 2;
+        RecordingTelemetry t = new RecordingTelemetry();
+        TextureServiceImpl s = service(manifestWith("a.png"), b, t, new AtomicBoolean(false));
+        TextureLoadResult r = s.ensureLoaded("a.png");
+        assertTrue(r.ok());
+        int idx = -1;
+        for (int i = 0; i < t.events.size(); i++) {
+            if (t.events.get(i).startsWith("loaded|a.png|")) {
+                idx = i;
+                break;
+            }
+        }
+        assertTrue(idx >= 0, "missing loaded event: " + t.events);
+        assertTrue(t.nanos.get(idx) >= 1_000_000L,
+                "loaded event nanos should be >= 1 ms but was " + t.nanos.get(idx));
+    }
+
+    @Test
+    void failedEventCarriesElapsedNanos() throws JSONException {
+        FakeBackend b = new FakeBackend();
+        b.sleepMillis = 2;
+        b.failuresLeft = 5;
+        RecordingTelemetry t = new RecordingTelemetry();
+        TextureServiceImpl s = service(manifestWith("a.png"), b, t, new AtomicBoolean(false));
+        TextureLoadResult r = s.ensureLoaded("a.png");
+        assertFalse(r.ok());
+        int found = 0;
+        for (int i = 0; i < t.events.size(); i++) {
+            if (t.events.get(i).startsWith("failed|a.png|")) {
+                found++;
+                assertTrue(t.nanos.get(i) >= 1_000_000L,
+                        "failed event nanos should be >= 1 ms but was " + t.nanos.get(i));
+            }
+        }
+        assertEquals(2, found, "expected one failed event per attempt");
     }
 
     @Test

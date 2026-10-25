@@ -64,16 +64,19 @@ public final class TextureServiceImpl implements TextureService {
 
     private boolean loadWithRetry(String path, TextureEntry entry) {
         for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            long attemptStart = System.nanoTime();
             try {
                 backend.load(path);
+                long elapsed = System.nanoTime() - attemptStart;
                 if (backend.isRegistered(path)) {
                     refCounts.putIfAbsent(path, 1);
-                    telemetry.event("loaded", path, 0L, entry.modId());
+                    telemetry.event("loaded", path, elapsed, entry.modId());
                     return true;
                 }
-                telemetry.event("failed", path, 0L, "load-returned-but-unregistered");
+                telemetry.event("failed", path, elapsed, "load-returned-but-unregistered");
             } catch (Exception e) {
-                telemetry.event("failed", path, 0L, e.getClass().getSimpleName() + ":" + e.getMessage());
+                telemetry.event("failed", path, System.nanoTime() - attemptStart,
+                        e.getClass().getSimpleName() + ":" + e.getMessage());
             }
         }
         return false;
