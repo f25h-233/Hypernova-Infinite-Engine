@@ -21,3 +21,6 @@ desktop.ini
 *.bak
 *.bak-*
 ~$*
+
+# ---- Nezha IDE 本地配置 ----
+.nezha/
