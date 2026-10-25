@@ -66,6 +66,47 @@ class JsonlTelemetryTest {
         t.flush();
         String line = sink.contents.get(0).trim();
         assertTrue(line.length() < 12000);
+        JSONObject parsed = new JSONObject(line);
+        assertEquals(1024, parsed.getString("path").length());
+    }
+
+    @Test
+    void hitIsSilentWhenNotVerbose() throws Exception {
+        CaptureSink sink = new CaptureSink();
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100, false);
+        t.event("hit", "graphics/ui/a.png", 1L, "");
+        assertEquals(0, t.buffered());
+        t.event("miss", "graphics/ui/b.png", 2L, "");
+        assertEquals(1, t.buffered());
+        t.flush();
+        String content = sink.contents.get(0);
+        assertFalse(content.contains("\"hit\""));
+        assertTrue(content.contains("\"miss\""));
+    }
+
+    @Test
+    void hitIsRecordedWhenVerbose() throws Exception {
+        CaptureSink sink = new CaptureSink();
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100, true);
+        t.event("hit", "graphics/ui/a.png", 1L, "verbose");
+        assertEquals(1, t.buffered());
+        t.flush();
+        JSONObject parsed = new JSONObject(sink.contents.get(0).trim());
+        assertEquals("hit", parsed.getString("kind"));
+    }
+
+    @Test
+    void maxLinesOneStillTrims() throws Exception {
+        CaptureSink sink = new CaptureSink();
+        JsonlTelemetry t = new JsonlTelemetry(sink, 1, false);
+        t.event("loaded", "a", 0L, "");
+        t.event("loaded", "b", 0L, "");
+        t.event("loaded", "c", 0L, "");
+        assertTrue(t.buffered() <= 1);
+        t.flush();
+        String content = sink.contents.get(0);
+        assertTrue(content.contains("\"c\""));
+        assertFalse(content.contains("\"a\""));
     }
 
     @Test

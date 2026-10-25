@@ -40,7 +40,7 @@ public final class JsonlTelemetry implements Telemetry {
         }
         synchronized (lines) {
             if (lines.size() >= maxLines) {
-                int drop = maxLines / 2;
+                int drop = Math.max(1, maxLines / 2);
                 for (int i = 0; i < drop && !lines.isEmpty(); i++) {
                     lines.pollFirst();
                 }
