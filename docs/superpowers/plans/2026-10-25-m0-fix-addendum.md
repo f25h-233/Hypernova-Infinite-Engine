@@ -618,6 +618,131 @@ def test_coverage_missing_gate_key_is_critical(mini_game):
 
 ---
 
+## F. Task 5 fix（manifest 组装）
+
+> 触发：`task-5-review.md`（Spec ❌，F1–F6 六条 Important）。F3 已实测确认：81,559 条 `absolutePath` 全是相对路径，换 CWD 跑同一份 manifest 会冒出 81,559 条 Critical。
+
+### F1. 全路径绝对化（最优先）
+
+`build_manifest` 入口处统一解析一次根，之后所有路径用 `root` 拼：
+
+```python
+def build_manifest(
+    game_root: Path,
+    scope: str = "mod_non_shader",
+    include_core: bool = True,
+    include_l2: bool = True,
+    variant_limit: int = 0,
+) -> BuildResult:
+    root = Path(game_root).resolve()
+    ...
+```
+
+把函数体内所有 `game_root` 改为 `root`（`_sprite_entry` / `_metadata_entry` / `_folder_path` 的调用点一并传 `root`）。`_folder_path` 与 `_sprite_entry` 内部对传入值再 `.resolve()` 一次，确保 `Path.as_posix()` 产出绝对路径。
+
+### F2. `metadata_entries` / `disk_images` / `unbaked` 同人口
+
+三个数必须都只统计 **scope 内、已启用 mod + core**：
+
+```python
+    enabled_folders = {m.folder.name.casefold() for m in scan.mods}
+    scope_meta = [
+        me for me in metadata.entries
+        if in_scope(me, scope) and me.mod_folder.casefold() in enabled_folders
+    ]
+    core_meta = [
+        me for me in metadata.entries
+        if me.mod_folder.casefold() == "starsector-core" and include_core
+    ]
+```
+
+`disk_images` / `unbaked` 用同一 `scope_meta` + `core_meta` 计算分母，并在 `stats` 里增加：
+
+```python
+        "metadata_entries_scope": len(scope_meta),
+        "metadata_entries_core": len(core_meta),
+        "metadata_entries_all": len(metadata.entries),
+```
+
+报告里三个数必须能对上 `78,040 + 3,204 = 81,244`（若某些 DDSCache 文件夹属于未启用 mod，差额写进 `stats.metadata_unused`）。
+
+### F3. L3 去重收敛到 `(modId, path)`
+
+L3 写入前用与 validator 相同的键：
+
+```python
+    l3_keys: set[tuple[str, str]] = set()
+    def add_l3(entry: dict) -> None:
+        key = (str(entry["modId"]).casefold(), str(entry["path"]).casefold())
+        if key in l3_keys:
+            return
+        l3_keys.add(key)
+        l3.append(entry)
+```
+
+把 `l3.append(...)` 全部换成 `add_l3(...)`。同 id 多文件夹（`ConsoleCommands` vs `lw_console`）应在 `folder_to_id` 阶段合并到同一 `modId`，只保留 `enabled_mods.json` 顺序在前的那份，并在 `stats.conflicts.duplicate_mod_ids` 里已有记录。
+
+### F4. `--no-core` 语义修正
+
+`include_core=False` 时：
+
+- L1 不得加入 `CORE_STATIC` / `planets.json` 资产；
+- L2 的实体池不得包含 core 的 variant/hull/weapon；
+- L3 不得加入 `core_meta` / `core_images`。
+
+做法：`core = core_assets_result(game_root)` 后仅当 `include_core` 才 `for rel in core.paths: add_sprite(rel)`；`build_lookup` 增加 `include_core` 过滤（或在 `scan_mods(..., include_core=include_core)` 时不追加 core ModRef）。
+
+### F5. 补 6 条能红测试
+
+```python
+def test_paths_are_absolute(mini_game):
+    m = _build(mini_game)
+    for layer in ("L1", "L2", "L3"):
+        for e in m["layers"][layer]:
+            assert Path(e["absolutePath"]).is_absolute(), e
+            if e["ddsPath"]:
+                assert Path(e["ddsPath"]).is_absolute(), e
+
+
+def test_metadata_counts_share_one_population(mini_game):
+    m = _build(mini_game)
+    s = m["stats"]
+    assert s["metadata_entries"] + s["metadata_entries_core"] == s["metadata_entries_all"]
+    assert s["metadata_entries_all"] == 3  # fixture: mod_a×2 + core×1
+
+
+def test_l3_has_no_duplicate_modid_path(mini_game):
+    m = _build(mini_game)
+    keys = [(e["modId"], e["path"].casefold()) for e in m["layers"]["L3"]]
+    assert len(keys) == len(set(keys))
+
+
+def test_no_core_excludes_core_from_all_layers(mini_game):
+    m = _build(mini_game, include_core=False)
+    for layer in ("L1", "L2", "L3"):
+        assert all(e["modId"] != "core" for e in m["layers"][layer]), layer
+    assert m["stats"]["core_entries"] == 0
+
+
+def test_metadata_parse_error_zeroes_coverage(mini_game):
+    from conftest import _write
+    _seed_core(mini_game)
+    _write(mini_game / "mods" / "DDSCache" / "broken" / "dds_metadata.json", "{not json")
+    m = build_manifest(mini_game, include_l2=False).manifest
+    assert m["stats"]["coverage"]["metadata"] == 0.0
+
+
+def test_variant_limit_truncates_pool(mini_game):
+    a = _build(mini_game, variant_limit=1)
+    b = _build(mini_game)
+    assert len(a["layers"]["L2"]) <= len(b["layers"]["L2"])
+```
+
+预期：`test_manifest_builder.py` → **13 passed**；全量 `tests/tools` → **75 passed**。
+修后必须重新生成 Base / 260mods 两份 manifest，并用 `cd` 到另一个目录跑 validator，确认不再出现 `missing_file`。
+
+---
+
 ## E. 执行顺序（避免 `mod_index.py` 写冲突）
 
 1. 先派 Task 2 fix（A1–A5），等它 commit；
