@@ -743,6 +743,109 @@ def test_variant_limit_truncates_pool(mini_game):
 
 ---
 
+## G. Task 5 fix 第二轮（收口轮，只做三条）
+
+> 触发：`task-5-fix-review.md`。生产数据已正确（相对路径 0、跨 CWD exit 0），但三条新测试不抗变异，且 `--no-core` 在 260mods 真实数据上漏出 core 条目。
+
+### G1. `--no-core` 下 `by_rel` 回退必须排除 core（真实缺陷）
+
+`_sprite_entry` 的 `by_rel` 唯一回退会把 `starsector-core` 的 metadata 拉回来（260mods 实测 L1 125 / L2 268 条 core）。
+
+给 `_sprite_entry` 增加参数：
+
+```python
+def _sprite_entry(
+    rel: str,
+    lookup: AssetLookup,
+    metadata: MetadataIndex,
+    game_root: Path,
+    include_core: bool = True,
+) -> tuple[dict, tuple[str, str] | None]:
+    ...
+    else:
+        candidates = [
+            me for me in (metadata.by_rel.get(rel.casefold()) or [])
+            if include_core or me.mod_folder.casefold() != "starsector-core"
+        ]
+        if len(candidates) == 1:
+            meta = candidates[0]
+```
+
+所有调用点传 `include_core=include_core`。
+
+### G2. 补三条抗变异的 fixture 测试
+
+```python
+def test_paths_absolute_against_relative_game_root(mini_game, monkeypatch):
+    """回归：入口忘记 resolve() 时，用相对 game_root 必须仍产出绝对路径。"""
+    monkeypatch.chdir(mini_game.parent)
+    m = build_manifest(Path(mini_game.name), include_l2=False).manifest
+    for e in m["layers"]["L1"]:
+        assert Path(e["absolutePath"]).is_absolute(), e
+
+
+def test_disabled_mod_metadata_is_excluded(mini_game):
+    """回归：去掉 enabled_folders 过滤会让额外 1 条 metadata 混进 L3。"""
+    import json as _json
+    from conftest import _write
+    _write(
+        mini_game / "mods" / "DDSCache" / "not_enabled" / "dds_metadata.json",
+        _json.dumps([{
+            "ModFolderName": "not_enabled",
+            "RelativeImagePath": "graphics/x.png",
+            "DDSFilePath": "\\mods\\DDSCache\\not_enabled\\graphics\\x.dds",
+            "Width": 1, "Height": 1,
+        }]),
+    )
+    m = build_manifest(mini_game, include_l2=False).manifest
+    assert m["stats"]["metadata_unused"] >= 1
+    assert all(e["modId"] != "not_enabled" for e in m["layers"]["L3"])
+
+
+def test_l3_dedupes_duplicate_mod_id_folders(mini_game):
+    """回归：改回 l3.append 会让同 id 双文件夹产出重复键。"""
+    import json as _json
+    from conftest import _write
+    _write(mini_game / "mods" / "mod_a_copy" / "mod_info.json", '{"id": "mod_a"}')
+    _write(
+        mini_game / "mods" / "DDSCache" / "mod_a_copy" / "dds_metadata.json",
+        _json.dumps([{
+            "ModFolderName": "mod_a_copy",
+            "RelativeImagePath": "graphics/ships/h_alpha.png",
+            "DDSFilePath": "\\mods\\DDSCache\\mod_a_copy\\graphics\\ships\\h_alpha.dds",
+            "Width": 64, "Height": 32,
+        }]),
+    )
+    m = build_manifest(mini_game, include_l2=False).manifest
+    keys = [(e["modId"], e["path"].casefold()) for e in m["layers"]["L3"]]
+    assert len(keys) == len(set(keys))
+```
+
+### G3. `--no-core` 真实数据复验
+
+修完 G1 后重新生成 260mods 的 `--no-core` manifest：
+
+```bash
+python -I tools/gen_manifest.py --game-root Starsector-098-260mods --no-core --out build/m0/260mods/manifest-nocore.json
+python -I -c "import json;m=json.load(open('build/m0/260mods/manifest-nocore.json',encoding='utf-8'));print({L:sum(1 for e in m['layers'][L] if e['modId']=='core') for L in ('L1','L2','L3')})"
+```
+
+必须三层全 0。修完重跑正式两份 manifest（`base` / `260mods`），确认数字未变（L1 6,614 / L2 18,535 / L3 55,444）。
+
+### G4. 明确 `include_core=False` 时 `core_parse_errors` 语义
+
+在 `stats` 里增加：
+
+```python
+        "core_parse_errors_skipped": not include_core,
+```
+
+Task 6 的 validator 只在 `core_parse_errors` 非空时判 Critical，`skipped=True` 时不判——两者不冲突，无需改 validator。
+
+预期：`test_manifest_builder.py` → **16 passed**；全量 `tests/tools` → **78 passed**。
+
+---
+
 ## E. 执行顺序（避免 `mod_index.py` 写冲突）
 
 1. 先派 Task 2 fix（A1–A5），等它 commit；
