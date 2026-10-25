@@ -138,6 +138,82 @@ def test_variant_limit_truncates_pool(mini_game):
     assert len(a["layers"]["L2"]) <= len(b["layers"]["L2"])
 
 
+def test_paths_absolute_against_relative_game_root(mini_game, monkeypatch):
+    """回归：入口忘记 resolve() 时，用相对 game_root 必须仍产出绝对路径。"""
+    _seed_core(mini_game)
+    monkeypatch.chdir(mini_game.parent)
+    m = build_manifest(Path(mini_game.name), include_l2=False).manifest
+    for e in m["layers"]["L1"]:
+        assert Path(e["absolutePath"]).is_absolute(), e
+
+
+def test_disabled_mod_metadata_is_excluded(mini_game):
+    """回归：去掉 enabled_folders 过滤会让额外 1 条 metadata 混进 L3。"""
+    import json as _json
+    from conftest import _write
+    _write(
+        mini_game / "mods" / "DDSCache" / "not_enabled" / "dds_metadata.json",
+        _json.dumps([{
+            "ModFolderName": "not_enabled",
+            "RelativeImagePath": "graphics/x.png",
+            "DDSFilePath": "\\mods\\DDSCache\\not_enabled\\graphics\\x.dds",
+            "Width": 1, "Height": 1,
+        }]),
+    )
+    m = build_manifest(mini_game, include_l2=False).manifest
+    assert m["stats"]["metadata_unused"] >= 1
+    assert all(e["modId"] != "not_enabled" for e in m["layers"]["L3"])
+
+
+def test_l3_dedupes_duplicate_mod_id_folders(mini_game):
+    """回归：改回 l3.append 会让同 id 双文件夹产出重复键。
+
+    F2 的 enabled_folders 过滤会让未启用的 mod_a_copy 文件夹在进 L3 前被剔除，
+    因此这里构造当前实现下唯一可达的同 id 双文件夹：一个 mod 的 id 声明为
+    "core"，与 starsector-core 的 modId 相同，两个 metadata 条目同 rel 同 id。
+    """
+    import json as _json
+    from conftest import _write
+    _write(
+        mini_game / "mods" / "enabled_mods.json",
+        _json.dumps(
+            {
+                "enabledMods": [
+                    "mod_a",
+                    "mod_b",
+                    "mod_[x]",
+                    "mod_中文",
+                    "shaderLib",
+                    "GraphicsLib",
+                    "core",
+                ]
+            }
+        ),
+    )
+    _write(mini_game / "mods" / "core_mod" / "mod_info.json", '{"id": "core"}')
+    _write(
+        mini_game / "mods" / "DDSCache" / "core_mod" / "dds_metadata.json",
+        _json.dumps([{
+            "ModFolderName": "core_mod",
+            "RelativeImagePath": "graphics/ships/h_alpha.png",
+            "DDSFilePath": "\\mods\\DDSCache\\core_mod\\graphics\\ships\\h_alpha.dds",
+            "Width": 64, "Height": 32,
+        }]),
+    )
+    _write(
+        mini_game / "mods" / "DDSCache" / "starsector-core" / "dds_metadata.json",
+        _json.dumps([{
+            "ModFolderName": "starsector-core",
+            "RelativeImagePath": "graphics/ships/h_alpha.png",
+            "DDSFilePath": "\\mods\\DDSCache\\starsector-core\\graphics\\ships\\h_alpha.dds",
+            "Width": 64, "Height": 32,
+        }]),
+    )
+    m = build_manifest(mini_game, include_l2=False).manifest
+    keys = [(e["modId"], e["path"].casefold()) for e in m["layers"]["L3"]]
+    assert len(keys) == len(set(keys))
+
+
 def test_cli_writes_manifest(mini_game):
     _seed_core(mini_game)
     out = mini_game / "out.json"

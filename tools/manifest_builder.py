@@ -63,6 +63,7 @@ def _sprite_entry(
     lookup: AssetLookup,
     metadata: MetadataIndex,
     game_root: Path,
+    include_core: bool = True,
 ) -> tuple[dict, tuple[str, str] | None]:
     root = Path(game_root).resolve()
     owner = pick(lookup.images.get(rel.casefold()) or [])
@@ -70,7 +71,11 @@ def _sprite_entry(
     if owner is not None:
         meta = metadata.get(owner.folder.name, rel)
     else:
-        candidates = metadata.by_rel.get(rel.casefold()) or []
+        candidates = [
+            me
+            for me in (metadata.by_rel.get(rel.casefold()) or [])
+            if include_core or me.mod_folder.casefold() != "starsector-core"
+        ]
         if len(candidates) == 1:
             meta = candidates[0]
 
@@ -156,7 +161,9 @@ def build_manifest(
         if key in seen_paths:
             return
         seen_paths.add(key)
-        entry, owner_key = _sprite_entry(rel, lookup, metadata, root)
+        entry, owner_key = _sprite_entry(
+            rel, lookup, metadata, root, include_core=include_core
+        )
         l1.append(entry)
         if owner_key:
             seen_meta.add(owner_key)
@@ -180,7 +187,9 @@ def build_manifest(
             if key in seen_paths:
                 continue
             seen_paths.add(key)
-            entry, owner_key = _sprite_entry(ref.rel, lookup, metadata, root)
+            entry, owner_key = _sprite_entry(
+                ref.rel, lookup, metadata, root, include_core=include_core
+            )
             l2.append(entry)
             if owner_key:
                 seen_meta.add(owner_key)
@@ -338,6 +347,7 @@ def build_manifest(
             "metadata_fallback_hits": metadata.fallback_hits,
             "metadata_parse_errors": metadata.parse_errors,
             "core_parse_errors": core.parse_errors,
+            "core_parse_errors_skipped": not include_core,
             "source_mode": "disk_scan" if meta_all == 0 else "dds_metadata",
             "precedence": "enabled_order_then_core",
         },
