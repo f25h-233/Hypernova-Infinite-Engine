@@ -16,12 +16,16 @@ if [ ! -f "$LIB/junit-platform-console-standalone.jar" ]; then
 fi
 CP="$GAME/starfarer.api.jar;$GAME/json.jar;$GAME/lwjgl.jar;$GAME/log4j-1.2.9.jar;$LIB/junit-platform-console-standalone.jar"
 rm -rf "$OUT"; mkdir -p "$OUT"
-find "$ROOT_W/src/main/java" "$ROOT_W/tests/java" -name '*.java' > "$OUT/../test-sources.txt"
-javac --release 17 -encoding UTF-8 -cp "$CP" -d "$OUT" @"$OUT/../test-sources.txt"
+MAIN_OUT="$ROOT_W/build/java/classes"
+rm -rf "$MAIN_OUT"; mkdir -p "$MAIN_OUT"
+find "$ROOT_W/src/main/java" -name '*.java' > "$OUT/../main-sources.txt"
+javac --release 17 -encoding UTF-8 -cp "$CP" -d "$MAIN_OUT" @"$OUT/../main-sources.txt"
+find "$ROOT_W/tests/java" -name '*.java' > "$OUT/../test-sources.txt"
+javac --release 17 -encoding UTF-8 -cp "$CP;$MAIN_OUT" -d "$OUT" @"$OUT/../test-sources.txt"
 FILTER=".*"
 if [ -n "${1:-}" ]; then FILTER=".*${1}.*"; fi
 java -jar "$LIB/junit-platform-console-standalone.jar" \
-  --class-path "$OUT;$GAME/starfarer.api.jar;$GAME/json.jar;$GAME/lwjgl.jar;$GAME/log4j-1.2.9.jar" \
+  --class-path "$OUT;$MAIN_OUT;$GAME/starfarer.api.jar;$GAME/json.jar;$GAME/lwjgl.jar;$GAME/log4j-1.2.9.jar" \
   --scan-class-path "$OUT" \
   --include-classname="$FILTER" \
   --fail-if-no-tests
