@@ -17,3 +17,14 @@ bad=$(javap -verbose -cp "$OUT/classes" hypernova.HypernovaPlugin 2>/dev/null | 
 if [ "$bad" -ne 1 ]; then echo "FATAL: class file major version != 61" >&2; exit 1; fi
 jar --create --file "$OUT/hypernova.jar" -C "$OUT/classes" .
 echo "OK: $OUT/hypernova.jar"
+
+# ---- 打包成品 mod 目录与 zip ----
+MODDIR="$ROOT_W/build/java/hypernova-mod"
+rm -rf "$MODDIR"; mkdir -p "$MODDIR/jars"
+cp "$OUT/hypernova.jar" "$MODDIR/jars/hypernova.jar"
+cp "$ROOT_W/mod_info.json" "$MODDIR/mod_info.json"
+cp -r "$ROOT_W/data" "$MODDIR/data"
+rm -f "$ROOT_W/build/java/hypernova-0.1.0.zip"
+(cd "$ROOT_W/build/java" && jar --create --file hypernova-0.1.0.zip -C hypernova-mod .)
+echo "OK: $ROOT/build/java/hypernova-mod"
+echo "OK: $ROOT/build/java/hypernova-0.1.0.zip"
