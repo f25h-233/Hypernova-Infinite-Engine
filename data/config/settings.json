@@ -1,0 +1,5 @@
+{
+	"plugins":{
+		"hypernova_combat_plugin":"hypernova.adapter.HypernovaCombatPlugin"
+	}
+}
