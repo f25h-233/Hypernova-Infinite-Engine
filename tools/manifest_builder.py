@@ -69,7 +69,7 @@ def _sprite_entry(
     owner = pick(lookup.images.get(rel.casefold()) or [])
     meta: MetadataEntry | None = None
     if owner is not None:
-        meta = metadata.get(owner.folder.name, rel)
+        meta = metadata.get(owner.folder.name, rel, exclude_core=not include_core)
     else:
         candidates = [
             me
@@ -255,6 +255,25 @@ def build_manifest(
             )
         )
 
+    path_conflicts: list[dict] = []
+    path_records: dict[str, dict] = {}
+    for layer_name, entries in (("L1", l1), ("L2", l2), ("L3", l3)):
+        for e in entries:
+            key = str(e["path"]).casefold()
+            rec = path_records.setdefault(
+                key, {"path": e["path"], "layers": [], "sizes": []}
+            )
+            if layer_name not in rec["layers"]:
+                rec["layers"].append(layer_name)
+            size = f"{e['w']}x{e['h']}"
+            if size not in rec["sizes"]:
+                rec["sizes"].append(size)
+    for rec in path_records.values():
+        if len(rec["layers"]) > 1:
+            path_conflicts.append(
+                {**rec, "content_differs": len(rec["sizes"]) > 1}
+            )
+
     l1_disk = sum(
         1 for e in l1 if e["absolutePath"] and Path(e["absolutePath"]).is_file()
     )
@@ -328,7 +347,7 @@ def build_manifest(
                 "wings": [closure_stats.wings_total, closure_stats.wings_resolved],
             },
             "coverage": {
-                "l1_sprite_disk": (l1_disk / len(l1)) if l1 else 1.0,
+                "l1_sprite_disk": (l1_disk / len(l1)) if l1 else 0.0,
                 "l1_baked": (l1_baked / len(l1)) if l1 else 1.0,
                 "closure_refs": (refs_ok / refs_total) if refs_total else 1.0,
                 "metadata": (
@@ -339,6 +358,7 @@ def build_manifest(
             },
             "missing": closure_stats.missing,
             "parse_errors": closure_stats.parse_errors,
+            "path_conflicts": path_conflicts,
             "conflicts": {
                 "duplicate_mod_ids": scan.duplicate_ids,
                 "mod_parse_errors": scan.parse_errors,

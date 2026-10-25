@@ -207,3 +207,42 @@ def test_entry_schema_missing_key_is_critical(mini_game):
     m["layers"]["L1"][0].pop("src")
     codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
     assert "entry_schema" in codes
+
+
+def test_empty_manifest_fails(mini_game):
+    empty = {
+        "schema": 1,
+        "layers": {"L1": [], "L2": [], "L3": []},
+        "stats": {"l1_count": 0, "coverage": {"l1_sprite_disk": 1.0, "closure_refs": 1.0, "metadata": None}},
+    }
+    codes = {f.code for f in validate(empty, mini_game) if f.severity == "Critical"}
+    assert "empty_l1" in codes
+
+
+def test_schema_true_is_rejected(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["schema"] = True
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "schema" in codes
+
+
+def test_l1_count_mismatch_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["stats"]["l1_count"] = 9999
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "l1_count_mismatch" in codes
+
+
+def test_cross_layer_duplicate_is_important(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    dup = dict(m["layers"]["L1"][0])
+    m["layers"]["L3"].append(dup)
+    sev = {(f.code, f.severity) for f in validate(m, mini_game)}
+    assert ("cross_layer_duplicate", "Important") in sev
+    assert isinstance(m["stats"]["path_conflicts"], list)

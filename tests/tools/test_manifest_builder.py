@@ -117,6 +117,42 @@ def test_l3_has_no_duplicate_modid_path(mini_game):
     assert len(keys) == len(set(keys))
 
 
+def test_no_core_does_not_borrow_core_metadata_for_mod_sprite(mini_game):
+    """回归：`_sprite_entry` 忘记传 exclude_core 时，mod 图会借用 core 的 metadata
+    （baked=True、ddsPath 落进 DDSCache/starsector-core）。"""
+    _seed_core(mini_game)
+    _write(
+        mini_game / "mods" / "mod_a" / "data" / "variants" / "va_core_borrow.variant",
+        '{"variantId": "va_core_borrow", "hullId": "h_core_borrow"}',
+    )
+    _write(
+        mini_game / "mods" / "mod_a" / "data" / "hulls" / "h_core_borrow.ship",
+        '{"hullId": "h_core_borrow", "hullSize": "FRIGATE", '
+        '"spriteName": "graphics/ships/core_only.png"}',
+    )
+    p = mini_game / "mods" / "mod_a" / "graphics" / "ships" / "core_only.png"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(_png(5, 5))
+    _write(
+        mini_game / "mods" / "DDSCache" / "starsector-core" / "dds_metadata.json",
+        json.dumps([{
+            "ModFolderName": "starsector-core",
+            "RelativeImagePath": "graphics/ships/core_only.png",
+            "DDSFilePath": "\\mods\\DDSCache\\starsector-core\\graphics\\ships\\core_only.dds",
+            "Width": 4, "Height": 4,
+        }]),
+    )
+    m = build_manifest(mini_game, include_core=False).manifest
+    entry = next(
+        e
+        for e in m["layers"]["L2"]
+        if e["path"] == "graphics/ships/core_only.png"
+    )
+    assert entry["modId"] == "mod_a"
+    assert entry["baked"] is False
+    assert entry["ddsPath"] is None
+
+
 def test_no_core_excludes_core_from_all_layers(mini_game):
     m = _build(mini_game, include_core=False)
     for layer in ("L1", "L2", "L3"):
@@ -130,6 +166,15 @@ def test_metadata_parse_error_zeroes_coverage(mini_game):
     _write(mini_game / "mods" / "DDSCache" / "broken" / "dds_metadata.json", "{not json")
     m = build_manifest(mini_game, include_l2=False).manifest
     assert m["stats"]["coverage"]["metadata"] == 0.0
+
+
+def test_empty_l1_coverage_is_zero(tmp_path):
+    """回归：空 L1 时 l1_sprite_disk 曾返回 1.0，给空输入发通行证。"""
+    root = tmp_path / "empty_game"
+    _write(root / "mods" / "enabled_mods.json", '{"enabledMods": []}')
+    m = build_manifest(root, include_core=False, include_l2=False).manifest
+    assert m["layers"]["L1"] == []
+    assert m["stats"]["coverage"]["l1_sprite_disk"] == 0.0
 
 
 def test_variant_limit_truncates_pool(mini_game):

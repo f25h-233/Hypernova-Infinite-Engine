@@ -62,12 +62,20 @@ class MetadataIndex:
     fallback_hits: int = 0
     parse_errors: dict[str, str] = field(default_factory=dict)
 
-    def get(self, mod_folder: str, rel: str) -> MetadataEntry | None:
+    def get(
+        self, mod_folder: str, rel: str, exclude_core: bool = False
+    ) -> MetadataEntry | None:
         key = (mod_folder.casefold(), rel.casefold())
         hit = self.by_key.get(key)
         if hit is not None:
+            if exclude_core and hit.mod_folder.casefold() == CORE_FOLDER:
+                return None
             return hit
-        candidates = self.by_rel.get(rel.casefold()) or []
+        candidates = [
+            me
+            for me in (self.by_rel.get(rel.casefold()) or [])
+            if not (exclude_core and me.mod_folder.casefold() == CORE_FOLDER)
+        ]
         if len(candidates) == 1:
             self.fallback_hits += 1
             return candidates[0]

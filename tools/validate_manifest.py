@@ -76,9 +76,9 @@ def validate(
     max_l1: int = 8000,
 ) -> list[Finding]:
     findings: list[Finding] = []
-    if manifest.get("schema") != 1:
+    if type(manifest.get("schema")) is not int or manifest.get("schema") != 1:
         findings.append(
-            Finding("Critical", "schema", f"expected schema 1, got {manifest.get('schema')}")
+            Finding("Critical", "schema", f"expected integer schema 1, got {manifest.get('schema')!r}")
         )
     layers = manifest.get("layers")
     if not isinstance(layers, dict) or not all(k in layers for k in ("L1", "L2", "L3")):
@@ -99,6 +99,26 @@ def validate(
                 )
             seen.add(key)
 
+    if not layers["L1"]:
+        findings.append(Finding("Critical", "empty_l1", "L1 layer is empty"))
+    key_layers: dict[str, set[str]] = {}
+    for name in ("L1", "L2", "L3"):
+        if not isinstance(layers[name], list):
+            continue
+        for entry in layers[name]:
+            key = str(entry.get("path", "")).casefold()
+            key_layers.setdefault(key, set()).add(name)
+    cross = {k: v for k, v in key_layers.items() if len(v) > 1}
+    if cross:
+        findings.append(
+            Finding(
+                "Important",
+                "cross_layer_duplicate",
+                f"{len(cross)} engine key(s) appear in multiple layers: "
+                + ", ".join(sorted(cross)[:5]),
+            )
+        )
+
     stats = manifest.get("stats")
     if not isinstance(stats, dict):
         findings.append(Finding("Critical", "missing_stats", "manifest.stats is missing"))
@@ -114,7 +134,22 @@ def validate(
             findings.append(
                 Finding("Critical", "missing_coverage", f"coverage.{required} is missing")
             )
-    l1_count = int(stats.get("l1_count") or len(layers["L1"]))
+    stats_l1 = stats.get("l1_count")
+    stats_l1_value: int | None = None
+    if stats_l1 is not None:
+        try:
+            stats_l1_value = int(stats_l1)
+        except (TypeError, ValueError):
+            stats_l1_value = None
+        if stats_l1_value != len(layers["L1"]):
+            findings.append(
+                Finding(
+                    "Critical",
+                    "l1_count_mismatch",
+                    f"stats.l1_count={stats_l1} != len(L1)={len(layers['L1'])}",
+                )
+            )
+    l1_count = stats_l1_value if stats_l1_value is not None else len(layers["L1"])
     if l1_count > max_l1:
         findings.append(
             Finding("Critical", "l1_too_large", f"L1={l1_count} > {max_l1}")

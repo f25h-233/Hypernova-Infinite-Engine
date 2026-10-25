@@ -66,10 +66,14 @@ class AssetLookup:
     weapons: dict[str, list[AssetRef]]
     images: dict[str, list[AssetRef]]
     wings: dict[str, str]
+    skin_errors: dict[str, str] = field(default_factory=dict)
 
 
-def _build_skin_index(mods: list[ModRef]) -> dict[str, list[AssetRef]]:
+def _build_skin_index(
+    mods: list[ModRef],
+) -> tuple[dict[str, list[AssetRef]], dict[str, str]]:
     out: dict[str, list[AssetRef]] = {}
+    errors: dict[str, str] = {}
     for mod in mods:
         base = mod.folder / "data" / "hulls"
         if not base.is_dir():
@@ -83,27 +87,32 @@ def _build_skin_index(mods: list[ModRef]) -> dict[str, list[AssetRef]]:
                 absolute = Path(dirpath) / fn
                 try:
                     data = load(absolute)
-                except Exception:
+                    if not isinstance(data, dict):
+                        raise ValueError("skin is not an object")
+                    sid = str(data.get("skinHullId") or Path(fn).stem)
+                except Exception as exc:
+                    errors[str(absolute)] = f"{fn}: {exc}"
                     continue
-                sid = str(data.get("skinHullId") or Path(fn).stem)
                 rel = absolute.relative_to(mod.folder).as_posix()
                 for key in {sid, Path(fn).stem}:
                     out.setdefault(key, []).append(
                         AssetRef(mod.mod_id, mod.folder, absolute, rel, mod.order)
                     )
-    return out
+    return out, errors
 
 
 def build_lookup(mods: list[ModRef]) -> AssetLookup:
+    skins, skin_errors = _build_skin_index(mods)
     return AssetLookup(
         variants=build_id_index(mods, "variants", frozenset({".variant"}), "variantId"),
         ships=build_id_index(mods, "hulls", frozenset({".ship"}), "hullId"),
-        skins=_build_skin_index(mods),
+        skins=skins,
         weapons=build_id_index(
             mods, "weapons", frozenset({".wpn"}), "id", ("shipsystems/wpn",)
         ),
         images=build_image_index(mods),
         wings=read_wing_map(mods),
+        skin_errors=skin_errors,
     )
 
 
@@ -270,6 +279,10 @@ def build_closure(variant_ids: list[str], lookup: AssetLookup) -> ClosureResult:
     walker = _Walker(lookup)
     for vid in variant_ids:
         walker.add_variant(vid)
+    if lookup.skin_errors:
+        walker.result.stats.parse_errors.setdefault("skin", []).extend(
+            sorted(lookup.skin_errors)
+        )
     for key in ("missing", "parse_errors"):
         bucket = getattr(walker.result.stats, key)
         for names in bucket.values():

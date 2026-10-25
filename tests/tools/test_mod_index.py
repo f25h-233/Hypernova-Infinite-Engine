@@ -112,6 +112,16 @@ def test_metadata_parse_error_is_recorded(mini_game):
     assert len(md.entries) == 3
 
 
+def test_no_core_get_excludes_core_fallback(mini_game):
+    md = read_dds_metadata(mini_game)
+    # by_rel 唯一回退路径
+    assert md.get("renamed", "graphics/ships/h_core.png", exclude_core=True) is None
+    assert md.get("renamed", "graphics/ships/h_core.png", exclude_core=False) is not None
+    # by_key 直命中路径
+    assert md.get("starsector-core", "graphics/ships/h_core.png", exclude_core=True) is None
+    assert md.get("starsector-core", "graphics/ships/h_core.png", exclude_core=False) is not None
+
+
 def test_metadata_bad_record_does_not_abort(mini_game):
     import json as _json
     from conftest import _write

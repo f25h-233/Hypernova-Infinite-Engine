@@ -86,6 +86,19 @@ def test_double_slash_sprite_is_normalized(mini_game):
     assert "sprite" not in result.stats.missing
 
 
+def test_skin_parse_error_is_recorded(mini_game):
+    from conftest import _write
+    _write(mini_game / "mods" / "mod_a" / "data" / "hulls" / "skins" / "bad.skin", "{not json")
+    # 非 dict 顶层：data.get 若在 try 外会抛 AttributeError 并中断 build_lookup
+    _write(mini_game / "mods" / "mod_a" / "data" / "hulls" / "skins" / "list.skin", "[1, 2]")
+    scan = scan_mods(mini_game, load_enabled_ids(mini_game))
+    lookup = build_lookup(scan.mods)
+    result = build_closure(["va_one"], lookup)
+    skin_errors = result.stats.parse_errors.get("skin", [])
+    assert any("bad.skin" in k for k in skin_errors)
+    assert any("list.skin" in k for k in skin_errors)
+
+
 def test_missing_sprite_is_recorded(mini_game):
     from conftest import _write
     _write(
