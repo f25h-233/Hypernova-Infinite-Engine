@@ -58,7 +58,21 @@ class TextureManifestTest {
         assertEquals(1, m.size());
         assertEquals("modA", m.lookup("graphics/weapons/x.png").modId());
         assertEquals(Layer.L1, m.lookupLayer("graphics/weapons/x.png"));
-        assertEquals(1, m.duplicateCount());
+        assertEquals(1, m.discardedCount());
+    }
+
+    @Test
+    void crossLayerConflictCountMatchesKnownSample() throws JSONException {
+        JSONObject root = manifest(
+                "L1", List.of(entry("dup/a.png", "m", 1, 1),
+                              entry("dup/a.png", "m", 1, 1),
+                              entry("cross/b.png", "m", 1, 1)),
+                "L2", List.of(),
+                "L3", List.of(entry("cross/b.png", "m", 1, 1)));
+        TextureManifest m = TextureManifest.fromJson(root);
+        assertEquals(1, m.crossLayerConflictCount());
+        assertEquals(2, m.discardedCount());
+        assertEquals(2, m.size());
     }
 
     @Test

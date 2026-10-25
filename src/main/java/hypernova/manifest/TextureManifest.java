@@ -6,6 +6,8 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,23 +15,27 @@ import java.util.Map;
 public final class TextureManifest {
     private final Map<String, TextureEntry> byPath;
     private final Map<Layer, List<String>> byLayer;
-    private final int duplicates;
+    private final int discarded;
+    private final int crossLayerConflicts;
 
     private TextureManifest(Map<String, TextureEntry> byPath,
                             Map<Layer, List<String>> byLayer,
-                            int duplicates) {
+                            int discarded,
+                            int crossLayerConflicts) {
         this.byPath = byPath;
         this.byLayer = byLayer;
-        this.duplicates = duplicates;
+        this.discarded = discarded;
+        this.crossLayerConflicts = crossLayerConflicts;
     }
 
     public static TextureManifest fromJson(JSONObject root) {
         Map<String, TextureEntry> byPath = new LinkedHashMap<>();
         Map<Layer, List<String>> byLayer = new EnumMap<>(Layer.class);
-        int duplicates = 0;
+        Map<String, EnumSet<Layer>> layersByPath = new HashMap<>();
+        int discarded = 0;
         JSONObject layers = root.optJSONObject("layers");
         if (layers == null) {
-            return new TextureManifest(byPath, byLayer, 0);
+            return new TextureManifest(byPath, byLayer, 0, 0);
         }
         for (Layer layer : Layer.values()) {
             JSONArray arr = layers.optJSONArray(layer.name());
@@ -47,8 +53,9 @@ public final class TextureManifest {
                 if (path.isEmpty()) {
                     continue;
                 }
+                layersByPath.computeIfAbsent(path, k -> EnumSet.noneOf(Layer.class)).add(layer);
                 if (byPath.containsKey(path)) {
-                    duplicates++;
+                    discarded++;
                     continue;
                 }
                 TextureEntry entry = new TextureEntry(
@@ -62,7 +69,13 @@ public final class TextureManifest {
                 paths.add(path);
             }
         }
-        return new TextureManifest(byPath, byLayer, duplicates);
+        int crossLayerConflicts = 0;
+        for (EnumSet<Layer> seenIn : layersByPath.values()) {
+            if (seenIn.size() > 1) {
+                crossLayerConflicts++;
+            }
+        }
+        return new TextureManifest(byPath, byLayer, discarded, crossLayerConflicts);
     }
 
     public TextureEntry lookup(String path) {
@@ -88,7 +101,13 @@ public final class TextureManifest {
         return paths == null ? 0 : paths.size();
     }
 
-    public int duplicateCount() {
-        return duplicates;
+    /** 被层序去重丢弃的条目数（含同层与跨层）。 */
+    public int discardedCount() {
+        return discarded;
+    }
+
+    /** 出现在多个不同 layer 的 path 数（同层内重复不计）。 */
+    public int crossLayerConflictCount() {
+        return crossLayerConflicts;
     }
 }

@@ -4,7 +4,7 @@ import com.fs.starfarer.api.SettingsAPI;
 import org.json.JSONObject;
 
 public final class ManifestLoader {
-    public static final String PATH = "data/hypernova/manifest-v1.json";
+    public static final String PATH = "data/config/hypernova/manifest-v1.json";
 
     private ManifestLoader() {
     }
