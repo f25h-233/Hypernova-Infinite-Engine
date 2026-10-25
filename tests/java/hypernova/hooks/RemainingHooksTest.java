@@ -227,20 +227,67 @@ class RemainingHooksTest {
         assertTrue(svc.loaded.isEmpty());
     }
 
-    // 追加（brief 之外）：brief 的 warmup 测试在第一次 tick 后 pending 已空，
-    // 因此删掉「清标记」后二次 tick 仍然无事可做、测试全绿。这里在两次 tick 之间
-    // 新塞一条 pending，锁定「读档预热一次即止」语义。
+    // 追加（Fix loop 1）：Interfaces 的「最多连续 3 帧」语义。
+    // 200 条 pending 超过 3×64=192 的单轮上限，故终止条件来自帧数封顶而非队列排空——
+    // 这条同时锁住 framesLeft 递减、每帧 64 条上限、以及第 4 帧起彻底停手。
     @Test
-    void postLoadWarmupDoesNotFireAgainAfterFlagCleared() {
+    void warmupDrainsAcrossAtMostThreeFrames() {
+        RecordingScheduler s = new RecordingScheduler();
+        StubService svc = new StubService(new AtomicBoolean(false));
+        for (int i = 0; i < 200; i++) {
+            svc.pending.add("p" + i + ".png");
+        }
+        PostLoadWarmupHook h = new PostLoadWarmupHook(s, svc);
+        h.onGameLoaded();
+        for (int frame = 1; frame <= 5; frame++) {
+            int before = s.queued.size();
+            h.tick();
+            if (frame <= 3) {
+                assertTrue(s.queued.size() > before, "第 " + frame + " 帧应当有入队");
+            } else {
+                assertEquals(before, s.queued.size(), "第 " + frame + " 帧不应再入队");
+            }
+        }
+        assertEquals(3 * 64, s.queued.size());                 // = min(200, 192)
+        assertEquals(List.of("p0.png"), s.queued.subList(0, 1)); // 顺序保持
+        assertEquals(200 - 192, svc.pending.size());            // 余量留给常规 drain
+        assertEquals(List.of(Layer.L3, Layer.L3, Layer.L3), s.layers);
+    }
+
+    // 追加（Fix loop 1）：队列先于帧数上限耗尽时，后续帧必须空转而不是反复 enqueue。
+    @Test
+    void warmupStopsWhenPendingExhausted() {
+        RecordingScheduler s = new RecordingScheduler();
+        StubService svc = new StubService(new AtomicBoolean(false));
+        svc.pending.add("a.png");
+        svc.pending.add("b.png");
+        PostLoadWarmupHook h = new PostLoadWarmupHook(s, svc);
+        h.onGameLoaded();
+        h.tick();
+        assertEquals(2, s.queued.size(), "第 1 帧排空 2 条");
+        h.tick();
+        assertEquals(2, s.queued.size(), "第 2 帧入队 0 条");
+        h.tick();
+        assertEquals(2, s.queued.size(), "第 3 帧入队 0 条");
+    }
+
+    // 追加（Fix loop 1）：onGameLoaded() 必须重置帧预算，否则第二次读档只有 0 帧可用。
+    @Test
+    void warmupFrameBudgetResetsOnEachGameLoad() {
         RecordingScheduler s = new RecordingScheduler();
         StubService svc = new StubService(new AtomicBoolean(false));
         svc.pending.add("a.png");
         PostLoadWarmupHook h = new PostLoadWarmupHook(s, svc);
         h.onGameLoaded();
         h.tick();
-        assertEquals(List.of("a.png"), s.queued);
-        svc.pending.add("later.png");
         h.tick();
-        assertEquals(List.of("a.png"), s.queued);
+        h.tick();
+        assertEquals(1, s.queued.size());
+        svc.pending.add("b.png");
+        h.tick();
+        assertEquals(1, s.queued.size(), "帧预算耗尽后不应自发复活");
+        h.onGameLoaded();
+        h.tick();
+        assertEquals(List.of("a.png", "b.png"), s.queued, "再次读档应重新获得帧预算");
     }
 }
