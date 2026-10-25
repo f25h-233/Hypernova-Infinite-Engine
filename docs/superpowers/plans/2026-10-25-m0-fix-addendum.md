@@ -352,7 +352,152 @@ def test_good_planets_json_has_no_errors(mini_game):
 - Task 6 validator：`stats.core_parse_errors` 非空 → **Critical**。
 - Task 8 报告“闭包缺口”节列出 `core_parse_errors`。
 
-## D. 执行顺序（避免 `mod_index.py` 写冲突）
+## D. Task 6 fix（validator 假绿）
+
+> 触发：Task 6 review 的 F1–F4 四条 Important。三条会让 validator 在缺失/错误数据上返回 exit 0，直接威胁 M0 出口证据。
+
+### D1. `stats` / `coverage` 整块缺失 → Critical（F1）
+
+在 `validate()` 里 `layers` 检查之后、读取 `stats` 之前插入：
+
+```python
+    stats = manifest.get("stats")
+    if not isinstance(stats, dict):
+        findings.append(Finding("Critical", "missing_stats", "manifest.stats is missing"))
+        return findings
+    coverage = stats.get("coverage")
+    if not isinstance(coverage, dict):
+        findings.append(
+            Finding("Critical", "missing_coverage", "manifest.stats.coverage is missing")
+        )
+        return findings
+```
+
+并删除原实现里的 `stats = manifest.get("stats") or {}` 与 `coverage = stats.get("coverage") or {}`。
+
+### D2. metadata 覆盖率不达标 → Critical（F2）
+
+```python
+    meta_cov = coverage.get("metadata")
+    if meta_cov is not None and float(meta_cov) < 1.0:
+        findings.append(
+            Finding("Critical", "coverage_metadata", f"metadata={meta_cov} < 1.0")
+        )
+```
+
+### D3. 让 `game_root` 真正参与校验（F3）
+
+对 `baked=True` 的条目，额外要求 `ddsPath` 落在 `game_root` 之内：
+
+```python
+def _inside_root(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+```
+
+在 `_entry_findings` 的 `baked` 分支里：
+
+```python
+    if entry["baked"]:
+        dds = entry.get("ddsPath")
+        if not dds or not Path(str(dds)).is_file():
+            out.append(
+                Finding("Critical", "missing_dds", f"{layer}: baked entry has no DDS {path}")
+            )
+        elif not _inside_root(Path(str(dds)), game_root):
+            out.append(
+                Finding(
+                    "Critical",
+                    "dds_outside_root",
+                    f"{layer}: DDS outside game root {dds}",
+                )
+            )
+```
+
+另外，`main()` 在调用 `validate` 前校验 `--game-root` 必须存在：
+
+```python
+    if not args.game_root.is_dir():
+        print(f"[Critical] bad_game_root: {args.game_root} is not a directory", file=sys.stderr)
+        return 1
+```
+
+### D4. 补 6 条能红的测试（F4）
+
+```python
+def test_missing_stats_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m.pop("stats", None)
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "missing_stats" in codes
+
+
+def test_missing_coverage_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["stats"].pop("coverage", None)
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "missing_coverage" in codes
+
+
+def test_metadata_coverage_below_one_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["stats"]["coverage"]["metadata"] = 0.5
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "coverage_metadata" in codes
+
+
+def test_dds_outside_game_root_is_critical(mini_game, tmp_path):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    baked = next(e for e in m["layers"]["L1"] if e["baked"])
+    outside = tmp_path / "elsewhere.dds"
+    outside.write_bytes(b"DDS ")
+    baked["ddsPath"] = str(outside)
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "dds_outside_root" in codes
+
+
+def test_bad_game_root_cli_exits_nonzero(mini_game, tmp_path):
+    import subprocess, sys
+    from pathlib import Path
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    out = tmp_path / "m.json"
+    out.write_text(json.dumps(build_manifest(mini_game, include_l2=False).manifest), encoding="utf-8")
+    root = Path(__file__).resolve().parents[2]
+    proc = subprocess.run(
+        [sys.executable, "-I", str(root / "tools" / "validate_manifest.py"),
+         "--manifest", str(out), "--game-root", str(tmp_path / "nope")],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert proc.returncode == 1
+    assert "bad_game_root" in (proc.stdout + proc.stderr)
+
+
+def test_entry_schema_missing_key_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["layers"]["L1"][0].pop("src")
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "entry_schema" in codes
+```
+
+预期：`python -I -m pytest tests/tools/test_validate_manifest.py -q` → **14 passed**；全量 `tests/tools` → **63 passed**。
+
+---
+
+## E. 执行顺序（避免 `mod_index.py` 写冲突）
 
 1. 先派 Task 2 fix（A1–A5），等它 commit；
 2. 再派 Task 3 fix（B1–B4），它依赖 `build_id_index`；
