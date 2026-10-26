@@ -33,6 +33,8 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
     private static volatile SaveLoadGuard sharedSaveLoadGuard;
     private static volatile PrefetchScheduler sharedScheduler;
     private static volatile Telemetry sharedTelemetry;
+    /** 心跳频率（帧）：0 关闭，1 每帧，N>1 每 N 帧。原 verbose 死开关的替代（Minor）。 */
+    private static volatile int sharedHeartbeatFrames = 3000;
     /** 双入口共享的门闩：同帧第二次 advance（另一个实例/另一个入口）直接 return（I1）。 */
     private static final FrameAdvanceGate GATE = new FrameAdvanceGate(5_000_000L);
 
@@ -44,6 +46,7 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
 
     private int framesSinceFlush;
     private long tickCount;
+    private int heartbeatFrames = 3000;
 
     /**
      * 装配层在 onApplicationLoad 里调用（不触碰 Global），让无参实例能取到依赖。
@@ -51,12 +54,13 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
      */
     public static void install(TriggerPoller poller, PostLoadWarmupHook warmupHook,
                                SaveLoadGuard saveLoadGuard, PrefetchScheduler scheduler,
-                               Telemetry telemetry) {
+                               Telemetry telemetry, int heartbeatFrames) {
         sharedPoller = poller;
         sharedWarmupHook = warmupHook;
         sharedSaveLoadGuard = saveLoadGuard;
         sharedScheduler = scheduler;
         sharedTelemetry = telemetry;
+        sharedHeartbeatFrames = heartbeatFrames;
     }
 
     /** 供 {@code data/config/settings.json} 的 plugins 注册（ScriptStore 反射构造，每场战斗一次）。 */
@@ -71,6 +75,7 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
         this.saveLoadGuard = saveLoadGuard;
         this.scheduler = scheduler;
         this.telemetry = telemetry;
+        this.heartbeatFrames = sharedHeartbeatFrames;
     }
 
     /** 战斗态入口。 */
@@ -90,8 +95,9 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
         scheduler.tick();
         GATE.completed(scheduler, scheduler.stats().ticks(), System.nanoTime());
         tickCount++;
-        // 心跳降噪：默认每 3000 帧（约 50 s）一条，只用于冒烟核对管线存活。
-        if (tickCount % 3000 == 1) {
+        // 心跳降噪：默认每 heartbeat_frames 帧（3000 帧 ≈ 50 s）一条，只用于冒烟核对管线存活。
+        int hb = heartbeatFrames;
+        if (hb > 0 && tickCount % hb == 1) {
             com.fs.starfarer.api.Global.getLogger(HypernovaCombatPlugin.class).info(
                     "HYPERNOVA_TICK " + tickCount + " " + scheduler.stats());
         }
@@ -134,6 +140,7 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
         saveLoadGuard = g;
         scheduler = s;
         telemetry = t;
+        heartbeatFrames = sharedHeartbeatFrames;
         return true;
     }
 }

@@ -3,6 +3,6 @@
   "eviction": false,
   "frame_budget_micros": 2000,
   "telemetry_buffer_lines": 4096,
-  "verbose": false,
+  "heartbeat_frames": 3000,
   "startup_probe_paths": 0
 }

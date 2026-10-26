@@ -51,6 +51,14 @@ class AssemblyWiringTest {
     }
 
     @Test
+    void heartbeatFrequencyIsConfigurable() throws Exception {
+        // Minor：verbose 死开关改为 heartbeat_frames。
+        String src = read(COMBAT);
+        assertTrue(src.contains("heartbeatFrames"), "心跳频率必须可配置");
+        assertFalse(src.contains("tickCount % 3000"), "硬编码 3000 帧已被配置项取代");
+    }
+
+    @Test
     void contactDialogIsTheRealTriggerPointTwo() throws Exception {
         // I6：触发点②接的是 contactDialogOpen，不是 codexOpen。
         String src = Files.readString(Path.of("src/main/java/hypernova/adapter/TriggerPoller.java"));

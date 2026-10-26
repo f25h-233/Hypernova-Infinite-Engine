@@ -208,7 +208,7 @@ class TextureServiceImplTest {
         TextureServiceImpl s = service(manifestWith("a.png"), b, t, new AtomicBoolean(false));
         s.ensureLoaded("a.png");
         assertFalse(s.unload("a.png"));
-        assertTrue(t.events.stream().anyMatch(e -> e.startsWith("refused|a.png|eviction-disabled")));
+        assertTrue(t.events.stream().anyMatch(e -> e.startsWith("refused|a.png|eviction-not-implemented-in-m1")));
     }
 
     @Test

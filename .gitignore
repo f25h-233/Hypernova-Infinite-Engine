@@ -36,3 +36,7 @@ lib/
 
 # 分发产物（manifest 由 tools/trim_manifest.py 生成，不入库大文件）
 dist/
+
+# Python 缓存（pytest 会在 tools/ 与 tests/ 下生成）
+__pycache__/
+*.pyc

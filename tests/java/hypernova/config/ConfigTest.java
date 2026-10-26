@@ -12,7 +12,7 @@ class ConfigTest {
         assertFalse(c.eviction());
         assertEquals(2000, c.frameBudgetMicros());
         assertEquals(4096, c.telemetryBufferLines());
-        assertFalse(c.verbose());
+        assertEquals(3000, c.heartbeatFrames());
     }
 
     @Test
@@ -22,13 +22,29 @@ class ConfigTest {
         o.put("eviction", true);
         o.put("frame_budget_micros", 1500);
         o.put("telemetry_buffer_lines", 10);
-        o.put("verbose", true);
+        o.put("heartbeat_frames", 1);
         HypernovaConfig c = HypernovaConfig.fromJson(o);
         assertFalse(c.enabled());
         assertTrue(c.eviction());
         assertEquals(1500, c.frameBudgetMicros());
         assertEquals(10, c.telemetryBufferLines());
-        assertTrue(c.verbose());
+        assertEquals(1, c.heartbeatFrames());
+    }
+
+    @Test
+    void heartbeatFramesCanBeZeroToDisableHeartbeat() throws Exception {
+        JSONObject o = new JSONObject();
+        o.put("heartbeat_frames", 0);
+        assertEquals(0, HypernovaConfig.fromJson(o).heartbeatFrames());
+    }
+
+    @Test
+    void legacyVerboseKeyNoLongerAffectsConfig() throws Exception {
+        // verbose 在 88a752d 后成为死开关；现已改名为 heartbeat_frames。
+        // 旧配置文件里残留 verbose=true 不得再改变任何行为（只是被忽略）。
+        JSONObject o = new JSONObject();
+        o.put("verbose", true);
+        assertEquals(3000, HypernovaConfig.fromJson(o).heartbeatFrames());
     }
 
     @Test

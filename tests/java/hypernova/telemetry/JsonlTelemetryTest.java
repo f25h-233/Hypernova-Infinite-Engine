@@ -24,7 +24,7 @@ class JsonlTelemetryTest {
     @Test
     void bufferThenFlushWritesOneLinePerEvent() throws Exception {
         CaptureSink sink = new CaptureSink();
-        JsonlTelemetry t = new JsonlTelemetry(sink, 100, false);
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100);
         t.event("loaded", "graphics/ui/a.png", 1234L, "core");
         t.event("miss", "graphics/ui/b.png", 2L, "not-in-manifest");
         assertEquals(2, t.buffered());
@@ -43,7 +43,7 @@ class JsonlTelemetryTest {
     @Test
     void dropsOldestHalfWhenFull() throws Exception {
         CaptureSink sink = new CaptureSink();
-        JsonlTelemetry t = new JsonlTelemetry(sink, 4, false);
+        JsonlTelemetry t = new JsonlTelemetry(sink, 4);
         for (int i = 0; i < 6; i++) {
             t.event("loaded", "p" + i, 0L, "");
         }
@@ -57,7 +57,7 @@ class JsonlTelemetryTest {
     @Test
     void longPathIsTruncated() throws Exception {
         CaptureSink sink = new CaptureSink();
-        JsonlTelemetry t = new JsonlTelemetry(sink, 100, false);
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 5000; i++) {
             sb.append('x');
@@ -76,7 +76,7 @@ class JsonlTelemetryTest {
         // 命中率完全不可观测。hit 与 loaded 合计才等于本组件确保加载过的总量，
         // 所以过滤 hit 等于把 REQ-R1-06 的核心指标丢掉。
         CaptureSink sink = new CaptureSink();
-        JsonlTelemetry t = new JsonlTelemetry(sink, 100, false);
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100);
         t.event("hit", "graphics/ui/a.png", 1L, "core");
         assertEquals(1, t.buffered());
         t.event("miss", "graphics/ui/b.png", 2L, "");
@@ -88,9 +88,9 @@ class JsonlTelemetryTest {
     }
 
     @Test
-    void hitIsRecordedWhenVerbose() throws Exception {
+    void hitIsAlwaysRecorded() throws Exception {
         CaptureSink sink = new CaptureSink();
-        JsonlTelemetry t = new JsonlTelemetry(sink, 100, true);
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100);
         t.event("hit", "graphics/ui/a.png", 1L, "core");
         assertEquals(1, t.buffered());
         t.flush();
@@ -102,7 +102,7 @@ class JsonlTelemetryTest {
     void eventCarriesThreadName() throws Exception {
         // REQ-R1-06 要求记录线程名（I5）
         CaptureSink sink = new CaptureSink();
-        JsonlTelemetry t = new JsonlTelemetry(sink, 100, false);
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100);
         t.event("loaded", "a.png", 0L, "");
         t.flush();
         JSONObject parsed = new JSONObject(sink.contents.get(0).trim());
@@ -113,7 +113,7 @@ class JsonlTelemetryTest {
     void secondFlushKeepsEarlierLines() throws Exception {
         // I4：writeTextFileToCommon 是整文件覆盖写，flush 必须重写全量历史。
         CaptureSink sink = new CaptureSink();
-        JsonlTelemetry t = new JsonlTelemetry(sink, 100, false);
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100);
         t.event("loaded", "first.png", 0L, "");
         t.flush();
         t.event("loaded", "second.png", 0L, "");
@@ -128,7 +128,7 @@ class JsonlTelemetryTest {
     void writesAreCappedAndReportTruncation() throws Exception {
         // I4 上限：字符预算超限时丢弃最旧的一半，并留一条 telemetry-truncated。
         CaptureSink sink = new CaptureSink();
-        JsonlTelemetry t = new JsonlTelemetry(sink, 100_000, false);
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100_000);
         // 用超长 path 逼字符预算先于行数上限触发（每条 ~1000 字符）。
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 1000; i++) {
@@ -149,7 +149,7 @@ class JsonlTelemetryTest {
     @Test
     void truncationIsNotRepeatedForever() throws Exception {
         CaptureSink sink = new CaptureSink();
-        JsonlTelemetry t = new JsonlTelemetry(sink, 100_000, false);
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100_000);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 1000; i++) {
             sb.append('y');
@@ -165,7 +165,7 @@ class JsonlTelemetryTest {
     @Test
     void maxLinesOneStillTrims() throws Exception {
         CaptureSink sink = new CaptureSink();
-        JsonlTelemetry t = new JsonlTelemetry(sink, 1, false);
+        JsonlTelemetry t = new JsonlTelemetry(sink, 1);
         t.event("loaded", "a", 0L, "");
         t.event("loaded", "b", 0L, "");
         t.event("loaded", "c", 0L, "");
@@ -181,7 +181,7 @@ class JsonlTelemetryTest {
         TelemetrySink failing = (name, content) -> {
             throw new java.io.IOException("disk full");
         };
-        JsonlTelemetry t = new JsonlTelemetry(failing, 100, false);
+        JsonlTelemetry t = new JsonlTelemetry(failing, 100);
         t.event("loaded", "a", 0L, "");
         assertDoesNotThrow(t::flush);
     }

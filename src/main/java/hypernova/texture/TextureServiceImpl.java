@@ -103,7 +103,7 @@ public final class TextureServiceImpl implements TextureService {
 
     @Override
     public boolean unload(String path) {
-        telemetry.event("refused", path, 0L, "eviction-disabled");
+        telemetry.event("refused", path, 0L, "eviction-not-implemented-in-m1");
         return false;
     }
 

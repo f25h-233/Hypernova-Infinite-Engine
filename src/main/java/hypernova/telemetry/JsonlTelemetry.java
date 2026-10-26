@@ -36,18 +36,15 @@ public final class JsonlTelemetry implements Telemetry {
 
     private final TelemetrySink sink;
     private final int maxLines;
-    /** 保留字段：当前不影响任何行为，Minor 收口时移除（见 verbose 死开关）。 */
-    private final boolean verbose;
     private final Deque<String> lines = new ArrayDeque<>();
     /** 本次会话已经（或即将）落盘的全部行，flush 时整份重写。 */
     private final List<String> written = new ArrayList<>();
     private long writtenChars;
     private long droppedLines;
 
-    public JsonlTelemetry(TelemetrySink sink, int maxLines, boolean verbose) {
+    public JsonlTelemetry(TelemetrySink sink, int maxLines) {
         this.sink = sink;
         this.maxLines = Math.max(1, maxLines);
-        this.verbose = verbose;
     }
 
     @Override
