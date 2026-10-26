@@ -33,3 +33,6 @@ desktop.ini
 *.7z
 build/java/
 lib/
+
+# 分发产物（manifest 由 tools/trim_manifest.py 生成，不入库大文件）
+dist/
