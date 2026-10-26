@@ -91,16 +91,36 @@ def load_config(path: Path) -> dict:
 
 
 def jar_provenance(installed: Path, build: Path) -> tuple[bool, str]:
-    """安装的 jar 必须与 build/java/hypernova.jar 字节一致（否则冒烟证据不属于 HEAD）。"""
+    """安装的 jar 必须与 build/java/hypernova.jar 的**类内容**一致。
+
+    直接比字节会误判：`jar` 每次打包写入不同的 META-INF 时间戳，同一份 class
+    两次打包的 sha 必然不同（本机实测：大小相同 50153B、sha 不同）。因此比对
+    「排除了 META-INF 与目录项之后，每个条目的 名称+crc32+大小」的哈希。
+    """
     if not installed.is_file():
         return False, f"installed jar missing: {installed}"
     if not build.is_file():
         return False, f"build output missing: {build} (先跑 tools/java/build-mod.sh)"
-    a = installed.read_bytes()
-    b = build.read_bytes()
+    a, na = _jar_content_hash(installed)
+    b, nb = _jar_content_hash(build)
     if a != b:
-        return False, f"installed={len(a)}B sha={_sha(a)[:12]} build={len(b)}B sha={_sha(b)[:12]}"
-    return True, f"sha={_sha(a)[:12]} size={len(a)}B"
+        return False, f"installed={na} entries sha={a[:12]} build={nb} entries sha={b[:12]}"
+    return True, f"{na} entries sha={a[:12]}"
+
+
+def _jar_content_hash(path: Path) -> tuple[str, int]:
+    import hashlib
+    import zipfile
+
+    rows = []
+    with zipfile.ZipFile(path) as zf:
+        for info in zf.infolist():
+            if info.is_dir() or info.filename.startswith("META-INF/"):
+                continue
+            rows.append(f"{info.filename}|{info.CRC}|{info.file_size}")
+    rows.sort()
+    joined = chr(10).join(rows).encode("utf-8")
+    return hashlib.sha256(joined).hexdigest(), len(rows)
 
 
 def _sha(data: bytes) -> str:
