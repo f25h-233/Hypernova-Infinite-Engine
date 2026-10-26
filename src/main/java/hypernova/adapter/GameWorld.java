@@ -2,7 +2,10 @@ package hypernova.adapter;
 
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.CampaignFleetAPI;
+import com.fs.starfarer.api.campaign.CampaignUIAPI;
+import com.fs.starfarer.api.campaign.InteractionDialogAPI;
 import com.fs.starfarer.api.campaign.LocationAPI;
+import com.fs.starfarer.api.campaign.SectorEntityToken;
 import com.fs.starfarer.api.combat.CombatEngineAPI;
 import com.fs.starfarer.api.combat.CombatFleetManagerAPI;
 import com.fs.starfarer.api.fleet.FleetMemberAPI;
@@ -19,24 +22,54 @@ public final class GameWorld implements TriggerPoller.World {
     }
 
     @Override
-    public String combatsKey() {
-        CombatEngineAPI engine = Global.getCombatEngine();
-        if (engine == null || engine.getContext() == null) {
-            return "";
-        }
-        CampaignFleetAPI player = engine.getContext().getPlayerFleet();
-        CampaignFleetAPI other = engine.getContext().getOtherFleet();
-        return (player == null ? "?" : player.getId()) + "|" + (other == null ? "?" : other.getId());
-    }
-
-    @Override
     public boolean codexOpen() {
         return Global.getSettings().isShowingCodex();
     }
 
+    /**
+     * 触发点②的判据：对话框可见 **且** 目标是一支舰队。
+     * 只看 isShowingDialog() 会把空间站、行星、market 等所有对话都算成「接触界面」。
+     */
     @Override
     public boolean contactDialogOpen() {
-        return Global.getSector() != null && Global.getSector().getCampaignUI().isShowingDialog();
+        return contactDialogFleet() != null;
+    }
+
+    @Override
+    public String contactDialogFleetName() {
+        CampaignFleetAPI fleet = contactDialogFleet();
+        return fleet == null ? null : fleet.getName();
+    }
+
+    @Override
+    public List<String> contactDialogFleetVariantIds() {
+        CampaignFleetAPI fleet = contactDialogFleet();
+        if (fleet == null) {
+            return List.of();
+        }
+        List<String> ids = new ArrayList<>();
+        for (FleetMemberAPI member : fleet.getMembersWithFightersCopy()) {
+            if (member.getVariant() != null) {
+                ids.add(member.getVariant().getHullVariantId());
+            }
+        }
+        return ids;
+    }
+
+    private static CampaignFleetAPI contactDialogFleet() {
+        if (Global.getSector() == null) {
+            return null;
+        }
+        CampaignUIAPI ui = Global.getSector().getCampaignUI();
+        if (ui == null || !ui.isShowingDialog()) {
+            return null;
+        }
+        InteractionDialogAPI dialog = ui.getCurrentInteractionDialog();
+        if (dialog == null) {
+            return null;
+        }
+        SectorEntityToken target = dialog.getInteractionTarget();
+        return target instanceof CampaignFleetAPI fleet ? fleet : null;
     }
 
     @Override

@@ -209,6 +209,11 @@ def main(argv: list[str] | None = None) -> int:
         check("telemetry has events", len(rows) > 0, f"n={len(rows)} kinds={kinds}")
         check("no non-main-thread rejection", kinds.get("rejected", 0) == 0,
               f"rejected={kinds.get('rejected', 0)}")
+        check("telemetry has thread field",
+              all("thread" in r for r in rows) if rows else False,
+              "missing thread field (REQ-R1-06)" if rows and any("thread" not in r for r in rows)
+              else "all rows carry thread")
+
         # REQ-R1-03：所有 loaded 事件的 P99（不是最后一跳）
         loaded_nanos = [int(r["nanos"]) for r in rows
                         if r.get("kind") == "loaded" and isinstance(r.get("nanos"), (int, float))]

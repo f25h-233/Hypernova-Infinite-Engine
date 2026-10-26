@@ -91,11 +91,75 @@ class JsonlTelemetryTest {
     void hitIsRecordedWhenVerbose() throws Exception {
         CaptureSink sink = new CaptureSink();
         JsonlTelemetry t = new JsonlTelemetry(sink, 100, true);
-        t.event("hit", "graphics/ui/a.png", 1L, "verbose");
+        t.event("hit", "graphics/ui/a.png", 1L, "core");
         assertEquals(1, t.buffered());
         t.flush();
         JSONObject parsed = new JSONObject(sink.contents.get(0).trim());
         assertEquals("hit", parsed.getString("kind"));
+    }
+
+    @Test
+    void eventCarriesThreadName() throws Exception {
+        // REQ-R1-06 要求记录线程名（I5）
+        CaptureSink sink = new CaptureSink();
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100, false);
+        t.event("loaded", "a.png", 0L, "");
+        t.flush();
+        JSONObject parsed = new JSONObject(sink.contents.get(0).trim());
+        assertEquals(Thread.currentThread().getName(), parsed.getString("thread"));
+    }
+
+    @Test
+    void secondFlushKeepsEarlierLines() throws Exception {
+        // I4：writeTextFileToCommon 是整文件覆盖写，flush 必须重写全量历史。
+        CaptureSink sink = new CaptureSink();
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100, false);
+        t.event("loaded", "first.png", 0L, "");
+        t.flush();
+        t.event("loaded", "second.png", 0L, "");
+        t.flush();
+        String second = sink.contents.get(1);
+        assertTrue(second.contains("first.png"), "第二次 flush 丢失了第一次的结果");
+        assertTrue(second.contains("second.png"));
+        assertEquals(2, t.writtenTotal());
+    }
+
+    @Test
+    void writesAreCappedAndReportTruncation() throws Exception {
+        // I4 上限：字符预算超限时丢弃最旧的一半，并留一条 telemetry-truncated。
+        CaptureSink sink = new CaptureSink();
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100_000, false);
+        // 用超长 path 逼字符预算先于行数上限触发（每条 ~1000 字符）。
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 1000; i++) {
+            sb.append('x');
+        }
+        for (int i = 0; i < 2000; i++) {
+            t.event("loaded", i + sb.toString(), 0L, "");
+        }
+        t.flush();
+        String content = sink.contents.get(0);
+        assertTrue(content.length() <= JsonlTelemetry.MAX_WRITTEN_CHARS + 4096,
+                "单次写入超过字符预算: " + content.length());
+        assertTrue(content.contains("telemetry-truncated"), "截断后必须留说明行");
+        assertTrue(t.droppedTotal() > 0);
+        assertTrue(t.writtenTotal() <= JsonlTelemetry.MAX_WRITTEN_LINES);
+    }
+
+    @Test
+    void truncationIsNotRepeatedForever() throws Exception {
+        CaptureSink sink = new CaptureSink();
+        JsonlTelemetry t = new JsonlTelemetry(sink, 100_000, false);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 1000; i++) {
+            sb.append('y');
+        }
+        for (int i = 0; i < 2000; i++) {
+            t.event("loaded", i + sb.toString(), 0L, "");
+        }
+        t.flush();
+        t.flush(); // 第二次没有新事件：buffer 为空，不写
+        assertEquals(1, sink.contents.size());
     }
 
     @Test

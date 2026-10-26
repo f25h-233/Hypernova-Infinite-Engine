@@ -133,3 +133,12 @@ def test_provenance_mismatch_fails_without_skip(tmp_path, capsys):
     game = _make_game(tmp_path, log=GOOD_LOG, telemetry=_rows(), installed_jar=b"definitely-not-build")
     assert smoke.main(["--game", str(game)]) == 1
     assert "FAIL  installed jar matches build output" in capsys.readouterr().out
+
+
+def test_missing_thread_field_fails(tmp_path, capsys):
+    rows = _rows()
+    for r in rows:
+        r.pop("thread")
+    game = _make_game(tmp_path, log=GOOD_LOG, telemetry=rows)
+    assert smoke.main(["--game", str(game), "--skip-provenance"]) == 1
+    assert "FAIL  telemetry has thread field" in capsys.readouterr().out

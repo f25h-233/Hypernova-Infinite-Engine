@@ -89,29 +89,36 @@ public class HypernovaPlugin extends BaseModPlugin {
             deploymentHook = new DeploymentHook(scheduler, resolver);
             systemEnterHook = new SystemEnterHook(scheduler, resolver);
             warmupHook = new PostLoadWarmupHook(scheduler, service);
-            saveLoadGuard = new SaveLoadGuard(() -> Global.LOADING_SAVE, service);
+            saveLoadGuard = new SaveLoadGuard(() -> Global.LOADING_SAVE, service,
+                    System::nanoTime, config.frameBudgetMicros() * 1_000L);
 
             TriggerPoller poller = new TriggerPoller(
                     new GameWorld(), new FleetViewFactory(),
                     fleetDiscoveryHook, contactDialogHook, systemEnterHook, deploymentHook);
             this.poller = poller;
-            // 注入给无参的战斗插件实例（settings.json 的 plugins 由 ScriptStore 反射构造）。
-            // 组件禁用时这里根本不会执行，共享依赖保持 null → 整条管线 no-op（INV-05）。
-            HypernovaCombatPlugin.install(poller, warmupHook, saveLoadGuard, scheduler, telemetry);
 
             // 自检：直接在装配点验证兜底能力（REQ-R1-01 的原文判据是
             // 「预取后 getSprite(TextureId) > 0」，不是「日志里没有路径」）。
             // 这里在 onApplicationLoad 里跑一次，结果写日志，外部无需任何测试 mod。
+            // 必须放在 install() 之前：install() 之后的任何 Throwable 都会走 catch，
+            // 而 catch 会把静态槽位清空（I2 / INV-05），自检也就失去意义。
             if (config.startupProbePaths() > 0) {
                 runFallbackSelfCheck(Math.max(1, config.startupProbePaths()));
             }
 
             active = true;
+            // 注入给无参的战斗插件实例（settings.json 的 plugins 由 ScriptStore 反射构造）。
+            // install() 放在 active=true 之后：它之前的初始化失败不会留下「已禁用但仍运行」
+            // 的静态槽位；install() 之后的失败由 catch 里的 install(null,...) 统一回滚（I2 / INV-05）。
+            HypernovaCombatPlugin.install(poller, warmupHook, saveLoadGuard, scheduler, telemetry);
             Global.getLogger(HypernovaPlugin.class).info("Hypernova active: " + cap.reason()
                     + ", manifest=" + manifest.size() + " paths, discarded=" + manifest.discardedCount()
                     + ", crossLayer=" + manifest.crossLayerConflictCount());
         } catch (Throwable t) {
             active = false;
+            // 回滚静态槽位：否则 transient script / combat plugin 仍能从 static 拿到依赖，
+            // 出现「日志说已禁用、管线照常运行」的自相矛盾状态（I2 / INV-05）。
+            HypernovaCombatPlugin.install(null, null, null, null, null);
             Global.getLogger(HypernovaPlugin.class).error("Hypernova disabled: init failure", t);
         }
     }

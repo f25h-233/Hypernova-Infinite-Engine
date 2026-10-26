@@ -18,9 +18,10 @@ import java.util.List;
  *   <li><b>战斗态</b>（触发点③）：本类注册进 {@code data/config/settings.json} 的 {@code plugins}，
  *       引擎在每场战斗开始时反射构造无参实例并加入 combat engine。</li>
  *   <li><b>战役态</b>（触发点①②④⑤ + 调度器/telemetry）：本类同时实现 {@link EveryFrameScript}，
- *       装配层把它作为 transient script 挂到 sector 上。战役脚本在战斗态不会被 advance，
- *       战斗插件在战役态不存在，因此两条路径不会同帧双跑。</li>
+ *       装配层把它作为 transient script 挂到 sector 上。</li>
  * </ul>
+ * 两条挂载路径的实例身份、类加载器都无法保证唯一（settings.json 由 ScriptStore 反射构造），
+ * 实机日志已证明出现过同帧双跑，故 advance 开头用 {@link FrameAdvanceGate} 做幂等门闩。
  * 无参实例（引擎反射构造）从 {@link #install} 置入的共享依赖取参数；配置禁用时共享依赖为 null，
  * 整条管线 no-op（INV-05）。
  */
@@ -32,6 +33,8 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
     private static volatile SaveLoadGuard sharedSaveLoadGuard;
     private static volatile PrefetchScheduler sharedScheduler;
     private static volatile Telemetry sharedTelemetry;
+    /** 双入口共享的门闩：同帧第二次 advance（另一个实例/另一个入口）直接 return（I1）。 */
+    private static final FrameAdvanceGate GATE = new FrameAdvanceGate(5_000_000L);
 
     private TriggerPoller poller;
     private PostLoadWarmupHook warmupHook;
@@ -76,10 +79,16 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
         if (!resolve()) {
             return;
         }
+        // I1：战役态 transient script 与战斗态插件是两个实例、共享同一调度器。
+        // 同帧第二个入口不推进管线，否则预算、perTickCap 与 flush 节流全部按 2 倍速消耗。
+        if (!GATE.shouldRun(scheduler, scheduler.stats().ticks(), System.nanoTime())) {
+            return;
+        }
         poller.tick();
         warmupHook.tick();
         saveLoadGuard.tick();
         scheduler.tick();
+        GATE.completed(scheduler, scheduler.stats().ticks(), System.nanoTime());
         tickCount++;
         // 心跳降噪：默认每 3000 帧（约 50 s）一条，只用于冒烟核对管线存活。
         if (tickCount % 3000 == 1) {

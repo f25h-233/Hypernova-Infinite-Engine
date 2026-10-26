@@ -41,7 +41,8 @@ class RemainingHooksTest {
         }
     }
 
-    static final class StubService implements TextureService {
+    static class StubService implements TextureService { // 非 final：I3 的预算测试要子类化
+
         final List<String> loaded = new ArrayList<>();
         final List<String> pending = new ArrayList<>();
         final AtomicBoolean loading;
@@ -225,6 +226,65 @@ class RemainingHooksTest {
         assertEquals(0, g.tick());
         assertEquals(List.of("a.png"), svc.pending);
         assertTrue(svc.loaded.isEmpty());
+    }
+
+    // I3：SaveLoadGuard 必须有帧预算，超预算立即停手，剩余 pending 留给下一帧。
+    @Test
+    void saveLoadGuardStopsWhenBudgetExhausted() {
+        // 桩服务每次加载让假时钟前进 1 ms；预算 1 ms → 第一张就超时。
+        AtomicBoolean loading = new AtomicBoolean(false);
+        long[] now = {0L};
+        StubService svc = new StubService(loading) {
+            @Override
+            public TextureLoadResult ensureLoaded(String path) {
+                now[0] += 1_000_000L; // 1 ms
+                return super.ensureLoaded(path);
+            }
+        };
+        for (int i = 0; i < 10; i++) {
+            svc.pending.add("p" + i + ".png");
+        }
+        SaveLoadGuard g = new SaveLoadGuard(loading::get, svc, () -> now[0], 1_000_000L);
+        assertEquals(1, g.tick(), "预算 1 ms、单张 1 ms：只应加载 1 张");
+        assertEquals(9, svc.pending.size(), "未加载的必须留在 pending，不能丢弃");
+    }
+
+    @Test
+    void saveLoadGuardLoadsAllWhenBudgetIsLarge() {
+        AtomicBoolean loading = new AtomicBoolean(false);
+        long[] now = {0L};
+        StubService svc = new StubService(loading) {
+            @Override
+            public TextureLoadResult ensureLoaded(String path) {
+                now[0] += 1_000L; // 1 µs
+                return super.ensureLoaded(path);
+            }
+        };
+        for (int i = 0; i < 5; i++) {
+            svc.pending.add("p" + i + ".png");
+        }
+        SaveLoadGuard g = new SaveLoadGuard(loading::get, svc, () -> now[0], 2_000_000L);
+        assertEquals(5, g.tick());
+        assertEquals(0, svc.pending.size());
+    }
+
+    @Test
+    void saveLoadGuardBudgetBoundaryIsInclusive() {
+        // 与 FrameBudgetScheduler 一致：elapsed >= budget 即停手。
+        AtomicBoolean loading = new AtomicBoolean(false);
+        long[] now = {0L};
+        StubService svc = new StubService(loading) {
+            @Override
+            public TextureLoadResult ensureLoaded(String path) {
+                now[0] += 2_000_000L; // 恰好 2 ms
+                return super.ensureLoaded(path);
+            }
+        };
+        svc.pending.add("a.png");
+        svc.pending.add("b.png");
+        SaveLoadGuard g = new SaveLoadGuard(loading::get, svc, () -> now[0], 2_000_000L);
+        assertEquals(1, g.tick(), "恰好等于预算即停手（边界含等于）");
+        assertEquals(1, svc.pending.size());
     }
 
     // 追加（Fix loop 1）：Interfaces 的「最多连续 3 帧」语义。
