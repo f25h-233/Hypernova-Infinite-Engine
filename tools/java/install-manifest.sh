@@ -46,3 +46,13 @@ else
   echo "ERROR: $ROOT/build/java/hypernova.jar not found; 先跑 tools/java/build-mod.sh" >&2
   exit 1
 fi
+
+# 安装后校验：确保装进去的 jar 与刚构建的一致（曾经因为没重装，
+# 测试 mod 反射调用到旧 class 而抛 NoSuchMethodError）。
+if [ -f "$MODDIR/jars/hypernova.jar" ] && [ -f "$ROOT/build/java/hypernova.jar" ]; then
+  if ! cmp -s "$MODDIR/jars/hypernova.jar" "$ROOT/build/java/hypernova.jar"; then
+    echo "ERROR: installed jar differs from build/java/hypernova.jar" >&2
+    exit 1
+  fi
+  echo "verified: installed jar matches build output"
+fi

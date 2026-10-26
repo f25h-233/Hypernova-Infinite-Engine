@@ -1,6 +1,8 @@
 package hypernova;
 
 import com.fs.starfarer.api.BaseModPlugin;
+
+import java.util.List;
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.SettingsAPI;
 import com.fs.starfarer.api.campaign.CampaignEventListener;
@@ -40,6 +42,7 @@ public class HypernovaPlugin extends BaseModPlugin {
 
     private transient boolean active;
     private transient TextureServiceImpl service;
+    private transient TextureManifest manifest;
     private transient PrefetchScheduler scheduler;
     private transient Telemetry telemetry;
     private transient SaveLoadGuard saveLoadGuard;
@@ -62,7 +65,7 @@ public class HypernovaPlugin extends BaseModPlugin {
                         "Hypernova disabled: " + (config.enabled() ? cap.reason() : "config.enabled=false"));
                 return;
             }
-            TextureManifest manifest = ManifestLoader.load(settings);
+            manifest = ManifestLoader.load(settings);
             if (manifest == null) {
                 Global.getLogger(HypernovaPlugin.class).warn("Hypernova disabled: manifest unavailable");
                 return;
@@ -96,6 +99,13 @@ public class HypernovaPlugin extends BaseModPlugin {
             // 组件禁用时这里根本不会执行，共享依赖保持 null → 整条管线 no-op（INV-05）。
             HypernovaCombatPlugin.install(poller, warmupHook, saveLoadGuard, scheduler, telemetry);
 
+            // 自检：直接在装配点验证兜底能力（REQ-R1-01 的原文判据是
+            // 「预取后 getSprite(TextureId) > 0」，不是「日志里没有路径」）。
+            // 这里在 onApplicationLoad 里跑一次，结果写日志，外部无需任何测试 mod。
+            if (config.startupProbePaths() > 0) {
+                runFallbackSelfCheck(Math.max(1, config.startupProbePaths()));
+            }
+
             active = true;
             Global.getLogger(HypernovaPlugin.class).info("Hypernova active: " + cap.reason()
                     + ", manifest=" + manifest.size() + " paths, discarded=" + manifest.discardedCount()
@@ -104,6 +114,85 @@ public class HypernovaPlugin extends BaseModPlugin {
             active = false;
             Global.getLogger(HypernovaPlugin.class).error("Hypernova disabled: init failure", t);
         }
+    }
+
+    /**
+     * 诊断入口：供外部（测试 mod / 冒烟脚本）验证兜底能力。
+     * 返回本组件是否启用；未启用时所有调用都应视为 no-op。
+     */
+    public boolean isActive() {
+        return active;
+    }
+
+    /**
+     * 诊断入口：把一条 manifest 内路径交给本组件加载，返回是否确保成功。
+     * 必须在主线程调用（内部有断言）。
+     */
+    public boolean ensureLoadedForDiagnostics(String path) {
+        return active && service != null && service.ensureLoaded(path).ok();
+    }
+
+    /** 诊断入口：路径是否已在引擎注册表里（不触发加载）。 */
+    public boolean isRegisteredForDiagnostics(String path) {
+        return active && service != null && service.isLoaded(path);
+    }
+
+    /** 诊断入口：manifest 内是否存在该路径。 */
+    public boolean manifestContainsForDiagnostics(String path) {
+        return manifest != null && manifest.contains(path);
+    }
+
+    /** 诊断入口：本组件当前状态摘要，供日志核对。 */
+    public String diagnosticsSummary() {
+        if (!active) {
+            return "inactive";
+        }
+        return "active, manifest=" + manifest.size()
+                + ", pending=" + service.pendingCount();
+    }
+
+    /**
+     * 兜底自检（REQ-R1-01）：从 manifest 里挑出「此刻 getSprite 仍为空」的路径，
+     * 逐条 ensureLoaded，再查 getSprite 是否非空。
+     *
+     * <p>这是唯一不依赖外部测试 mod 的验证方式：本方法运行在主线程 + GL 上下文中，
+     * 能用引擎自己的 {@code getTextureId()} 作为判据。
+     */
+    private void runFallbackSelfCheck(int limit) {
+        var log = Global.getLogger(HypernovaPlugin.class);
+        List<String> candidates = new java.util.ArrayList<>();
+        for (hypernova.manifest.Layer layer : hypernova.manifest.Layer.values()) {
+            for (String path : manifest.pathsInLayer(layer)) {
+                if (service.isLoaded(path)) {
+                    continue; // 已注册 → 走不到兜底路径
+                }
+                candidates.add(path);
+                if (candidates.size() >= limit) {
+                    break;
+                }
+            }
+            if (candidates.size() >= limit) {
+                break;
+            }
+        }
+        log.info("selfcheck: candidates(not-yet-registered)=" + candidates.size());
+        if (candidates.isEmpty()) {
+            log.info("selfcheck: INCONCLUSIVE — every manifest path is already registered in this session");
+            return;
+        }
+        int ok = 0;
+        for (String path : candidates) {
+            boolean loaded = service.ensureLoaded(path).ok();
+            boolean registered = service.isLoaded(path);
+            if (loaded && registered) {
+                ok++;
+                log.info("selfcheck: LOADED " + path);
+            } else {
+                log.warn("selfcheck: FAILED " + path + " ok=" + loaded + " registered=" + registered);
+            }
+        }
+        log.info("selfcheck: RESULT " + ok + "/" + candidates.size()
+                + (ok == candidates.size() ? " PASS" : " FAIL"));
     }
 
     private static boolean frPresent() {
@@ -145,6 +234,9 @@ public class HypernovaPlugin extends BaseModPlugin {
     private void attachCampaign() {
         try {
             SectorAPI sector = Global.getSector();
+            Global.getLogger(HypernovaPlugin.class).info(
+                    "attachCampaign: sector=" + (sector != null) + ", poller=" + (poller != null)
+                            + ", active=" + active);
             if (sector == null || poller == null) {
                 return;
             }
@@ -161,8 +253,11 @@ public class HypernovaPlugin extends BaseModPlugin {
             sector.addTransientListener(listener);
             sector.getListenerManager().addListener(listener, true);
             this.campaignListener = listener;
-        } catch (Throwable ignored) {
-            // 接线失败不能让读档中断；后续 onGameLoad 会重试
+            Global.getLogger(HypernovaPlugin.class).info(
+                    "attachCampaign: done, transientScript="
+                            + sector.hasTransientScript(HypernovaCombatPlugin.class));
+        } catch (Throwable t) {
+            Global.getLogger(HypernovaPlugin.class).error("attachCampaign failed", t);
         }
     }
 }

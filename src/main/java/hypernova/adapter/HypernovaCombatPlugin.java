@@ -40,6 +40,7 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
     private Telemetry telemetry;
 
     private int framesSinceFlush;
+    private long tickCount;
 
     /**
      * 装配层在 onApplicationLoad 里调用（不触碰 Global），让无参实例能取到依赖。
@@ -79,6 +80,12 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
         warmupHook.tick();
         saveLoadGuard.tick();
         scheduler.tick();
+        tickCount++;
+        // 心跳降噪：默认每 3000 帧（约 50 s）一条，只用于冒烟核对管线存活。
+        if (tickCount % 3000 == 1) {
+            com.fs.starfarer.api.Global.getLogger(HypernovaCombatPlugin.class).info(
+                    "HYPERNOVA_TICK " + tickCount + " " + scheduler.stats());
+        }
         if (++framesSinceFlush >= FLUSH_EVERY_FRAMES) {
             framesSinceFlush = 0;
             telemetry.flush();

@@ -65,10 +65,17 @@ public final class TriggerPoller {
             tickCombat();
             tickCodex();
             tickVisibleFleets();
-        } catch (Throwable ignored) {
-            // 触发点异常绝不打断游戏（INV-05 的失败方向：静默降级）
+        } catch (Throwable t) {
+            // 只记首次，避免每帧刷屏；仍然不打断游戏（INV-05 的失败方向）
+            if (firstTickError == null) {
+                firstTickError = t;
+                com.fs.starfarer.api.Global.getLogger(TriggerPoller.class)
+                        .error("TriggerPoller.tick failed (reported once)", t);
+            }
         }
     }
+
+    private Throwable firstTickError;
 
     private void tickLocation() {
         String location = world.currentLocationName();

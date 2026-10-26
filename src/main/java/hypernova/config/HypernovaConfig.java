@@ -7,7 +7,8 @@ public record HypernovaConfig(
         boolean eviction,
         int frameBudgetMicros,
         int telemetryBufferLines,
-        boolean verbose) {
+        boolean verbose,
+        int startupProbePaths) {
 
     public static HypernovaConfig fromJson(JSONObject o) {
         return new HypernovaConfig(
@@ -15,6 +16,7 @@ public record HypernovaConfig(
                 o.optBoolean("eviction", false),
                 o.optInt("frame_budget_micros", 2000),
                 o.optInt("telemetry_buffer_lines", 4096),
-                o.optBoolean("verbose", false));
+                o.optBoolean("verbose", false),
+                o.optInt("startup_probe_paths", 0));
     }
 }

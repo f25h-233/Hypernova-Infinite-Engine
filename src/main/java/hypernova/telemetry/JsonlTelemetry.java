@@ -25,9 +25,9 @@ public final class JsonlTelemetry implements Telemetry {
 
     @Override
     public void event(String kind, String path, long nanos, String detail) {
-        if (!verbose && "hit".equals(kind)) {
-            return;
-        }
+        // 所有事件都记录，不按 verbose 过滤：命中率是 REQ-R1-06 的核心指标，
+        // 而 hit 与 loaded 合计才等于「本组件确保加载过」的总量。
+        // verbose 目前只保留给将来的 detail 扩展，不影响事件过滤。
         JSONObject o = new JSONObject();
         try {
             o.put("t", System.currentTimeMillis());
@@ -61,6 +61,8 @@ public final class JsonlTelemetry implements Telemetry {
         List<String> snapshot;
         synchronized (lines) {
             if (lines.isEmpty()) {
+                com.fs.starfarer.api.Global.getLogger(JsonlTelemetry.class)
+                        .info("telemetry flush: buffer empty, nothing to write");
                 return;
             }
             snapshot = new ArrayList<>(lines);
@@ -68,8 +70,11 @@ public final class JsonlTelemetry implements Telemetry {
         }
         try {
             sink.write(NAME, String.join("\n", snapshot) + "\n");
-        } catch (Exception ignored) {
-            // 遥测失败绝不打断游戏（INV-05 的失败方向：静默）
+            com.fs.starfarer.api.Global.getLogger(JsonlTelemetry.class)
+                    .info("telemetry flush: wrote " + snapshot.size() + " lines to " + NAME);
+        } catch (Exception e) {
+            com.fs.starfarer.api.Global.getLogger(JsonlTelemetry.class)
+                    .error("telemetry flush failed: " + NAME, e);
         }
     }
 

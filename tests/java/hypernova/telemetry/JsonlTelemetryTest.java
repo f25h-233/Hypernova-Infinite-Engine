@@ -71,16 +71,19 @@ class JsonlTelemetryTest {
     }
 
     @Test
-    void hitIsSilentWhenNotVerbose() throws Exception {
+    void hitIsRecordedEvenWhenNotVerbose() throws Exception {
+        // 冒烟实测纠正：hit 曾被 verbose 过滤，导致「loaded=91 但缓冲为空」，
+        // 命中率完全不可观测。hit 与 loaded 合计才等于本组件确保加载过的总量，
+        // 所以过滤 hit 等于把 REQ-R1-06 的核心指标丢掉。
         CaptureSink sink = new CaptureSink();
         JsonlTelemetry t = new JsonlTelemetry(sink, 100, false);
-        t.event("hit", "graphics/ui/a.png", 1L, "");
-        assertEquals(0, t.buffered());
-        t.event("miss", "graphics/ui/b.png", 2L, "");
+        t.event("hit", "graphics/ui/a.png", 1L, "core");
         assertEquals(1, t.buffered());
+        t.event("miss", "graphics/ui/b.png", 2L, "");
+        assertEquals(2, t.buffered());
         t.flush();
         String content = sink.contents.get(0);
-        assertFalse(content.contains("\"hit\""));
+        assertTrue(content.contains("\"hit\""));
         assertTrue(content.contains("\"miss\""));
     }
 
