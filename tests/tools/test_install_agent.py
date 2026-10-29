@@ -90,6 +90,44 @@ def test_reinstall_updates_agent_jar(tmp_path):
     assert launch.read_bytes() == after_first
 
 
+def test_backupRefreshesOnEachInstall(tmp_path):
+    game, launch = _fake_game(tmp_path)
+    backup = launch.with_name(launch.name + ".bak-hypernova")
+    jar = tmp_path / "agent.jar"
+    jar.write_bytes(b"JAR")
+
+    original = launch.read_text(encoding="utf-8")
+    assert _run_cli("--game", str(game), "--env", "base", "--jar", str(jar)) == 0
+    assert backup.exists()
+    assert backup.read_text(encoding="utf-8") == original, "backup must hold pre-install bytes"
+
+    # 用户手工再改一次启动文件；下一次 install 的备份必须反映这次的改动。
+    edited = launch.read_text(encoding="utf-8").replace(
+        "-Xmx10g\n", "-Xmx10g\n-Duser.edit=1\n")
+    launch.write_text(edited, encoding="utf-8", newline="\n")
+
+    assert _run_cli("--game", str(game), "--env", "base", "--jar", str(jar)) == 0
+    assert backup.read_text(encoding="utf-8") == edited, "backup must refresh on every install"
+    # 目标文件仍然只有一行 agent 行（幂等，没有叠加）。
+    assert launch.read_text(encoding="utf-8").count(ia.AGENT_LINE) == 1
+
+
+def test_backupCreatedEvenWhenAlreadyPatched(tmp_path):
+    game, _ = _fake_game(tmp_path)
+    # 预先放一个已含 agent 行、且没有任何备份的启动文件。
+    launch = game / "starsector-core" / "fr.vmparams"
+    pre = "-Xmx10g\n" + FR + ia.AGENT_LINE + "\n-classpath\n" + ia.MAIN_CLASS
+    launch.write_text(pre, encoding="utf-8", newline="\n")
+    backup = launch.with_name(launch.name + ".bak-hypernova")
+    assert not backup.exists()
+
+    jar = tmp_path / "agent.jar"
+    jar.write_bytes(b"JAR")
+    assert _run_cli("--game", str(game), "--env", "base", "--jar", str(jar)) == 0
+    assert backup.exists(), "already-patched installs must still leave a backup"
+    assert backup.read_text(encoding="utf-8") == pre
+
+
 def test_dry_run_does_not_copy_agent_jar(tmp_path):
     game, launch = _fake_game(tmp_path)
     original = launch.read_text(encoding="utf-8")

@@ -5,10 +5,11 @@ The agent line is inserted immediately after the Fast Rendering agent line, so
 the transformer chain order is FR -> scripts. Writes LF line endings (argfiles
 must be LF) and is idempotent. A backup is kept as *.bak-hypernova.
 
-Backup semantics: *.bak-hypernova is an *original snapshot* — the launch file as
-it was before the first install. Later installs do NOT refresh it, and uninstall
-never reads or restores it (uninstall only removes the agent line). Restoring the
-pre-install bytes, if ever needed, must be done by hand from that file.
+Backup semantics: *.bak-hypernova is a snapshot of the launch file as it was
+*before the most recent install*. Every install refreshes it (including installs
+that find the file already patched and change nothing else). uninstall never
+consumes, deletes or restores the backup -- it only removes the agent line, and
+the backup stays on disk for manual reference.
 """
 import argparse
 import shutil
@@ -108,6 +109,15 @@ def main() -> int:
         print(f"installed: {dst}")
         jar_copied = True
 
+    # 备份语义：*.bak-hypernova 是"最近一次安装前"的启动文件快照。
+    # 每次 install 都用本次安装前的内容覆盖备份（不是只在首次创建）；
+    # 位置必须在读完 lines、写盘之前。已打过补丁（new == lines）的早退路径
+    # 也要走到这里，否则用户手动改过的启动文件不会被留档。
+    # uninstall 不写、不删、不消费备份；--dry-run 承诺不写盘，因此排除。
+    if args.action == "install" and not args.dry_run:
+        backup = launch.with_name(launch.name + ".bak-hypernova")
+        shutil.copy2(launch, backup)
+
     if new == lines:
         # 措辞区分：jar 已被刷新时，说 "vmparams" 无变化，避免读成"什么都没做"。
         print(f"no vmparams change: {launch}" if jar_copied else f"no change: {launch}")
@@ -116,9 +126,6 @@ def main() -> int:
         print("".join(new), end="")
         return 0
 
-    backup = launch.with_name(launch.name + ".bak-hypernova")
-    if not backup.exists():
-        shutil.copy2(launch, backup)
     write_lf(launch, new)
     print(f"{args.action}: {launch}")
     return 0
