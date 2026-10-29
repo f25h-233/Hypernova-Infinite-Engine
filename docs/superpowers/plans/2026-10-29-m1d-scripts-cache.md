@@ -64,7 +64,7 @@
 | `tools/java/run-agent-tests.sh` | agent 单测 |
 | `tools/java/build-agent-tools.sh` | 构建 `CacheTool` |
 | `tools/install_agent.py` | 安装/卸载 Base 与 260mods 的 `-javaagent` |
-| `tools/java/parse-script-telemetry.py` | 从 JSONL 汇总 hit/miss/span |
+| `tools/java/parse_script_telemetry.py` | 从 JSONL 汇总 hit/miss/span |
 | `tests/agent/fixtures/com/genir/renderer/overrides/loading/MultiThreadedJaninoClassLoader.java` | 与 FR 同形的最小 fake loader |
 | `tests/agent/java/hypernova/agent/*Test.java` | transformer/preload/key/pack/store/writer/telemetry 测试 |
 | `tests/tools/test_install_agent.py` | 安装器幂等/顺序/卸载测试 |
@@ -2205,7 +2205,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Create: `src/agent/java/hypernova/agent/tools/CacheTool.java`
 - Create: `tools/java/build-agent-tools.sh`
 - Create: `tools/java/cache-tool.sh`
-- Create: `tools/java/parse-script-telemetry.py`
+- Create: `tools/java/parse_script_telemetry.py`
 - Test: `tests/tools/test_parse_script_telemetry.py`
 
 **Interfaces:**
@@ -2215,7 +2215,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
   - `tools/java/cache-tool.sh key|inspect|seed ...`（Base 环境；必须从 `starsector-core` 的等价 classpath 运行，保证 key 与 agent 一致）
   - `parse_script_telemetry.summaries(Path) -> list[dict]`
 - Dependencies: Task 1, Task 2
-- Touches: `src/agent/java/hypernova/agent/tools/CacheTool.java`、`tools/java/{build-agent-tools,cache-tool}.sh`、`tools/java/parse-script-telemetry.py`、`tests/tools/test_parse_script_telemetry.py`
+- Touches: `src/agent/java/hypernova/agent/tools/CacheTool.java`、`tools/java/{build-agent-tools,cache-tool}.sh`、`tools/java/parse_script_telemetry.py`、`tests/tools/test_parse_script_telemetry.py`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -2395,7 +2395,7 @@ if [ ! -x "$JAVA" ]; then JAVA=java; fi
   hypernova.agent.tools.CacheTool "$@"
 ```
 
-`tools/java/parse-script-telemetry.py`:
+`tools/java/parse_script_telemetry.py`:
 
 ```python
 #!/usr/bin/env python3
@@ -2423,7 +2423,7 @@ def summaries(path: Path) -> list[dict]:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("usage: parse-script-telemetry.py <jsonl>", file=sys.stderr)
+        print("usage: parse_script_telemetry.py <jsonl>", file=sys.stderr)
         return 2
     found = summaries(Path(sys.argv[1]))
     if not found:
@@ -2453,7 +2453,7 @@ Expected: 打印 32 hex key + `files=... elapsed_ms=...`；与 Task 1 的 agent 
 ```bash
 git add src/agent/java/hypernova/agent/tools/CacheTool.java \
   tools/java/build-agent-tools.sh tools/java/cache-tool.sh \
-  tools/java/parse-script-telemetry.py \
+  tools/java/parse_script_telemetry.py \
   tests/tools/test_parse_script_telemetry.py
 git commit -m "feat(m1d): add cache key/seed/inspect tool and telemetry parser
 
@@ -2520,7 +2520,7 @@ bash tools/java/cache-tool.sh seed \
 启动 `Starsector-098-Base/启动-高性能.bat`，人工点「开始游戏」，进主菜单后等 40 s，然后正常退出（让 shutdown hook 落盘）。检查：
 
 ```bash
-python -I tools/java/parse-script-telemetry.py \
+python -I tools/java/parse_script_telemetry.py \
   Starsector-098-Base/saves/hypernova/scripts-telemetry.jsonl
 ```
 
