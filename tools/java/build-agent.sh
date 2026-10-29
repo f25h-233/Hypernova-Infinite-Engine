@@ -16,7 +16,14 @@ fi
 if [ ! -f "$OUT/asm/org/objectweb/asm/ClassReader.class" ]; then
   rm -rf "$OUT/asm"
   mkdir -p "$OUT/asm"
-  (cd "$OUT/asm" && unzip -oq "$OUT/lib/asm-9.1.jar" -x 'META-INF/*' 'module-info.class')
+  # unzip 在 -x 的排除名不存在时返回 11（"nothing to exclude"，无害）；
+  # 其余非零退出才中止。真正的完整性由打包后的 ASM 断言兜底。
+  rc=0
+  (cd "$OUT/asm" && unzip -oq "$OUT/lib/asm-9.1.jar" -x 'META-INF/*' 'module-info.class') || rc=$?
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 11 ]; then
+    echo "FATAL: ASM 解压失败 (unzip exit $rc)" >&2
+    exit 1
+  fi
 fi
 rm -rf "$OUT/classes"
 mkdir -p "$OUT/classes"
@@ -33,4 +40,11 @@ printf '%s\n' \
   'Can-Retransform-Classes: false' > "$OUT/MANIFEST.MF"
 jar --create --file "$OUT/hypernova.agent.jar" --manifest "$OUT/MANIFEST.MF" \
   -C "$OUT/classes" . -C "$OUT/asm" .
+# 产物后断言（不是解压前守卫）：unzip 可能“静默零条目成功”，
+# 只有检查最终 jar 内容才能挡住“目录存在但 ASM 没进去”的坏包。
+jar_listing=$(jar --list --file "$OUT/hypernova.agent.jar")
+if ! printf '%s\n' "$jar_listing" | grep -q 'org/objectweb/asm/ClassReader.class'; then
+  echo "FATAL: agent jar 不含 ASM (org/objectweb/asm/ClassReader.class)" >&2
+  exit 1
+fi
 echo "OK: $OUT/hypernova.agent.jar"

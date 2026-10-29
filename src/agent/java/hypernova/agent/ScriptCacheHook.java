@@ -74,16 +74,36 @@ public final class ScriptCacheHook {
     }
 
     public static void onFindClass(Object loader, String name) {
-        long now = System.nanoTime();
-        FIRST.compareAndSet(0, now);
-        LAST.set(now);
-        FINDS.increment();
-        Map<String, byte[]> map = currentMap;
-        if (map != null && map.containsKey(name)) {
-            HITS.increment();
-        } else {
-            MISSES.increment();
-            if (MISS_SAMPLE.size() < 50) MISS_SAMPLE.add(name);
+        // 本方法由 transformer 注入真实 findClass 入口，任何异常都不能漏回游戏。
+        // 计数语义：每次调用恰好计一次 find（先计再做事），异常时仍保住分母，
+        // 且用 counted 防止 catch 里重复计数（否则 find_calls 会被放大）。
+        boolean counted = false;
+        try {
+            long now = System.nanoTime();
+            FIRST.compareAndSet(0, now);
+            LAST.set(now);
+            FINDS.increment();
+            counted = true;
+            Map<String, byte[]> map = currentMap;
+            if (map != null && map.containsKey(name)) {
+                HITS.increment();
+            } else {
+                MISSES.increment();
+                if (MISS_SAMPLE.size() < 50) MISS_SAMPLE.add(name);
+            }
+        } catch (Throwable t) {
+            if (!counted) {
+                try {
+                    FINDS.increment();
+                } catch (Throwable ignored) {
+                    // 连计数都失败时无能为力，绝不外抛
+                }
+            }
+            try {
+                AgentLog.fail("onFindClass hook failed", t);
+            } catch (Throwable ignored) {
+                // 日志本身也可能失败（SecurityException/OOM）；钩子绝不能把异常抛回游戏
+            }
         }
     }
 

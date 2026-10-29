@@ -43,6 +43,27 @@ class ScriptCacheTransformerTest {
         assertEquals(1, ScriptCacheHook.misses());
     }
 
+    @Test
+    void ignoresNonTargetClass() throws Exception {
+        byte[] transformed = new ScriptCacheTransformer().transform(
+                getClass().getClassLoader(), "java/lang/String", null, null, readClassBytes());
+        // 不用 assertNull(byte[])：失败时会把整个字节数组打成千行输出。
+        // 失败信息里保留长度，便于区分“返回了原字节”与“返回了变换后字节”。
+        assertFalse(transformed != null,
+                "transformer must return null for a non-target class (hot path must stay untouched);"
+                        + " got " + (transformed == null ? "null" : transformed.length + " bytes"));
+    }
+
+    @Test
+    void ignoresRedefinedClass() throws Exception {
+        byte[] transformed = new ScriptCacheTransformer().transform(
+                getClass().getClassLoader(), ScriptCacheTransformer.TARGET,
+                String.class, null, readClassBytes());
+        assertFalse(transformed != null,
+                "transformer must return null when redefining an already-loaded class;"
+                        + " got " + (transformed == null ? "null" : transformed.length + " bytes"));
+    }
+
     private static byte[] readClassBytes() throws Exception {
         String resource = "/" + ScriptCacheTransformer.TARGET + ".class";
         try (InputStream in = ScriptCacheTransformerTest.class.getResourceAsStream(resource)) {
