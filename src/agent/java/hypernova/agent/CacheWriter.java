@@ -45,8 +45,10 @@ public final class CacheWriter {
                 continue;
             }
             if (System.currentTimeMillis() - changedAt >= stableMillis) {
+                // 每个稳定窗口都落一次盘；之后继续等下一个窗口，
+                // 这样后到的编译结果不必依赖 shutdown hook 也能持久化。
                 if (size > lastWrittenSize) flushNow();
-                return;
+                changedAt = System.currentTimeMillis();
             }
         }
     }

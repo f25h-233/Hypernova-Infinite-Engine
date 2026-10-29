@@ -89,6 +89,79 @@ class ScriptCacheHookPreloadTest {
         assertEquals(0, ScriptCacheHook.hits());
     }
 
+    /** I-1：生产入口 preload(Object) 必须从静态 context 取上下文（premain 的 setContext 接线）。 */
+    @Test
+    void publicPreloadEntryUsesStaticContextAndPopulatesCache() throws Exception {
+        Path game = tmp.resolve("game3");
+        Path mods = game.resolve("mods");
+        Path mod = mods.resolve("foo");
+        Files.createDirectories(mod.resolve("src"));
+        Files.createDirectories(game.resolve("starsector-core/data/scripts"));
+        Files.writeString(mod.resolve("mod_info.json"), "{\"id\":\"foo\"}");
+        Files.writeString(mods.resolve("enabled_mods.json"), "{\"enabledMods\":[\"foo\"]}");
+        Path saves = tmp.resolve("saves3");
+        ScriptCacheConfig cfg = new ScriptCacheConfig(true, 1L << 30, 2, 3000, false);
+        RuntimeContext ctx = new RuntimeContext(game, mods, saves, saves.resolve("cache"),
+                saves.resolve("agent.log"), saves.resolve("telemetry.jsonl"), cfg);
+
+        String key = ScriptCacheKey.compute(ctx).id();
+        Map<String, byte[]> entries = Map.of("hypernova.cache.Generated", generatedClass());
+        new CacheStore(ctx.cacheRoot(), 2, 1L << 30).save(key, entries);
+
+        Object loader = transformedLoader();
+        ScriptCacheHook.setContext(ctx);     // premain 在注册 transformer 之前做的事
+        ScriptCacheHook.preload(loader);     // 生产入口：不显式传 ctx
+
+        // 第 1 次来自转换后构造函数注入的 preload(this)（此时 context 仍为 null，
+        // 走 "no runtime context" 早退）；第 2 次是下面显式调用的生产入口。
+        assertEquals(2, ScriptCacheHook.preloadCalls());
+        assertTrue(bytecodeCache(loader).containsKey("hypernova.cache.Generated"),
+                "public preload must reuse the static context set by premain");
+    }
+
+    /** I-3 / REQ-S-05：配置关闭时 preload 必须不读不写（transformer 已注册时的最后防线）。 */
+    @Test
+    void disabledConfigPreloadDoesNothing() throws Exception {
+        Path game = tmp.resolve("game4");
+        Path mods = game.resolve("mods");
+        Path mod = mods.resolve("foo");
+        Files.createDirectories(mod.resolve("src"));
+        Files.createDirectories(game.resolve("starsector-core/data/scripts"));
+        Files.writeString(mod.resolve("mod_info.json"), "{\"id\":\"foo\"}");
+        Files.writeString(mods.resolve("enabled_mods.json"), "{\"enabledMods\":[\"foo\"]}");
+        Path saves = tmp.resolve("saves4");
+        RuntimeContext ctx = new RuntimeContext(game, mods, saves, saves.resolve("cache"),
+                saves.resolve("agent.log"), saves.resolve("telemetry.jsonl"),
+                ScriptCacheConfig.disabled());
+        // 预置一份 pack；即便盘上有,配置关闭时也不应读取/填充。
+        String key = ScriptCacheKey.compute(ctx).id();
+        Map<String, byte[]> entries = Map.of("hypernova.cache.Generated", generatedClass());
+        new CacheStore(ctx.cacheRoot(), 2, 1L << 30).save(key, entries);
+        // 用已存在的目录快照做对照,断言 preload 没有新增/刷新任何东西。
+        long packModified = Files.getLastModifiedTime(
+                ctx.cacheRoot().resolve(key).resolve("classes.pack")).toMillis();
+        java.util.Set<String> before = listGenerationDirs(ctx.cacheRoot());
+
+        Object loader = transformedLoader();
+        ScriptCacheHook.preload(loader, ctx);
+
+        assertTrue(bytecodeCache(loader).isEmpty(), "disabled config must not preload");
+        assertTrue(ScriptCacheHook.currentKey().isEmpty(), "disabled config must not compute a key");
+        assertEquals(before, listGenerationDirs(ctx.cacheRoot()),
+                "disabled preload must not create or evict cache generations");
+        assertEquals(packModified, Files.getLastModifiedTime(
+                        ctx.cacheRoot().resolve(key).resolve("classes.pack")).toMillis(),
+                "disabled preload must not rewrite the existing pack");
+    }
+
+    private static java.util.Set<String> listGenerationDirs(Path root) throws Exception {
+        try (var s = Files.list(root)) {
+            return s.filter(Files::isDirectory)
+                    .map(p -> p.getFileName().toString())
+                    .collect(java.util.stream.Collectors.toSet());
+        }
+    }
+
     /**
      * P2 装配:fixture 原始字节 -> transformer 转换 -> define 辅助 loader 定义 -> 实例化。
      * 这样实例的 findClass 里才有 ScriptCacheHook.onFindClass 调用。

@@ -39,7 +39,11 @@ public final class ScriptCacheHook {
             }
             preload(loader, ctx);
         } catch (Throwable t) {
-            AgentLog.fail("preload failed", t);
+            try {
+                AgentLog.fail("preload failed", t);
+            } catch (Throwable ignored) {
+                // 本方法在 FR 构造器内执行，日志 handler 自身失败也不能外抛
+            }
         }
     }
 
@@ -109,7 +113,10 @@ public final class ScriptCacheHook {
 
     public static void shutdown() {
         CacheWriter w = writer;
-        if (w != null) w.flushNow();
+        if (w != null) {
+            w.flushNow();
+            w.stop();
+        }
         RuntimeContext ctx = context;
         if (ctx != null) {
             ctx.telemetry().summary(currentKey, HITS.sum(), MISSES.sum(), FINDS.sum(),
