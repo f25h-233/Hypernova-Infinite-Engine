@@ -1,5 +1,6 @@
 package hypernova.agent;
 
+import org.json.JSONObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -140,6 +141,121 @@ class ScriptCacheKeyTest {
                 FileTime.fromMillis(System.currentTimeMillis() + 1000));
         assertNotEquals(r1.id(), ScriptCacheKey.compute(ctx).id(),
                 "editing a mod that enabledMods cannot match must still change the key");
+    }
+
+    /**
+     * mod_info.json 里的 {@code #} 注释。启动器能加载这种文件（LoadingUtils 先剥注释），
+     * 所以我们的剥离实现也必须能解析出 id；同时方案 B 的文件收集本来就收该 mod 的源码，
+     * 这里一并验证「解析不再失败」与「源码仍进 key」。
+     */
+    @Test
+    void parsesModInfoWithHashComments() throws Exception {
+        Path game = tmp.resolve("game6");
+        Path mods = game.resolve("mods");
+        Path mod = mods.resolve("commented");
+        Files.createDirectories(mod.resolve("src/my"));
+        // 与 brief 给出的形态逐字一致：制表符缩进、注释行夹在字段中间。
+        Files.writeString(mod.resolve("mod_info.json"),
+                "{\n"
+                        + "\t\"id\": \"my_mod\",\n"
+                        + "\t#\"jars\": [\"jars/.jar\"],\n"
+                        + "\t\"name\": \"x\"\n"
+                        + "}\n");
+        Path java = mod.resolve("src/my/Mine.java");
+        Files.writeString(java, "package my; public class Mine {}");
+        Files.writeString(mods.resolve("enabled_mods.json"), "{\"enabledMods\":[\"my_mod\"]}");
+        RuntimeContext ctx = ctx(game, mods);
+
+        // 1) 剥离 + org.json 能解出 id —— 即启动器那条解析路径在本地可复现。
+        String raw = Files.readString(mod.resolve("mod_info.json"));
+        JSONObject parsed = new JSONObject(ScriptCacheKey.stripComments(raw));
+        assertEquals("my_mod", parsed.getString("id"),
+                "hash-comment stripping must make the mod_info.json parseable");
+
+        // 2) 该 mod 的 .java 进 key 的文件集。
+        assertTrue(ScriptCacheKey.collectFiles(ctx)
+                        .contains(java.toAbsolutePath().normalize()),
+                "commented mod's sources must still be fingerprinted");
+
+        // 3) 守「# 只在字符串外才开注释」：字符串里的 # 必须原样保留。
+        String inString = "{\"author\": \"a # b\", \"id\": \"my_mod\"}";
+        assertEquals(inString, ScriptCacheKey.stripComments(inString),
+                "# inside a JSON string must not start a comment");
+    }
+
+    /**
+     * enabledMods 的集合变化必须改变 key（新增一个启用的 mod）。两个 mod 的源码都在
+     * 文件清单里、文件集合完全不变，唯一变量就是 canonical 里的 {@code enabled=} 行。
+     */
+    @Test
+    void keyChangesWhenEnabledListChanges() throws Exception {
+        Path game = tmp.resolve("game7");
+        Path mods = game.resolve("mods");
+        for (String id : new String[]{"a", "b"}) {
+            Path mod = mods.resolve(id);
+            Files.createDirectories(mod.resolve("src/" + id));
+            Files.writeString(mod.resolve("mod_info.json"), "{\"id\":\"" + id + "\"}");
+            Files.writeString(mod.resolve("src/" + id + "/" + id + ".java"),
+                    "package " + id + "; public class " + id + " {}");
+        }
+        Path list = mods.resolve("enabled_mods.json");
+        Files.writeString(list, "{\"enabledMods\":[\"a\"]}");
+        // 文件清单含每个文件的 mtime，所以「还原 key」必须同时还原内容与 mtime，
+        // 否则断言测到的是 mtime 而非 enabled= 行。
+        FileTime t1 = Files.getLastModifiedTime(list);
+        RuntimeContext ctx = ctx(game, mods);
+        ScriptCacheKey.Result r1 = ScriptCacheKey.compute(ctx);
+        String key1 = r1.id();
+        // key 的变化也可能只来自 enabled_mods.json 的字节哈希，所以这里直接钉 canonical
+        // 里的 enabled= 行：没有它，本测试挡不住「删掉 enabled= 行」的变异。
+        assertTrue(r1.canonical().contains("\nenabled=a\n"),
+                "canonical must carry the sorted enabled set; was:\n" + r1.canonical());
+
+        Files.writeString(list, "{\"enabledMods\":[\"a\",\"b\"]}");
+        ScriptCacheKey.Result r2 = ScriptCacheKey.compute(ctx);
+        String key2 = r2.id();
+        assertNotEquals(key1, key2, "enabling one more mod must change the key");
+        assertTrue(r2.canonical().contains("\nenabled=a,b\n"),
+                "enabled set in canonical must follow enabledMods; was:\n" + r2.canonical());
+
+        // 反向也要变（不是单调的「只会增」）。
+        Files.writeString(list, "{\"enabledMods\":[\"a\"]}");
+        Files.setLastModifiedTime(list, t1);
+        assertEquals(key1, ScriptCacheKey.compute(ctx).id(),
+                "restoring the previous enabled set (and mtime) must restore the key");
+    }
+
+    /**
+     * mod_info.json 完全无法解析（启动器会跳过该 mod）时，方案 B 仍必须把它的源码
+     * 收进指纹——它的 .java 可能被别的 mod 共享，漏掉会让缓存带毒。
+     */
+    @Test
+    void modWithUnparseableInfoStillContributesSources() throws Exception {
+        Path game = tmp.resolve("game8");
+        Path mods = game.resolve("mods");
+        Path bad = mods.resolve("broken");
+        Files.createDirectories(bad.resolve("src/x"));
+        Files.writeString(bad.resolve("mod_info.json"), "{ this is not json");
+        Path java = bad.resolve("src/x/X.java");
+        Files.writeString(java, "package x; public class X {}");
+        // 一个正常 mod，确保 enabled= 解析路径也走到（坏文件不连累其它 mod）。
+        Path good = mods.resolve("good");
+        Files.createDirectories(good.resolve("src/y"));
+        Files.writeString(good.resolve("mod_info.json"), "{\"id\":\"good\"}");
+        Files.writeString(good.resolve("src/y/Y.java"), "package y; public class Y {}");
+        Files.writeString(mods.resolve("enabled_mods.json"), "{\"enabledMods\":[\"good\"]}");
+        RuntimeContext ctx = ctx(game, mods);
+
+        assertTrue(ScriptCacheKey.collectFiles(ctx).contains(java.toAbsolutePath().normalize()),
+                "a mod whose mod_info.json cannot be parsed must still contribute sources");
+
+        // 该源码的修改必须能改变 key（不是「收进来但哈希被跳过」）。
+        String k1 = ScriptCacheKey.compute(ctx).id();
+        Files.writeString(java, "package x; public class X { int z; }");
+        Files.setLastModifiedTime(java,
+                FileTime.fromMillis(System.currentTimeMillis() + 1000));
+        assertNotEquals(k1, ScriptCacheKey.compute(ctx).id(),
+                "editing an unparseable mod's sources must change the key");
     }
 
     private RuntimeContext ctx(Path game, Path mods) {
