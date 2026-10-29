@@ -38,15 +38,21 @@ public final class ScriptCacheKey {
         sb.append("java=").append(System.getProperty("java.version", "")).append('\n');
         sb.append("classpath=").append(String.join(File.pathSeparator, classpathOrder)).append('\n');
         // 启用清单进 canonical：enabledMods 的「集合」变化会改变 classpath 装载/编译优先级
-        // 与游戏实际加载的 mod（ModManager.loadEnabledModList 按 id 匹配）。排序后写入，
-        // 使 key 只对集合敏感、不对 enabled_mods.json 里的书写顺序敏感——顺序已由该文件
-        // 自身的字节哈希覆盖。
+        // 与游戏实际加载的 mod（ModManager.loadEnabledModList 按 id 匹配）。
+        // 这里排序后写入，所以【本行】只表达集合、不表达顺序；但【整体 key】对顺序仍敏感：
+        // enabled_mods.json 自身的字节 sha256 在下面的文件清单里，顺序一变该文件的 sha256
+        // 就变，key 随之变（顺序确实影响 classpath 优先级，必须敏感）。实测见 R12 报告。
         sb.append("enabled=").append(String.join(",", enabledIds(ctx.modsRoot()))).append('\n');
         List<KeyManifest.Entry> sorted = new ArrayList<>(entries);
         sorted.sort(Comparator.comparing(KeyManifest.Entry::path));
         for (KeyManifest.Entry e : sorted) {
+            // 只写 path|size|sha256，不写 mtime：sha256 已完整覆盖内容，mtime 进 canonical
+            // 只会额外制造 miss —— git checkout / 解压 / 备份还原 / 复制粘贴等「内容不变、
+            // 时间变」的操作都会让整份缓存失效，代价是一次完整冷编译。
+            // mtime 仍保留在 KeyManifest 内部，仅用于 size+mtime 短路省重算 sha 的性能
+            // （由 racy-clean 守卫兜底），该决策不传播到 key 本身。
             sb.append(e.path()).append('|').append(e.size()).append('|')
-                    .append(e.mtime()).append('|').append(e.sha256()).append('\n');
+                    .append(e.sha256()).append('\n');
         }
         String canonical = sb.toString();
         String id = sha256(canonical.getBytes(StandardCharsets.UTF_8)).substring(0, 32);

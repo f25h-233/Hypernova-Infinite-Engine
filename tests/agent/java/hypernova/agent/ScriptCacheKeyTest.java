@@ -258,6 +258,32 @@ class ScriptCacheKeyTest {
                 "editing an unparseable mod's sources must change the key");
     }
 
+    /**
+     * 内容不变、只有 mtime 变，key 必须不变。sha256 已完整覆盖内容；mtime 若进 canonical，
+     * 那么 git checkout / 解压 / 备份还原 / 复制粘贴这类「时间变、内容不变」的操作都会让
+     * 整份缓存失效，代价是一次完整冷编译。
+     */
+    @Test
+    void keyIgnoresMtimeWhenContentUnchanged() throws Exception {
+        Path game = tmp.resolve("game9");
+        Path mods = game.resolve("mods");
+        Path mod = mods.resolve("foo");
+        Files.createDirectories(mod.resolve("src/a"));
+        Files.writeString(mod.resolve("mod_info.json"), "{\"id\":\"foo\"}");
+        Files.writeString(mods.resolve("enabled_mods.json"), "{\"enabledMods\":[\"foo\"]}");
+        Path java = mod.resolve("src/a/A.java");
+        Files.writeString(java, "package a; public class A {}");
+        RuntimeContext ctx = ctx(game, mods);
+
+        String key1 = ScriptCacheKey.compute(ctx).id();
+
+        // 内容一字不改，只把 mtime 推到 +1 小时。
+        Files.setLastModifiedTime(java,
+                FileTime.fromMillis(System.currentTimeMillis() + 3_600_000L));
+        String key2 = ScriptCacheKey.compute(ctx).id();
+        assertEquals(key1, key2, "an mtime-only change must not change the key");
+    }
+
     private RuntimeContext ctx(Path game, Path mods) {
         Path saves = tmp.resolve("saves-" + Math.abs(game.hashCode()));
         ScriptCacheConfig cfg = new ScriptCacheConfig(true, 1L << 20, 2, 3000, false);
