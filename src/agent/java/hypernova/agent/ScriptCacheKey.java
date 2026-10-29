@@ -1,8 +1,5 @@
 package hypernova.agent;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -14,9 +11,7 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.stream.Stream;
 
@@ -60,23 +55,12 @@ public final class ScriptCacheKey {
     static List<Path> collectFiles(RuntimeContext ctx) {
         TreeSet<Path> files = new TreeSet<>();
         Path mods = ctx.modsRoot();
-        Set<String> enabled = readEnabledIds(mods.resolve("enabled_mods.json"));
-        Map<String, Path> folders = scanModFolders(mods);
-        if (enabled == null) enabled = folders.keySet();
-        for (String id : enabled) {
-            Path folder = folders.get(id);
-            if (folder == null) continue;
-            addTree(folder.resolve("src"), files);
-            addTree(folder.resolve("jars"), files);
-            addTree(folder.resolve("data/scripts"), files);
-            addFile(folder.resolve("mod_info.json"), files);
-            try (Stream<Path> s = Files.list(folder)) {
-                s.filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT)
-                                .endsWith(".jar"))
-                        .forEach(p -> addFile(p, files));
-            } catch (IOException ignored) {
-            }
-        }
+        // 方案 B：enabledMods 存的是文件夹名，不是 mod_info.json 的 id（260mods 上 256 条只能
+        // 匹配 201 个目录，漏 ~27% 源码），所以不做 enabled 过滤：modsRoot 下所有含
+        // mod_info.json 的直接子目录一律进指纹。只扫直接子目录，不递归孙目录，
+        // 否则同级副本目录（如 "mods - 副本"）之类会被误收。
+        scanModFolders(mods, files);
+        // enabled_mods.json 自身仍进指纹：它决定 enabledMods 的顺序 -> classpath 优先级。
         addFile(mods.resolve("enabled_mods.json"), files);
         addTree(ctx.gameRoot().resolve("starsector-core/data/scripts"), files);
         addFile(ctx.gameRoot().resolve("starsector-core/fr.agent.jar"), files);
@@ -118,40 +102,30 @@ public final class ScriptCacheKey {
         if (p != null && Files.isRegularFile(p)) out.add(p.toAbsolutePath().normalize());
     }
 
-    private static Set<String> readEnabledIds(Path file) {
-        if (!Files.isRegularFile(file)) return null;
-        Set<String> ids = new TreeSet<>();
-        try {
-            JSONObject o = new JSONObject(Files.readString(file));
-            JSONArray a = o.optJSONArray("enabledMods");
-            if (a != null) {
-                for (int i = 0; i < a.length(); i++) ids.add(a.getString(i));
-            }
-        } catch (Throwable t) {
-            AgentLog.fail("enabled_mods parse failed: " + file, t);
-            return null;
-        }
-        return ids;
-    }
-
-    private static Map<String, Path> scanModFolders(Path mods) {
-        Map<String, Path> map = new TreeMap<>();
-        if (!Files.isDirectory(mods)) return map;
+    /**
+     * 把 {@code modsRoot} 下所有直接子目录里「有 mod_info.json」的 mod 收进 {@code out}。
+     * 不解析 mod_info.json：文件本身会被 {@link #addFile} 收进指纹，解析失败也不影响覆盖，
+     * 因此这里不依赖任何 JSON 解析，也不会因为 id 缺失/格式怪而漏掉目录。
+     */
+    private static void scanModFolders(Path mods, Set<Path> out) {
+        if (!Files.isDirectory(mods)) return;
         try (Stream<Path> s = Files.list(mods)) {
             s.filter(Files::isDirectory).forEach(dir -> {
-                Path info = dir.resolve("mod_info.json");
-                if (!Files.isRegularFile(info)) return;
-                try {
-                    JSONObject o = new JSONObject(Files.readString(info));
-                    String id = o.optString("id", "");
-                    if (!id.isBlank()) map.put(id, dir);
-                } catch (Throwable ignored) {
+                if (!Files.isRegularFile(dir.resolve("mod_info.json"))) return;
+                addTree(dir.resolve("src"), out);
+                addTree(dir.resolve("jars"), out);
+                addTree(dir.resolve("data/scripts"), out);
+                addFile(dir.resolve("mod_info.json"), out);
+                try (Stream<Path> rootJars = Files.list(dir)) {
+                    rootJars.filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT)
+                                    .endsWith(".jar"))
+                            .forEach(p -> addFile(p, out));
+                } catch (IOException ignored) {
                 }
             });
         } catch (IOException e) {
             AgentLog.fail("mod scan failed", e);
         }
-        return map;
     }
 
     private static String sha256(byte[] bytes) {

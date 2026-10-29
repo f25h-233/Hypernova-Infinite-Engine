@@ -109,6 +109,39 @@ class ScriptCacheKeyTest {
         assertNotEquals(k1, k2, "content change with unchanged mtime must not reuse stale sha256");
     }
 
+    @Test
+    void keyCoversModsWhoseFolderNameIsNotItsId() throws Exception {
+        Path game = tmp.resolve("game5");
+        Path mods = game.resolve("mods");
+        // 文件夹名与 mod_info.json 的 id 不一致（260mods 的真实形态）。
+        Path longName = mods.resolve("A Very Long Folder Name");
+        Files.createDirectories(longName);
+        Files.writeString(longName.resolve("mod_info.json"), "{\"id\":\"short_id\"}");
+        // enabledMods 里放的 id 根本匹配不到任何文件夹 —— 旧实现会整个跳过该 mod。
+        Path unmatched = mods.resolve("some_dir");
+        Files.createDirectories(unmatched.resolve("src/x"));
+        Files.writeString(unmatched.resolve("mod_info.json"), "{\"id\":\"other_id\"}");
+        Path java = unmatched.resolve("src/x/Unmatched.java");
+        Files.writeString(java, "package x; public class Unmatched {}");
+        Files.writeString(mods.resolve("enabled_mods.json"),
+                "{\"enabledMods\":[\"nonexistent_id_xyz\"]}");
+        RuntimeContext ctx = ctx(game, mods);
+
+        Path javaAbs = java.toAbsolutePath().normalize();
+        assertTrue(ScriptCacheKey.collectFiles(ctx).contains(javaAbs),
+                "every mod folder with mod_info.json must be fingerprinted, regardless of enabledMods ids");
+
+        ScriptCacheKey.Result r1 = ScriptCacheKey.compute(ctx);
+        assertEquals(4, r1.fileCount(),
+                "expected enabled_mods.json + 2x mod_info.json + the .java from the unmatched folder");
+
+        Files.writeString(java, "package x; public class Unmatched { int y; }");
+        Files.setLastModifiedTime(java,
+                FileTime.fromMillis(System.currentTimeMillis() + 1000));
+        assertNotEquals(r1.id(), ScriptCacheKey.compute(ctx).id(),
+                "editing a mod that enabledMods cannot match must still change the key");
+    }
+
     private RuntimeContext ctx(Path game, Path mods) {
         Path saves = tmp.resolve("saves-" + Math.abs(game.hashCode()));
         ScriptCacheConfig cfg = new ScriptCacheConfig(true, 1L << 20, 2, 3000, false);
