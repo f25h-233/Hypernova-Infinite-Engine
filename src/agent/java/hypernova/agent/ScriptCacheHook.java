@@ -1,5 +1,12 @@
 package hypernova.agent;
 
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
@@ -11,16 +18,59 @@ public final class ScriptCacheHook {
     private static final LongAdder MISSES = new LongAdder();
     private static final AtomicLong FIRST = new AtomicLong(0);
     private static final AtomicLong LAST = new AtomicLong(0);
+    private static final Set<Object> PRELOADED = ConcurrentHashMap.newKeySet();
+    private static final List<String> MISS_SAMPLE =
+            Collections.synchronizedList(new ArrayList<>());
     private static volatile RuntimeContext context;
+    private static volatile Map<String, byte[]> currentMap;
     private static volatile String currentKey = "";
+    private static volatile CacheWriter writer;
 
     private ScriptCacheHook() {
     }
 
     public static void preload(Object loader) {
         PRELOAD_CALLS.incrementAndGet();
-        AgentLog.info("preload hook fired: "
-                + (loader == null ? "null" : loader.getClass().getName()));
+        try {
+            RuntimeContext ctx = context;
+            if (ctx == null) {
+                AgentLog.info("no runtime context; preload skipped");
+                return;
+            }
+            preload(loader, ctx);
+        } catch (Throwable t) {
+            AgentLog.fail("preload failed", t);
+        }
+    }
+
+    static void preload(Object loader, RuntimeContext ctx) {
+        if (loader == null || ctx == null || !ctx.config().scriptsEnabled()) return;
+        if (!PRELOADED.add(loader)) return;
+        Map<String, byte[]> map = bytecodeCache(loader);
+        if (map == null) {
+            AgentLog.info("bytecodeCache field not found; scripts cache disabled");
+            return;
+        }
+        currentMap = map;
+        context = ctx;
+        long t0 = System.nanoTime();
+        String key = ScriptCacheKey.compute(ctx).id();
+        currentKey = key;
+        CacheStore store = new CacheStore(ctx.cacheRoot(), ctx.config().cacheGenerations(),
+                ctx.config().cacheMaxBytes());
+        CachePack.Pack pack = store.load(key);
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+        if (pack != null) {
+            map.putAll(pack.entries());
+            AgentLog.info("scripts cache preloaded: key=" + key + ", entries="
+                    + pack.entries().size() + ", bytes=" + pack.bytes() + ", in " + ms + " ms");
+            ctx.telemetry().event("preload", key, pack.entries().size(), pack.bytes(), ms);
+        } else {
+            AgentLog.info("scripts cache cold: key=" + key + ", preloaded=0, in " + ms + " ms");
+            ctx.telemetry().event("preload-miss", key, 0, 0, ms);
+        }
+        writer = new CacheWriter(ctx, key, map, map.size(), 5_000);
+        writer.start();
     }
 
     public static void onFindClass(Object loader, String name) {
@@ -28,19 +78,47 @@ public final class ScriptCacheHook {
         FIRST.compareAndSet(0, now);
         LAST.set(now);
         FINDS.increment();
-        MISSES.increment();
+        Map<String, byte[]> map = currentMap;
+        if (map != null && map.containsKey(name)) {
+            HITS.increment();
+        } else {
+            MISSES.increment();
+            if (MISS_SAMPLE.size() < 50) MISS_SAMPLE.add(name);
+        }
     }
 
     public static void shutdown() {
-        summaryTick();
+        CacheWriter w = writer;
+        if (w != null) w.flushNow();
+        RuntimeContext ctx = context;
+        if (ctx != null) {
+            ctx.telemetry().summary(currentKey, HITS.sum(), MISSES.sum(), FINDS.sum(),
+                    spanMillis(), currentMap == null ? 0 : currentMap.size());
+            ctx.telemetry().close();
+        }
     }
 
     public static void summaryTick() {
         RuntimeContext ctx = context;
-        if (ctx != null) {
-            ctx.telemetry().summary(currentKey, HITS.sum(), MISSES.sum(), FINDS.sum(),
-                    spanMillis(), 0);
+        if (ctx == null) return;
+        ctx.telemetry().summary(currentKey, HITS.sum(), MISSES.sum(), FINDS.sum(),
+                spanMillis(), currentMap == null ? 0 : currentMap.size());
+    }
+
+    private static Map<String, byte[]> bytecodeCache(Object loader) {
+        try {
+            Field f = loader.getClass().getDeclaredField("bytecodeCache");
+            f.setAccessible(true);
+            Object value = f.get(loader);
+            if (value instanceof Map<?, ?> m) {
+                @SuppressWarnings("unchecked")
+                Map<String, byte[]> typed = (Map<String, byte[]>) m;
+                return typed;
+            }
+        } catch (Throwable t) {
+            AgentLog.fail("cannot access bytecodeCache", t);
         }
+        return null;
     }
 
     static void setContext(RuntimeContext ctx) { context = ctx; }
@@ -48,6 +126,8 @@ public final class ScriptCacheHook {
     static long findCalls() { return FINDS.sum(); }
     static long hits() { return HITS.sum(); }
     static long misses() { return MISSES.sum(); }
+    static String currentKey() { return currentKey; }
+    static List<String> missSample() { return new ArrayList<>(MISS_SAMPLE); }
 
     static long spanMillis() {
         long first = FIRST.get();
@@ -62,7 +142,11 @@ public final class ScriptCacheHook {
         MISSES.reset();
         FIRST.set(0);
         LAST.set(0);
+        PRELOADED.clear();
+        MISS_SAMPLE.clear();
         context = null;
+        currentMap = null;
         currentKey = "";
+        writer = null;
     }
 }

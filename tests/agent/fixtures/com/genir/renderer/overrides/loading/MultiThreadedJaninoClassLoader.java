@@ -21,4 +21,8 @@ public class MultiThreadedJaninoClassLoader extends ClassLoader {
     public Map<String, byte[]> bytecodeCache() {
         return bytecodeCache;
     }
+
+    public Class<?> find(String name) throws ClassNotFoundException {
+        return findClass(name);
+    }
 }
