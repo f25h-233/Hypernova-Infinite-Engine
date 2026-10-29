@@ -41,6 +41,10 @@ MODDIR="$OUT/hypernova-mod"
 rm -rf "$MODDIR"; mkdir -p "$MODDIR/jars" "$MODDIR/data/config/hypernova"
 cp "$OUT/hypernova.jar" "$MODDIR/jars/hypernova.jar"
 cp "$ROOT_W/mod_info.json" "$MODDIR/mod_info.json"
+# 可选 agent：构建过就放进 mod 包；是否启用由 install_agent.py 决定。
+if [ -f "$ROOT_W/build/agent/hypernova.agent.jar" ]; then
+  cp "$ROOT_W/build/agent/hypernova.agent.jar" "$MODDIR/jars/hypernova.agent.jar"
+fi
 # 注意 `cp -r data/. <dst>` 而不是 `cp -r data <dst>`：后者在 dst 存在时会嵌套成 data/data/。
 mkdir -p "$MODDIR/data"
 cp -r "$ROOT_W/data/." "$MODDIR/data/"
@@ -56,6 +60,11 @@ if ! (cd "$OUT" && jar --list --file hypernova-0.1.0.zip) \
     | grep -qx 'data/config/hypernova/manifest-v1.json'; then
   echo "FATAL: hypernova-0.1.0.zip 内缺少 data/config/hypernova/manifest-v1.json" >&2
   exit 1
+fi
+if [ -f "$MODDIR/jars/hypernova.agent.jar" ]; then
+  (cd "$OUT" && jar --list --file hypernova-0.1.0.zip) \
+    | grep -qx 'jars/hypernova.agent.jar' \
+    || { echo "FATAL: zip 缺少 jars/hypernova.agent.jar" >&2; exit 1; }
 fi
 echo "OK: $MANIFEST_DIST (dist artifact, not tracked)"
 echo "OK: $ROOT/build/java/hypernova-mod"
