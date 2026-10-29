@@ -4,6 +4,11 @@
 The agent line is inserted immediately after the Fast Rendering agent line, so
 the transformer chain order is FR -> scripts. Writes LF line endings (argfiles
 must be LF) and is idempotent. A backup is kept as *.bak-hypernova.
+
+Backup semantics: *.bak-hypernova is an *original snapshot* — the launch file as
+it was before the first install. Later installs do NOT refresh it, and uninstall
+never reads or restores it (uninstall only removes the agent line). Restoring the
+pre-install bytes, if ever needed, must be done by hand from that file.
 """
 import argparse
 import shutil
@@ -61,6 +66,10 @@ def read_lines(path: Path) -> list[str]:
 
 
 def write_lf(path: Path, lines: list[str]) -> None:
+    # 这里的 CRLF/CR 归一化在当前调用路径上是死代码：read_lines() 用的
+    # read_text() 已做 universal-newline 翻译，进到这里时行尾只剩 "\n"。
+    # 真正保证写出 LF 的是下面的 open(..., newline="\n")。保留 replace 是为了
+    # 将来若改成直接读字节（如 --dry-run 走字节路径）时仍然安全。
     text = "".join(line.replace("\r\n", "\n").replace("\r", "\n") for line in lines)
     with path.open("w", encoding="utf-8", newline="\n") as f:
         f.write(text)
@@ -83,14 +92,12 @@ def main() -> int:
 
     lines = read_lines(launch)
     new = patch_lines(lines) if args.action == "install" else unpatch_lines(lines)
-    if new == lines:
-        print(f"no change: {launch}")
-        return 0
-    if args.dry_run:
-        print("".join(new), end="")
-        return 0
 
-    if args.action == "install":
+    # F-1：jar 复制必须先于 "no vmparams change" 早退。launch 文件已含 agent 行时
+    # 该早退会触发，若仍在其后复制，升级（重建出新 jar 再 install）就会静默沿用旧 jar。
+    # --dry-run 承诺不写盘，因此排除在外。
+    jar_copied = False
+    if args.action == "install" and not args.dry_run:
         jar = Path(args.jar)
         if not jar.is_file():
             print(f"agent jar not found: {jar}", file=sys.stderr)
@@ -99,6 +106,15 @@ def main() -> int:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(jar, dst)
         print(f"installed: {dst}")
+        jar_copied = True
+
+    if new == lines:
+        # 措辞区分：jar 已被刷新时，说 "vmparams" 无变化，避免读成"什么都没做"。
+        print(f"no vmparams change: {launch}" if jar_copied else f"no change: {launch}")
+        return 0
+    if args.dry_run:
+        print("".join(new), end="")
+        return 0
 
     backup = launch.with_name(launch.name + ".bak-hypernova")
     if not backup.exists():

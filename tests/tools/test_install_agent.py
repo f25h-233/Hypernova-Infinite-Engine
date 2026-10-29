@@ -1,3 +1,4 @@
+import subprocess
 import sys
 from pathlib import Path
 
@@ -49,3 +50,54 @@ def test_patch_refuses_agent_after_main_class():
     with pytest.raises(SystemExit) as excinfo:
         ia.patch_lines(lines)
     assert ia.AGENT_LINE in str(excinfo.value)
+
+
+# ---- F-1：launch 文件已打过补丁时，install 仍须刷新游戏目录里的 agent jar ----
+
+INSTALLER = Path(__file__).resolve().parents[2] / "tools" / "install_agent.py"
+
+
+def _run_cli(*args: str) -> int:
+    # 走真实 CLI 入口：main() 不接受 argv 参数，且这样连 argparse 接线一起覆盖。
+    return subprocess.run([sys.executable, "-I", str(INSTALLER), *args],
+                          capture_output=True, text=True).returncode
+
+
+def _fake_game(tmp_path):
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    launch = game / "starsector-core" / "fr.vmparams"
+    launch.write_text("-Xmx10g\n" + FR + "-classpath\n" + ia.MAIN_CLASS, encoding="utf-8")
+    return game, launch
+
+
+def test_reinstall_updates_agent_jar(tmp_path):
+    game, launch = _fake_game(tmp_path)
+    installed = game / "mods/hypernova_infinite_engine/jars/hypernova.agent.jar"
+
+    jar_v1 = tmp_path / "jar_v1.jar"
+    jar_v1.write_bytes(b"V1")
+    assert _run_cli("--game", str(game), "--env", "base", "--jar", str(jar_v1)) == 0
+    assert installed.read_bytes() == b"V1"
+    after_first = launch.read_bytes()
+
+    # 第二次 install：launch 文件已是打过补丁的状态（行无变化），jar 仍必须更新。
+    jar_v2 = tmp_path / "jar_v2.jar"
+    jar_v2.write_bytes(b"V2")
+    assert _run_cli("--game", str(game), "--env", "base", "--jar", str(jar_v2)) == 0
+    assert installed.read_bytes() == b"V2"
+    # 幂等仍然成立：launch 文件内容一字未变。
+    assert launch.read_bytes() == after_first
+
+
+def test_dry_run_does_not_copy_agent_jar(tmp_path):
+    game, launch = _fake_game(tmp_path)
+    original = launch.read_text(encoding="utf-8")
+
+    jar = tmp_path / "agent.jar"
+    jar.write_bytes(b"JAR")
+    assert _run_cli("--game", str(game), "--env", "base",
+                    "--jar", str(jar), "--dry-run") == 0
+    installed = game / "mods/hypernova_infinite_engine/jars/hypernova.agent.jar"
+    assert not installed.exists()
+    assert launch.read_text(encoding="utf-8") == original
