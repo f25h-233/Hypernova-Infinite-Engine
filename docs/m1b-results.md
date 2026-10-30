@@ -2,7 +2,7 @@
 
 > 日期：2026-10-30
 > 环境：Starsector 0.98a + 260mods、热缓存、`scripts.enabled=true`、GraphicsLib 1.12.1、Fast Rendering 0.9.5
-> 结论：**agent 路线通过出口门禁的自动化部分**；战斗内法线正常为唯一待人工确认项。DDS 烘焙是可选工具，不参与门禁。
+> 结论：**agent 路线通过出口门禁**（含 2026-10-30 战斗内法线人工检查 PASS）；DDS 烘焙是可选工具，不参与门禁。
 
 ## 1. 实测
 
@@ -53,9 +53,9 @@
 |---|---|---|---|
 | 启动期 `cache/*_normal.png` 行数 | 下降 ≥80%，绝对 ≤50 行 | 30,378 → 0（−100%） | PASS |
 | 补丁实际生效 | `patched=true` 且无 hash mismatch | 两者均满足 | PASS |
-| 战斗内法线正常 | 人工检查 | 待执行（见 §4） | PENDING |
+| 战斗内法线正常 | 人工检查 | 2026-10-30 用户手动检查正常；战斗期 75 条法线加载、无报错 | PASS |
 
-结论：自动化门禁 **PASS**；战斗内法线检查完成前，M-1b 的出口视为“自动化通过、人工项待签”。若人工检查发现异常，按 §5 回滚。
+结论：自动化门禁与人工检查均 **PASS**，M-1b 出口完成。若后续发现异常，按 §5 回滚。
 
 ## 3. 实现机制
 
@@ -115,10 +115,20 @@ new TextureEntry(null, cachePath, 1f, !autoGenOverride, true, false, false)
 | 编译目标 | `--release 17`（class major 61） |
 | 锁定版本 | GraphicsLib 1.12.1；Fast Rendering 0.9.5 |
 
-## 4. 战斗内法线人工检查（待执行）
+## 4. 战斗内法线人工检查（PASS，2026-10-30）
 
-状态：**未执行**（需用户在真实启动器下人工确认）。
-检查日期：____　截图：____
+状态：**PASS**（2026-10-30）。
+用户操作：用 `启动-Miko省内存.bat`（Miko Lite / `Miko_Lite.txt`，正常启动器）启动 260mods → 读档 → 进战斗 → 肉眼检查画面法线/光照正常。
+日志证据（2026-10-30，最后一会话）：
+
+- `m1b_measure`：`menu_s=76.9`、`normal_before_menu=0`、`normal_after_menu=75`、`patched=true`、`mismatch_line=null`、`gate_ok=true`、`session_source=anchor`；
+- agent：`cache probe ready, files=31627` + `textures: patched org/dark/shaders/util/TextureData`；
+- 无 `Failed to load texture` / TextureData 异常 / NPE。
+
+结论：战斗期按需加载生效（75 条 `cache/*_normal.png` 在菜单后加载），画面法线/光照正常。
+截图：待用户附。
+
+检查清单（均已完成）：
 
 1. 用正常启动器（不是 `launchDirect`）启动 260mods，加载一个存档。
 2. 进入一场包含多种舰船/武器的战斗。
