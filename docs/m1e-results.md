@@ -111,7 +111,7 @@
 
 ### 3.3 post-purge（未跑）
 
-- `clear_standby.ps1` 在本机非提权 shell 返回 `NOT_ELEVATED`（exit 3），按规格停止条件未运行 post-purge 臂。
+- 提权检查 `clear_standby.ps1 -CheckOnly` 在本机非提权 shell 返回 `NOT_ELEVATED`（exit 3，无清缓存副作用），按规格停止条件未运行 post-purge 臂。
 - 因此没有“清缓存后第 1 轮 read bytes 显著高于后两轮”的数据；结论只用 warm 分布，不用单轮差值。
 
 ### 3.4 与历史同口径对照
@@ -150,7 +150,7 @@ Base runtime：`D:/github/Hypernova-Infinite-Engine/Starsector-098-Base/jre/bin/
 - runtime 首行（两个日志）：`runtime: openjdk version "17.0.10" 2024-01-16 LTS`。
 - 与系统 Java 21 的差异：结果无差异；审计保证所有 first-party class 为 major 61、无 21-only API。
 - symlink assumption：**abort**（1 个 agent 测试 `symlinkToFileFollowsLegacySemantics`，原因 `symlinks unsupported here: ... 客户端没有所需的特权`），不是失败。
-- 工具链测试：`python -m pytest tests/tools -q` → **183 passed, 2 failed**。2 个失败是既有 `test_smoke_check.py::{test_jar_provenance_detects_mismatch, test_provenance_mismatch_fails_without_skip}`（Python 3.14 `zipfile.BadZipFile`，合成夹具），**M-1e 前已存在、记为 known/deferred，不是新增失败**。
+- 工具链测试：`python -m pytest tests/tools -q` → **183 passed, 2 failed**。2 个失败是既有 `test_smoke_check.py::{test_jar_provenance_detects_mismatch, test_provenance_mismatch_fails_without_skip}`（合成夹具仍写原始字节 `b"old"`/`b"new"`；自 `ea0a2c6` 起 provenance 改用 `zipfile` 内容哈希，任何 Python 版本都会抛 `BadZipFile`，与 Python 版本无关），**M-1e 前已存在、记为 known/deferred，不是新增失败**。
 
 ## 5. 回滚与重跑
 
@@ -191,8 +191,8 @@ python -I tools/m1b_measure.py --log build/m1e-nofr-on.log \
 python -I tools/m1e_rounds.py --profile miko-lite --rounds 3 --tag warm \
   --json-out build/m1e-rounds-warm.json
 
-# 5) 提权检查；仅当 ELEVATED 才跑 post-purge
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/clear_standby.ps1
+# 5) 提权检查（-CheckOnly：只检查，不清 standby list）；仅当 ELEVATED 才跑 post-purge
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/clear_standby.ps1 -CheckOnly
 # 若输出 ELEVATED：
 python -I tools/m1e_rounds.py --profile miko-lite --rounds 3 --purge once --tag cold \
   --json-out build/m1e-rounds-cold.json
@@ -218,5 +218,5 @@ JAVA_RUNTIME="D:/github/Hypernova-Infinite-Engine/Starsector-098-Base/jre/bin/ja
 - no-FR 臂没有覆盖“FR 0.9.7rc2 + Hypernova”组合（那是后续独立任务）。
 - 260mods 的 256 个启用 mod 中只有 VOpt 引用 `com/genir`；其它 mod 的反射/字节码未逐一证明。VOpt 在 no-FR 下走 `FR not enabled, handling DDS files manually`，两臂均正常。
 - Java 审计的 API 列表是已知清单，不是 JDK 17/21 全量 diff；jar 内 49-major 类为 bundled ASM，属第三方。
-- `tests/tools/test_smoke_check.py` 的 2 个失败为 M-1e 前既有问题（Python 3.14 `BadZipFile`），known/deferred，不是本轮新增。
+- `tests/tools/test_smoke_check.py` 的 2 个失败为 M-1e 前既有问题（合成夹具 `b"old"`/`b"new"` 与 `ea0a2c6` 起的 `zipfile` 内容哈希不兼容，任何 Python 版本均失败），known/deferred，不是本轮新增。
 - 本次验证不修改生产代码（`src/**` 零改动），不升级 FR（继续 pin 0.9.5）。

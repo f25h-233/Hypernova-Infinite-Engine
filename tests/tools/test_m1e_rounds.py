@@ -67,14 +67,19 @@ def test_exit_code_requires_every_attempted_round():
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
 def test_purge_script_reports_not_elevated_in_this_shell():
+    # -CheckOnly makes this side-effect free: an elevated host prints
+    # ELEVATED/exit 0 without purging; a non-elevated host prints
+    # NOT_ELEVATED/exit 3. Never purge the machine from the test suite.
     r = subprocess.run(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PURGE)],
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PURGE),
+         "-CheckOnly"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     out = (r.stdout or "") + (r.stderr or "")
     # "ELEVATED" is a substring of "NOT_ELEVATED"; skip only on a real
-    # elevated run, where the script prints ELEVATED/PURGED and not NOT_ELEVATED.
+    # elevated run, where the script prints ELEVATED and not NOT_ELEVATED.
     if "ELEVATED" in out and "NOT_ELEVATED" not in out:
-        pytest.skip("this shell is elevated")
+        assert r.returncode == 0
+        pytest.skip("this shell is elevated; -CheckOnly performed no purge")
     assert r.returncode == 3
     assert "NOT_ELEVATED" in out
 
