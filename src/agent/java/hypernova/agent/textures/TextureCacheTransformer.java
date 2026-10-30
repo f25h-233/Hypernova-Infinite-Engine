@@ -5,6 +5,8 @@ import hypernova.agent.AgentLog;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.lang.instrument.ClassFileTransformer;
+import java.nio.file.Path;
+import java.security.CodeSource;
 import java.security.MessageDigest;
 import java.security.ProtectionDomain;
 import java.util.HexFormat;
@@ -74,6 +76,7 @@ public final class TextureCacheTransformer implements ClassFileTransformer {
                 return null;
             }
             if (applied.compareAndSet(false, true)) {
+                initCacheProbe(protectionDomain);
                 AgentLog.info("textures: patched " + className
                         + " (shaderLib 1.12.1 lazy normal cache)");
             }
@@ -81,6 +84,26 @@ public final class TextureCacheTransformer implements ClassFileTransformer {
         } catch (Throwable t) {
             AgentLog.fail("textures: transform failed", t);
             return null;
+        }
+    }
+
+    /**
+     * 在 agent 域扫描 GraphicsLib 的 cache/ 目录。补丁类运行在脚本域，
+     * 脚本安全管理器拒绝 File 访问，所以文件探测必须在这里一次做完。
+     * PD 为 null（单测）或路径不可解析时跳过，CacheProbe 保持空集（回退原路径）。
+     */
+    private static void initCacheProbe(ProtectionDomain protectionDomain) {
+        if (protectionDomain == null) return;
+        try {
+            CodeSource source = protectionDomain.getCodeSource();
+            if (source == null || source.getLocation() == null) return;
+            Path jar = Path.of(source.getLocation().toURI());
+            Path modRoot = jar.getParent() == null ? null : jar.getParent().getParent();
+            if (modRoot == null) return;
+            CacheProbe.init(modRoot.toString());
+            AgentLog.info("textures: cache probe ready, files=" + CacheProbe.size());
+        } catch (Throwable t) {
+            AgentLog.fail("textures: cache probe init failed", t);
         }
     }
 

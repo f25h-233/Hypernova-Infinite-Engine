@@ -18,7 +18,8 @@ if [ ! -f "$GLIB" ]; then echo "FATAL: missing $GLIB" >&2; exit 2; fi
 if [ ! -f "$CORE/starfarer.api.jar" ]; then echo "FATAL: missing game jars under $CORE" >&2; exit 2; fi
 
 rm -rf "$WORK" "$RES"
-mkdir -p "$WORK/orig" "$WORK/src/org/dark/shaders/util" "$WORK/classes" "$RES"
+mkdir -p "$WORK/orig" "$WORK/src/org/dark/shaders/util" \
+  "$WORK/src/hypernova/agent/textures" "$WORK/classes" "$RES"
 
 unzip -p "$GLIB" org/dark/shaders/util/TextureData.java  > "$WORK/orig/TextureData.java"
 unzip -p "$GLIB" org/dark/shaders/util/TextureData.class > "$WORK/orig/TextureData.class"
@@ -32,9 +33,27 @@ python "$ROOT_W/tools/java/texture_patch.py" \
   --source "$WORK/orig/TextureData.java" \
   --out    "$WORK/src/org/dark/shaders/util/TextureData.java"
 
+# 仅供 javac 的编译期 stub：补丁类引用 agent 域的真 CacheProbe，但此时 agent
+# 尚未编译。stub 只进 $WORK/classes，不复制进 $RES；运行期由 agent jar 提供真类。
+cat > "$WORK/src/hypernova/agent/textures/CacheProbe.java" <<'JAVA'
+package hypernova.agent.textures;
+
+/** 编译期 stub；运行期由 agent jar 提供真类。 */
+public final class CacheProbe {
+    private CacheProbe() {
+    }
+
+    public static boolean has(String cachePath) {
+        return false;
+    }
+}
+JAVA
+
 CP="$CORE/starfarer_obf.jar;$CORE/starfarer.api.jar;$CORE/lwjgl.jar;$CORE/lwjgl_util.jar;$CORE/json.jar;$CORE/log4j-1.2.9.jar;$GLIB"
 javac --release 17 -encoding UTF-8 -nowarn -cp "$CP" \
-  -d "$WORK/classes" "$WORK/src/org/dark/shaders/util/TextureData.java"
+  -d "$WORK/classes" \
+  "$WORK/src/org/dark/shaders/util/TextureData.java" \
+  "$WORK/src/hypernova/agent/textures/CacheProbe.java"
 
 javap -verbose -cp "$WORK/classes" org.dark.shaders.util.TextureData 2>/dev/null \
   | grep -q "major version: 61" || { echo "FATAL: patched class major != 61" >&2; exit 2; }

@@ -145,9 +145,7 @@ HELPERS = r'''    private static boolean isAlwaysPreloadFor(ObjectType type, Str
 
     private static boolean hasCachedNormalMap(String cachePath) {
         try {
-            final String modPath = Global.getSettings().getModManager().getModSpec("shaderLib").getPath();
-            final java.io.File file = new java.io.File(modPath, cachePath);
-            return file.isFile() && (file.length() >= 8L);
+            return hypernova.agent.textures.CacheProbe.has(cachePath);
         } catch (Throwable t) {
             return false;
         }
