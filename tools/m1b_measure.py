@@ -25,7 +25,7 @@ NORMAL = re.compile(
 # "Cleaned buffer for texture cache/..._normal.png"，计数口径由 --normal-metric 选择。
 CLEANED_NORMAL = re.compile(
     r"^\d+ \[[^\]]+\] INFO  com\.fs\.graphics\.TextureLoader  - "
-    r"Cleaned buffer for texture (cache/[^\s]*_normal\.png)"
+    r"Cleaned buffer for texture (cache/.*?_normal\.png)"
 )
 # 真实日志里有大量 1–2 ms 的时间戳倒序（多线程写日志），不能当会话边界。
 # 只有倒退超过 1 s 才说明日志跨了两次启动。

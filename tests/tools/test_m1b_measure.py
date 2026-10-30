@@ -454,3 +454,29 @@ def test_normal_metric_rejects_unknown_value(tmp_path):
 
     r = _run_measure(log, agent, out, "--normal-metric", "bogus")
     assert r.returncode == 2
+
+
+def test_cleaned_metric_counts_whitespace_filenames(tmp_path):
+    # I-1: cache-normal filenames may contain spaces. The cache/ scope must
+    # still exclude source-texture graphics/..._normal.png cleans.
+    log = tmp_path / "starsector.log"
+    agent = tmp_path / "agent.log"
+    out = tmp_path / "out.json"
+    lines = []
+    t = 0
+    for name in ("cache/M_energy level___SHIP_normal.png",
+                 "cache/flame sp___TURRET0_normal.png",
+                 "graphics/shaders/normal/ships/shuttle_normal.png"):
+        t += 10
+        lines.append(f"{t} [main] INFO  com.fs.graphics.TextureLoader  - "
+                     f"Cleaned buffer for texture {name} (using reflection)")
+    t += 1000
+    lines.append(menu_line(t))
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    agent.write_text(NOFR_AGENT, encoding="utf-8")
+
+    r = _run_measure(log, agent, out, "--normal-metric", "cleaned")
+    assert r.returncode == 0, r.stdout + r.stderr
+    d = json.loads(out.read_text(encoding="utf-8"))
+    assert d["normal_before_menu"] == 2
+    assert d["gate_ok"] is True
