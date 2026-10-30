@@ -139,11 +139,13 @@ median: files=12308 key=03ac59faf608e2b1d5fe4e8a27c41c19 scan=194 load=77 refres
 
 - **size+mtime 均未变的内容修改会复用旧 sha256**：这是 spec 记录的已知风险；racy-clean 只保证 `mtime >= savedAt` 的文件重算，`-Dhypernova.rehash=true` 是兜底。本次实测 `rehash=false`，说明 3 轮都走了复用路径，这是预期行为。
 - **未采用目录 mtime 剪枝**：NTFS 上修改文件内容不改变父目录 mtime（只有增删/改名才变），目录 mtime 不能检测内容修改；逐文件 `BasicFileAttributes`（串行 443 ms 量级）已足够便宜，再持久化目录清单只会多一个真值来源，没有收益。
-- **`KEY_AWAIT_MILLIS=8 s` 超时后同步重算的路径仍在**：新 key 实测最大 481 ms，远低于 8 s，本安装不会触发；若未来文件树显著变大，该路径仍是正确性兜底。
-- **扫描 fail-closed**：任一扫描根不可读会抛异常并让本次脚本缓存禁用（退回原版全量编译），不会用不完整文件集产出 key；这是设计选择，不是回归。
+- **`KEY_AWAIT_MILLIS=8 s` 超时后同步重算的路径仍在**：它是**性能/可用性兜底**，不是正确性兜底；后台 key 失败时主线程会无超时地同步重跑一次 `compute`。新 key 最大 481 ms，使该路径不触发；若未来文件树显著变大，它仍能保证本次启动可用。
+- **扫描 fail-closed 的范围**：`KeyScanner` 的 `walkTree` 源根（`src/`、`jars/`、`data/scripts/`）不可读、或并行扫描任务失败 → 抛异常、本次缓存禁用。**发现级列举**（`mods` 根目录列举、单 mod 根级 `*.jar` 列举、`mod_info.json` 探测）失败仍按旧 `scanModFolders` 行为记日志并跳过该目录——风险低（游戏自身同样读不到该 mod），但不在 fail-closed 保证内；下个里程碑加注入 seam 后收紧。
 - **基准与游戏内口径差异**：见 §5.3（12,308 vs 12,330；基准 key 不含头部）。
 - **旧基线不是同会话 A/B**：15 次旧值与 3 次新值来自同一天同一安装，但旧值由改造前 jar 产生，中间有安装/构建与系统状态变化；只能作前后对照。
 - **测试环境限制**：Windows 当前账户无创建符号链接特权，`KeyScannerTest.symlinkToFileFollowsLegacySemantics` 以 assumption 中止（不是失败）；`tests/tools/test_smoke_check.py` 的 2 条 M-1d 遗留失败仍在，记为 deferred，非本任务引入。
+- **旧格式 object 清单不会被升级**：`savedAt>0` 但无 `jvmJava`/`jvmClasspath` 的旧格式清单，在输入不变时不会被升级；`CacheTool key --verify` 会持续报 `jvm_match: n/a`。只影响诊断证据，不影响 key 正确性；任一次输入变化后自愈。
+- **`CacheTool` 把 `jvm_match: n/a` 当通过**：与自身 javadoc 矛盾——M-1d 已知遗留，不在本里程碑修。
 
 ## 10. 测试结果（2026-10-30）
 

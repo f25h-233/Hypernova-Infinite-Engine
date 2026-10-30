@@ -32,8 +32,10 @@ import java.util.concurrent.Future;
  * <p>行为必须与旧 {@code ScriptCacheKey.collectFiles} 逐字等价；等价性由
  * {@code KeyScannerTest} 对着一份旧算法复刻来守护。
  *
- * <p>扫描错误一律 fail-closed：任何源根不可读或并行任务失败都会让 {@link #scan}
- * 抛异常，由调用方禁用本次缓存——绝不从残缺的文件集合产出 key。
+ * <p>{@code walkTree} 的源根不可读或并行任务失败会让 {@link #scan} 抛异常，由调用方
+ * 禁用本次缓存——绝不从残缺的文件集合产出 key。发现级列举（{@code mods} 根目录、
+ * 单 mod 根级 {@code *.jar}、{@code mod_info.json} 探测）失败仍按旧
+ * {@code scanModFolders} 行为记日志并跳过该目录，不在 fail-closed 保证内。
  */
 public final class KeyScanner {
     /** 一个进入指纹的文件；mtime 用毫秒，与 {@link KeyManifest.Entry} 一致。 */
