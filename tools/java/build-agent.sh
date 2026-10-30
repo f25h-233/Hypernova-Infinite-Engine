@@ -25,6 +25,8 @@ if [ ! -f "$OUT/asm/org/objectweb/asm/ClassReader.class" ]; then
     exit 1
   fi
 fi
+# M-1b: 编译并产出 TextureData 懒加载补丁资源。缺 jar 时失败关闭，不生成半成品。
+bash "$ROOT_W/tools/java/build-texture-patch.sh" >/dev/null
 rm -rf "$OUT/classes"
 mkdir -p "$OUT/classes"
 find "$ROOT_W/src/agent/java" -name '*.java' ! -path '*/tools/*' > "$OUT/sources.txt"
@@ -39,12 +41,20 @@ printf '%s\n' \
   'Premain-Class: hypernova.agent.HypernovaAgent' \
   'Can-Retransform-Classes: false' > "$OUT/MANIFEST.MF"
 jar --create --file "$OUT/hypernova.agent.jar" --manifest "$OUT/MANIFEST.MF" \
-  -C "$OUT/classes" . -C "$OUT/asm" .
+  -C "$OUT/classes" . -C "$OUT/asm" . -C "$OUT/textures" .
 # 产物后断言（不是解压前守卫）：unzip 可能“静默零条目成功”，
 # 只有检查最终 jar 内容才能挡住“目录存在但 ASM 没进去”的坏包。
 jar_listing=$(jar --list --file "$OUT/hypernova.agent.jar")
 if ! printf '%s\n' "$jar_listing" | grep -q 'org/objectweb/asm/ClassReader.class'; then
   echo "FATAL: agent jar 不含 ASM (org/objectweb/asm/ClassReader.class)" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$jar_listing" | grep -q 'hypernova/agent/textures/TextureData.class.bin'; then
+  echo "FATAL: agent jar 不含 textures patch resource" >&2
+  exit 1
+fi
+if printf '%s\n' "$jar_listing" | grep -q '^org/dark/shaders/util/TextureData.class$'; then
+  echo "FATAL: patched TextureData.class must not be on the agent classpath" >&2
   exit 1
 fi
 echo "OK: $OUT/hypernova.agent.jar"
