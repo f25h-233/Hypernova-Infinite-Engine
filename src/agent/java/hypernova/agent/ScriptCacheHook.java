@@ -164,11 +164,12 @@ public final class ScriptCacheHook {
     }
 
     /**
-     * SourceOracle 诊断扫描是否启用。默认启用；{@code -Dhypernova.sourceOracle=false}
-     * 可关闭，关闭后所有 miss 一律按「有源码」计，与索引构建失败时的保守口径一致。
+     * SourceOracle 诊断扫描是否启用。默认关闭（诊断用途，缓存决策不依赖）；
+     * {@code -Dhypernova.sourceOracle=true} 可恢复扫描。关闭时非空类名的 miss
+     * 一律按「有源码」计，与索引构建失败时的保守口径一致（空类名仍判为无源码）。
      */
     static boolean sourceOracleEnabled() {
-        return Boolean.parseBoolean(System.getProperty("hypernova.sourceOracle", "true"));
+        return Boolean.parseBoolean(System.getProperty("hypernova.sourceOracle", "false"));
     }
 
     /**
@@ -177,14 +178,16 @@ public final class ScriptCacheHook {
      * <p>构建完成后才开始分类 miss；在此之前所有 miss 都按"有源码"计
      * （保守方向：不虚报命中率，只会让 sourced_misses 偏大）。
      *
-     * <p>用 {@code -Dhypernova.sourceOracle=false} 可关闭扫描：直接在调用线程上
-     * 置入空判定器（不启动线程），miss 全按 sourced 计，缓存决策不受影响。
+     * <p>扫描默认关闭（诊断用途，缓存决策不依赖）；{@code -Dhypernova.sourceOracle=true}
+     * 可恢复。关闭时直接在调用线程上置入空判定器（不启动线程），非空类名的 miss
+     * 按 sourced 计。
      */
     private static void initSourceOracleAsync(RuntimeContext ctx) {
         if (sourceOracle != null || oracleStarted.getAndSet(true)) return;
         if (!sourceOracleEnabled()) {
             sourceOracle = SourceOracle.empty();
-            AgentLog.info("source oracle disabled by system property; all misses treated as sourced");
+            AgentLog.info("source oracle disabled; miss classification degraded "
+                    + "(non-empty names counted as sourced)");
             return;
         }
         Thread t = new Thread(() -> {

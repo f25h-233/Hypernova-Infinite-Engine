@@ -10,8 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * {@code -Dhypernova.sourceOracle} 是 SourceOracle 诊断扫描的开关。
  *
- * <p>默认必须开启（不改变既有行为）：关闭只对显式的 {@code false} 生效，
- * 其它取值（包括未设置）都保持开启。
+ * <p>默认关闭（诊断用途，缓存决策不依赖）。{@code Boolean.parseBoolean} 只有
+ * {@code "true"}（忽略大小写）为 true；{@code false}/{@code 0}/{@code no}/空串等
+ * 一律为 false，未设属性时走默认值 false。
  */
 class SourceOracleSwitchTest {
     private static final String PROP = "hypernova.sourceOracle";
@@ -33,10 +34,10 @@ class SourceOracleSwitchTest {
     }
 
     @Test
-    void enabledWhenPropertyUnset() {
+    void disabledWhenPropertyUnset() {
         System.clearProperty(PROP);
-        assertTrue(ScriptCacheHook.sourceOracleEnabled(),
-                "未设属性时 SourceOracle 必须默认开启");
+        assertFalse(ScriptCacheHook.sourceOracleEnabled(),
+                "未设属性时 SourceOracle 必须默认关闭");
     }
 
     @Test
