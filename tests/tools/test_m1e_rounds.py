@@ -52,6 +52,19 @@ def test_summarize_empty():
     assert summary["menu_s"] is None
 
 
+def test_summarize_records_attempted_rounds():
+    summary = rounds.summarize([{"ok": True, "menu_s": 80.0}], attempted_rounds=3)
+    assert summary["rounds"] == 1
+    assert summary["attempted_rounds"] == 3
+    assert summary["ok_rounds"] == 1
+
+
+def test_exit_code_requires_every_attempted_round():
+    assert rounds.exit_code(3, 3) == 0
+    assert rounds.exit_code(3, 2) == 1
+    assert rounds.exit_code(3, 0) == 1
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
 def test_purge_script_reports_not_elevated_in_this_shell():
     r = subprocess.run(

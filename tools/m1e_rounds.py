@@ -69,7 +69,7 @@ def _stats(values: list[float]) -> dict | None:
     }
 
 
-def summarize(rows: list[dict]) -> dict:
+def summarize(rows: list[dict], attempted_rounds: int | None = None) -> dict:
     ok = [r for r in rows if r.get("ok")]
     menus = [r["menu_s"] for r in ok if r.get("menu_s") is not None]
     reads = [r["read_bytes_menu"] for r in ok
@@ -81,11 +81,17 @@ def summarize(rows: list[dict]) -> dict:
             keys.append(key)
     return {
         "rounds": len(rows),
+        "attempted_rounds": len(rows) if attempted_rounds is None else attempted_rounds,
         "ok_rounds": len(ok),
         "menu_s": _stats(menus),
         "read_bytes_menu": _stats(reads),
         "key_ms": _stats(keys),
     }
+
+
+def exit_code(attempted_rounds: int, ok_rounds: int) -> int:
+    """Fail closed: success requires every attempted round to be ok."""
+    return 0 if ok_rounds == attempted_rounds else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -118,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
                 cache_control = "none"
                 purge_mode = "never"
         round_json = out.with_name(f"{out.stem}-r{i}.json")
+        # Never consume a file left behind by an interrupted earlier run.
+        round_json.unlink(missing_ok=True)
         cmd = build_smoke_command(args.profile, round_json, args.jvm_arg)
         print(f"[m1e] round {i}/{args.rounds}: {' '.join(cmd)}", flush=True)
         r = subprocess.run(cmd, cwd=str(ROOT))
@@ -127,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
             rows.extend(json.loads(round_json.read_text(encoding="utf-8")))
             round_json.unlink()
 
-    summary = summarize(rows)
+    summary = summarize(rows, args.rounds)
     payload = {
         "profile": args.profile,
         "tag": args.tag,
@@ -141,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps({"cache_control": cache_control, "summary": summary},
                      ensure_ascii=False, indent=2))
     print(f"[m1e] json -> {out}")
-    return 0 if summary["ok_rounds"] else 1
+    return exit_code(args.rounds, summary["ok_rounds"])
 
 
 if __name__ == "__main__":
