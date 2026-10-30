@@ -21,30 +21,50 @@ NORMAL = re.compile(
     r"^\d+ \[[^\]]+\] INFO  com\.fs\.graphics\.TextureLoader  - "
     r"Loading image \[cache/[^\]]*_normal\.png\]"
 )
+# 真实日志里有大量 1–2 ms 的时间戳倒序（多线程写日志），不能当会话边界。
+# 只有倒退超过 1 s 才说明日志跨了两次启动。
+ROLLOVER_GAP_MS = 1000
 
 
-def _last_session(lines: list[str]) -> list[str]:
-    """Return only the last game session.
+def _select_session(lines: list[str]) -> tuple[list[str], str]:
+    """Return (last game session's lines, session_source).
 
-    Prefer the last `Fast Rendering` anchor. Log rotation can swallow that
-    anchor, so fall back to the last millisecond-timestamp rollover
-    (`t < prev`) as the session boundary. If timestamps never roll over,
-    treat the whole file as a single session.
+    The session starts at the later of:
+      * the last `Fast Rendering` anchor, and
+      * the last timestamp rollover where the clock goes backwards by more
+        than ``ROLLOVER_GAP_MS``.
+
+    A stale FR anchor therefore loses to a newer anchor-less session. Small
+    (1–2 ms) backwards jitter is ignored, so it cannot cut a normal-count
+    window in half.
+
+    ``session_source`` is ``"anchor"`` or ``"rollover"`` when a boundary was
+    used. With no boundary at all the whole file is treated as one session
+    (``"whole"``); if it also has no millisecond timestamps, ``menu_s`` stays
+    None and the gate fails closed.
     """
-    starts = [i for i, line in enumerate(lines) if SESSION_ANCHOR in line]
-    if starts:
-        return lines[starts[-1]:]
+    anchors = [i for i, line in enumerate(lines) if SESSION_ANCHOR in line]
+    rollovers: list[int] = []
     prev: int | None = None
-    rollover: int | None = None
     for i, line in enumerate(lines):
         m = TS.match(line)
         if not m:
             continue
         t = int(m.group(1))
-        if prev is not None and t < prev:
-            rollover = i
+        if prev is not None and prev - t > ROLLOVER_GAP_MS:
+            rollovers.append(i)
         prev = t
-    return lines[rollover:] if rollover is not None else lines
+
+    anchor = anchors[-1] if anchors else None
+    rollover = rollovers[-1] if rollovers else None
+
+    if anchor is None and rollover is None:
+        # 没有切分点：非空且带时间戳的日志按单会话处理；连时间戳都没有时
+        # 仍返回整份文件，但 measure() 找不到 menu_t，门禁失败关闭。
+        return lines, "whole"
+    if rollover is None or (anchor is not None and anchor >= rollover):
+        return lines[anchor:], "anchor"
+    return lines[rollover:], "rollover"
 
 
 def _last_agent_session(lines: list[str]) -> list[str]:
@@ -57,7 +77,7 @@ def measure(log_path: str | Path, agent_log: str | Path | None = None,
             baseline: int = 30378, threshold: float = 0.2,
             max_normal: int = 50) -> dict:
     lines = Path(log_path).read_text(encoding="utf-8", errors="replace").splitlines()
-    lines = _last_session(lines)
+    lines, session_source = _select_session(lines)
     menu_t: int | None = None
     before = 0
     after = 0
@@ -100,6 +120,7 @@ def measure(log_path: str | Path, agent_log: str | Path | None = None,
     )
     return {
         "menu_s": round(menu_t / 1000.0, 1) if menu_t is not None else None,
+        "session_source": session_source,
         "normal_before_menu": before,
         "normal_after_menu": after,
         "normal_window_s": (

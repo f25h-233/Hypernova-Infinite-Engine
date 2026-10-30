@@ -187,3 +187,91 @@ def test_no_session_anchor_fails_closed(tmp_path):
     d = json.loads(out.read_text(encoding="utf-8"))
     assert d["gate_ok"] is False
     assert d["menu_s"] is None
+
+
+def run_measure(tmp_path, log_text):
+    log = tmp_path / "starsector.log"
+    log.write_text(log_text, encoding="utf-8")
+    out = tmp_path / "out.json"
+    r = subprocess.run([sys.executable, str(ROOT / "tools/m1b_measure.py"),
+                        "--log", str(log), "--baseline", "100",
+                        "--json-out", str(out)],
+                       capture_output=True, text=True)
+    return r, json.loads(out.read_text(encoding="utf-8"))
+
+
+def normal_line(t, name):
+    return (f"{t} [Thread-3] INFO  com.fs.graphics.TextureLoader  - "
+            f"Loading image [cache/{name}_normal.png]")
+
+
+def menu_line(t):
+    return (f"{t} [Thread-21] INFO  sound.H  - "
+            f"Playing music with id [miscallenous_main_menu.ogg]")
+
+
+def test_small_timestamp_dip_does_not_split(tmp_path):
+    # 多线程日志会有 1–2 ms 的倒序；它不能把会话切成两半、丢掉法线计数。
+    log_text = "\n".join([
+        "1000 [main] INFO  com.genir.renderer.agent.Agent  - "
+        "Fast Rendering: v0.9.5",
+        normal_line(1010, "a"),
+        normal_line(1020, "b"),
+        normal_line(1019, "c"),   # 1 ms 倒序
+        menu_line(1030),
+        normal_line(1040, "d"),
+    ]) + "\n"
+    _, d = run_measure(tmp_path, log_text)
+    assert d["normal_before_menu"] == 3, d
+    assert d["normal_after_menu"] == 1, d
+    assert d["session_source"] == "anchor"
+    assert d["menu_s"] == 1.0
+
+
+def test_later_rollover_beats_stale_anchor(tmp_path):
+    # 旧会话有 FR 锚点；新会话没有锚点、时间戳重置。必须测量新会话。
+    log_text = "\n".join([
+        "1000 [main] INFO  com.genir.renderer.agent.Agent  - "
+        "Fast Rendering: v0.9.5",
+        normal_line(1010, "old0"),
+        normal_line(2000, "old1"),
+        menu_line(3000),
+        normal_line(100, "new0"),
+        normal_line(110, "new1"),
+        menu_line(500),
+    ]) + "\n"
+    _, d = run_measure(tmp_path, log_text)
+    assert d["normal_before_menu"] == 2, d
+    assert d["menu_s"] == 0.5
+    assert d["session_source"] == "rollover"
+
+
+def test_session_source_values(tmp_path):
+    # anchor：有 FR 锚点
+    anchor_log = "\n".join([
+        "1000 [main] INFO  com.genir.renderer.agent.Agent  - "
+        "Fast Rendering: v0.9.5",
+        normal_line(1010, "a"),
+        menu_line(1100),
+    ]) + "\n"
+    _, d = run_measure(tmp_path, anchor_log)
+    assert d["session_source"] == "anchor", d
+
+    # rollover：无锚点，时间戳从 5000 回到 1000（>1 s）
+    rollover_log = "\n".join([
+        normal_line(5000, "old"),
+        menu_line(6000),
+        normal_line(1000, "new"),
+        menu_line(2000),
+    ]) + "\n"
+    _, d = run_measure(tmp_path, rollover_log)
+    assert d["session_source"] == "rollover", d
+
+    # whole：无锚点、无 >1 s 回退，整份文件就是一个会话
+    whole_log = "\n".join([
+        normal_line(1000, "a"),
+        menu_line(1100),
+    ]) + "\n"
+    _, d = run_measure(tmp_path, whole_log)
+    assert d["session_source"] == "whole", d
+    assert d["normal_before_menu"] == 1, d
