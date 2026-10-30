@@ -50,6 +50,45 @@
 
 **最小闭环顺序**：单类命中 → 单 mod 命中 → 全量；每一级都是门禁（见 §7）。
 
+### 3.1 与既有方案的关系（2026-10-30，回答"是否重复造轮子"）
+
+社区常见质疑："原版 `settings.json` 里就有 `enableScriptCaching`，你们是不是做了同样的东西？" 结论是**否**，三条证据：
+
+**① 原版开关当前是关的，且作者自己说明它有问题。**
+`starsector-core/data/config/settings.json` 原文（非本项目修改）：
+
+```json
+# disabled for now, causes issues with subsequent runs if game is shut down during startup
+"enableScriptCaching":false, # caches compiled scripts in saves/cache, faster startup time after first run
+```
+
+实证：`starsector-core/cache/` 为空目录，`saves/` 下无 `cache/`，0 个 `.class`——该开关从未在任何一轮实测中生效。
+
+**② FR 覆盖了整个 `ScriptStore`，该分支在装 FR 的环境里根本不存在。**
+vanilla `com/fs/starfarer/loading/scripts/ScriptStore.java:135` 有 `enableScriptCaching` 判断，else 分支用 `CachingJavaSourceClassLoader`（磁盘缓存到 `saves/cache/<hash>/`）。FR 0.9.5 的 `com/genir/renderer/overrides/loading/ScriptStore.java:116` 直接构造 `MultiThreadedJaninoClassLoader`，**没有该判断，也没有 `CachingJavaSourceClassLoader`**。所以装了 FR 的用户把开关设成 `true` 也无效。
+
+**③ FR 放弃磁盘缓存的原因，正是原版注释里那个 bug。**
+vanilla 的 `ResourceCreator.createResource` 是：
+```java
+File file = new File(ScriptStore.o00000(string), string);
+file.getParentFile().mkdirs();
+return new FileOutputStream(file);          // 直接写最终路径，无原子性
+```
+进程在写一半时被杀 → 留下**截断的 `.class`** → 下次启动读到坏文件。这与 settings.json 的 "causes issues with subsequent runs if game is shut down during startup" 完全对应。FR 为了多线程编译重写了 loader，顺带丢掉了磁盘缓存。
+
+**本项目与三者的定位差异**：
+
+| | vanilla `enableScriptCaching` | FR `MultiThreadedJaninoClassLoader` | M-1d（本 agent） |
+|---|---|---|---|
+| 缓存位置 | 磁盘 `saves/cache/` | 无（仅进程内 `bytecodeCache`） | 磁盘 `saves/hypernova/scripts-cache/` |
+| 写入原子性 | ❌ 裸 `FileOutputStream` | — | ✅ tmp + `ATOMIC_MOVE` + CRC32 |
+| 坏文件处理 | ❌ 原地读坏 | — | ✅ 校验失败返回 null，回退 Janino |
+| 编译并发 | ❌ 单线程 | ✅ 3 线程 | ✅ 不介入编译，只 preload |
+| 失效判定 | 仅 mtime | — | sha256 + classpath + java 版本 + 启用集 |
+| 官方状态 | **已禁用（作者注明会坏）** | 覆盖后该分支失效 | 使用中 |
+
+**一句话**：本项目不是重复原版的开关，而是**补上官方因写入不原子而放弃的那块**，且不改 FR 的编译路径——只往它已有的 `bytecodeCache` 里 `putAll`，因此不与任何"加速编译"类 mod（Miko 的 JDK/Janino 升级、FR 的多线程编译）冲突，可以叠加。
+
 ## 4. 缓存设计草案
 
 ```
