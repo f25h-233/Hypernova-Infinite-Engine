@@ -24,6 +24,8 @@ public final class KeyManifest {
 
     private final Map<String, Entry> byPath = new HashMap<>();
     private long savedAt;
+    /** 本次 refresh 是否产生了需要落盘的差异（新文件/删除/重算哈希）。 */
+    private boolean dirty;
     /**
      * 写这份清单那个进程的 {@code java.version}；{@code null} = 旧版清单没有这个字段。
      *
@@ -81,6 +83,7 @@ public final class KeyManifest {
     }
 
     public List<Entry> refresh(List<Path> files) {
+        int oldSize = byPath.size();
         List<Entry> out = new ArrayList<>(files.size());
         for (Path p : files) {
             try {
@@ -90,17 +93,67 @@ public final class KeyManifest {
                 Entry prev = byPath.get(path);
                 // git 的 racy-clean 规则：清单写完之后才被改过的文件（mtime >= savedAt）
                 // 时间戳不可信，必须重算 sha256；否则同尺寸 + mtime 被改回旧值就能骗过复用。
-                String hash = (prev != null && prev.size() == size && prev.mtime() == mtime
-                        && mtime < savedAt)
-                        ? prev.sha256() : sha256(p);
+                String hash;
+                if (prev != null && prev.size() == size && prev.mtime() == mtime
+                        && mtime < savedAt) {
+                    hash = prev.sha256();
+                } else {
+                    dirty = true;
+                    hash = sha256(p);
+                }
                 out.add(new Entry(path, size, mtime, hash));
             } catch (IOException e) {
                 AgentLog.fail("stat failed: " + p, e);
             }
         }
+        if (out.size() != oldSize) dirty = true;
         byPath.clear();
         for (Entry e : out) byPath.put(e.path(), e);
         return out;
+    }
+
+    /**
+     * 用 {@link KeyScanner.FileInfo} 里已经读到的 size/mtime 刷新清单，不再重复 stat。
+     *
+     * <p>复用条件与旧实现一致：清单里有同 path、同 size、同 mtime，且
+     * {@code mtime < savedAt}（git 式 racy-clean；清单写完之后才改过的文件不可信）。
+     * {@code forceRehash=true} 时无条件重算（{@code -Dhypernova.rehash=true}）。
+     *
+     * <p>任何一次「没有走复用」都置 {@link #dirty}：即使哈希恰好没变，也要把新的
+     * mtime 落盘，否则下次启动还会再算一遍。删除文件（条目数变化）同样置 dirty。
+     */
+    public List<Entry> refresh(List<KeyScanner.FileInfo> files, boolean forceRehash) {
+        int previousSize = byPath.size();
+        List<Entry> out = new ArrayList<>(files.size());
+        for (KeyScanner.FileInfo f : files) {
+            String path = f.path().toString();
+            long size = f.size();
+            long mtime = f.mtimeMillis();
+            Entry prev = byPath.get(path);
+            String hash;
+            if (!forceRehash && prev != null && prev.size() == size && prev.mtime() == mtime
+                    && mtime < savedAt) {
+                hash = prev.sha256();
+            } else {
+                dirty = true;
+                try {
+                    hash = sha256(f.path());
+                } catch (IOException e) {
+                    AgentLog.fail("stat/hash failed: " + path, e);
+                    continue;
+                }
+            }
+            out.add(new Entry(path, size, mtime, hash));
+        }
+        if (out.size() != previousSize) dirty = true;
+        byPath.clear();
+        for (Entry e : out) byPath.put(e.path(), e);
+        return out;
+    }
+
+    /** 清单是否需要重写：有差异，或从未成功写过（savedAt=0 / 文件缺失）。 */
+    public boolean saveNeeded() {
+        return dirty || savedAt == 0L;
     }
 
     /** 清单记录的 JVM 版本；旧清单或未设置时为 {@code null}。 */
@@ -207,6 +260,7 @@ public final class KeyManifest {
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING,
                 StandardCopyOption.ATOMIC_MOVE);
         savedAt = now;
+        dirty = false;
     }
 
     private static String sha256(Path path) throws IOException {

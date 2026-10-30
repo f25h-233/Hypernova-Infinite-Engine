@@ -313,6 +313,74 @@ class ScriptCacheKeyTest {
         assertEquals(key1, key2, "rebuilding hypernova.agent.jar must not invalidate the cache key");
     }
 
+    /**
+     * 已知限制：size+mtime 都没变、且 mtime < savedAt 时，缓存会复用旧 sha256。
+     * 这是 R5 为了性能接受的窗口；-Dhypernova.rehash=true 必须能强制重算。
+     */
+    @Test
+    void rehashPropertyForcesContentRecheck() throws Exception {
+        Path game = tmp.resolve("gameRehash");
+        Path mods = game.resolve("mods");
+        Path mod = mods.resolve("foo");
+        Files.createDirectories(mod.resolve("src/a"));
+        Files.writeString(mod.resolve("mod_info.json"), "{\"id\":\"foo\"}");
+        Files.writeString(mods.resolve("enabled_mods.json"), "{\"enabledMods\":[\"foo\"]}");
+        Path java = mod.resolve("src/a/R.java");
+        Files.writeString(java, "package a; public class R {int x;}");
+        RuntimeContext ctx = ctx(game, mods);
+        String k1 = ScriptCacheKey.compute(ctx).id();
+
+        // 把清单 savedAt 推到未来，让 size+mtime 未变的文件走哈希复用路径。
+        Path manifest = ctx.cacheRoot().resolve("key-manifest.json");
+        JSONObject root = new JSONObject(Files.readString(manifest));
+        root.put("savedAt", System.currentTimeMillis() + 3_600_000L);
+        Files.writeString(manifest, root.toString());
+
+        FileTime mtime = Files.getLastModifiedTime(java);
+        Files.writeString(java, "package a; public class R {int y;}"); // 同尺寸
+        Files.setLastModifiedTime(java, mtime);
+
+        assertEquals(k1, ScriptCacheKey.compute(ctx).id(),
+                "same size+mtime must reuse the cached sha256 without the rehash flag");
+
+        System.setProperty("hypernova.rehash", "true");
+        try {
+            assertNotEquals(k1, ScriptCacheKey.compute(ctx).id(),
+                    "-Dhypernova.rehash=true must re-hash every file");
+        } finally {
+            System.clearProperty("hypernova.rehash");
+        }
+    }
+
+    /** 无变化时不得重写 3.3 MB 的清单（每次启动都写是纯浪费）。 */
+    @Test
+    void unchangedInputsDoNotRewriteManifest() throws Exception {
+        Path game = tmp.resolve("gameNoWrite");
+        Path mods = game.resolve("mods");
+        Path mod = mods.resolve("foo");
+        Files.createDirectories(mod.resolve("src/a"));
+        Files.writeString(mod.resolve("mod_info.json"), "{\"id\":\"foo\"}");
+        Files.writeString(mods.resolve("enabled_mods.json"), "{\"enabledMods\":[\"foo\"]}");
+        Path java = mod.resolve("src/a/W.java");
+        Files.writeString(java, "package a; public class W {}");
+        // 把源文件 mtime 固定到过去，保证第一次 compute 的 savedAt 严格大于它。
+        FileTime past = FileTime.fromMillis(System.currentTimeMillis() - 60_000L);
+        Files.setLastModifiedTime(java, past);
+        Files.setLastModifiedTime(mod.resolve("mod_info.json"), past);
+        Files.setLastModifiedTime(mods.resolve("enabled_mods.json"), past);
+
+        RuntimeContext ctx = ctx(game, mods);
+        ScriptCacheKey.compute(ctx);
+        Path manifest = ctx.cacheRoot().resolve("key-manifest.json");
+        FileTime firstWrite = Files.getLastModifiedTime(manifest);
+
+        Thread.sleep(50);
+        ScriptCacheKey.compute(ctx);
+
+        assertEquals(firstWrite, Files.getLastModifiedTime(manifest),
+                "a no-op refresh must not rewrite the manifest");
+    }
+
     private RuntimeContext ctx(Path game, Path mods) {
         Path saves = tmp.resolve("saves-" + Math.abs(game.hashCode()));
         ScriptCacheConfig cfg = new ScriptCacheConfig(true, 1L << 20, 2, 3000, false);
