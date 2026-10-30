@@ -158,7 +158,7 @@ public final class ScriptCacheKey {
         return sb.toString();
     }
 
-    private static List<String> classpathOrder(RuntimeContext ctx) {
+    static List<String> classpathOrder(RuntimeContext ctx) {
         Path root = ctx.gameRoot().toAbsolutePath().normalize();
         List<String> out = new ArrayList<>();
         for (String cp : System.getProperty("java.class.path", "").split(File.pathSeparator)) {
