@@ -275,3 +275,182 @@ def test_session_source_values(tmp_path):
     _, d = run_measure(tmp_path, whole_log)
     assert d["session_source"] == "whole", d
     assert d["normal_before_menu"] == 1, d
+
+
+def write_nofr_log(path, normals_before, normals_after, failures=0, old_fr_session=True):
+    lines = []
+    if old_fr_session:
+        lines.append("100000 [main] INFO  com.genir.renderer.agent.Agent  - Fast Rendering: v0.9.5")
+        lines.append("100010 [Thread-3] INFO  com.fs.graphics.TextureLoader  - "
+                     "Loading image [cache/old_normal.png]")
+    t = 0
+    for i in range(failures):
+        t += 1
+        lines.append(f"{t} [Thread-3] ERROR com.fs.graphics.TextureLoader  - "
+                     f"Failed to load texture [broken{i}]")
+    for i in range(normals_before):
+        t += 10
+        lines.append(f"{t} [Thread-3] INFO  com.fs.graphics.TextureLoader  - "
+                     f"Loading image [cache/x{i}_normal.png]")
+    t += 1000
+    lines.append(f"{t} [Thread-21] INFO  sound.H  - "
+                 "Playing music with id [miscallenous_main_menu.ogg]")
+    for i in range(normals_after):
+        t += 10
+        lines.append(f"{t} [Thread-3] INFO  com.fs.graphics.TextureLoader  - "
+                     f"Loading image [cache/y{i}_normal.png]")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+NOFR_AGENT = (
+    "2026-01-01T00:00:00Z INFO hypernova agent premain; config=x\n"
+    "2026-01-01T00:00:01Z INFO FR missing; scripts cache disabled\n"
+    "2026-01-01T00:00:02Z INFO textures: patched org/dark/shaders/util/TextureData\n"
+)
+
+
+def _run_measure(log, agent, out, *extra):
+    return subprocess.run(
+        [sys.executable, str(ROOT / "tools/m1b_measure.py"),
+         "--log", str(log), "--agent-log", str(agent),
+         "--baseline", "100", "--json-out", str(out), *extra],
+        capture_output=True, text=True)
+
+
+def test_nofr_session_selected_by_rollover_and_gate_passes(tmp_path):
+    log = tmp_path / "starsector.log"
+    agent = tmp_path / "agent.log"
+    out = tmp_path / "out.json"
+    write_nofr_log(log, 0, 2)
+    agent.write_text(NOFR_AGENT, encoding="utf-8")
+
+    r = _run_measure(log, agent, out, "--expect-no-fr")
+    assert r.returncode == 0, r.stdout + r.stderr
+    d = json.loads(out.read_text(encoding="utf-8"))
+    assert d["session_source"] == "rollover"
+    assert d["fr_present"] is False
+    assert d["fr_missing_disabled"] is True
+    assert d["failed_texture_lines"] == 0
+    assert d["gate_ok"] is True
+
+
+def test_expect_no_fr_fails_when_fr_anchor_present(tmp_path):
+    log = tmp_path / "starsector.log"
+    agent = tmp_path / "agent.log"
+    out = tmp_path / "out.json"
+    write_log(log, 0, 0)
+    agent.write_text(NOFR_AGENT, encoding="utf-8")
+
+    r = _run_measure(log, agent, out, "--expect-no-fr")
+    assert r.returncode == 1
+    d = json.loads(out.read_text(encoding="utf-8"))
+    assert d["fr_present"] is True
+    assert d["gate_ok"] is False
+
+
+def test_expect_no_fr_requires_agent_fr_missing_line(tmp_path):
+    log = tmp_path / "starsector.log"
+    agent = tmp_path / "agent.log"
+    out = tmp_path / "out.json"
+    write_nofr_log(log, 0, 0)
+    agent.write_text(
+        "2026-01-01T00:00:00Z INFO hypernova agent premain; config=x\n"
+        "2026-01-01T00:00:02Z INFO textures: patched org/dark/shaders/util/TextureData\n",
+        encoding="utf-8")
+
+    r = _run_measure(log, agent, out, "--expect-no-fr")
+    assert r.returncode == 1
+    d = json.loads(out.read_text(encoding="utf-8"))
+    assert d["fr_missing_disabled"] is False
+    assert d["gate_ok"] is False
+
+
+def test_expect_no_fr_fails_on_failed_texture(tmp_path):
+    log = tmp_path / "starsector.log"
+    agent = tmp_path / "agent.log"
+    out = tmp_path / "out.json"
+    write_nofr_log(log, 0, 0, failures=1)
+    agent.write_text(NOFR_AGENT, encoding="utf-8")
+
+    r = _run_measure(log, agent, out, "--expect-no-fr")
+    assert r.returncode == 1
+    d = json.loads(out.read_text(encoding="utf-8"))
+    assert d["failed_texture_lines"] == 1
+    assert d["gate_ok"] is False
+
+
+def write_cleaned_nofr_log(path, cleaned_before, cleaned_after, loading_before=0):
+    lines = []
+    t = 0
+    for i in range(cleaned_before):
+        t += 10
+        lines.append(f"{t} [main] INFO  com.fs.graphics.TextureLoader  - "
+                     f"Cleaned buffer for texture cache/c{i}_normal.png (using reflection)")
+    for i in range(loading_before):
+        t += 1
+        lines.append(normal_line(t, f"l{i}"))
+    t += 1000
+    lines.append(menu_line(t))
+    for i in range(cleaned_after):
+        t += 10
+        lines.append(f"{t} [main] INFO  com.fs.graphics.TextureLoader  - "
+                     f"Cleaned buffer for texture cache/d{i}_normal.png (using reflection)")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_cleaned_metric_counts_cleaned_lines(tmp_path):
+    log = tmp_path / "starsector.log"
+    agent = tmp_path / "agent.log"
+    out = tmp_path / "out.json"
+    write_cleaned_nofr_log(log, 40, 2, loading_before=5)
+    agent.write_text(NOFR_AGENT, encoding="utf-8")
+
+    r = _run_measure(log, agent, out, "--normal-metric", "cleaned")
+    assert r.returncode == 0, r.stdout + r.stderr
+    d = json.loads(out.read_text(encoding="utf-8"))
+    assert d["normal_metric"] == "cleaned"
+    assert d["normal_before_menu"] == 40
+    assert d["normal_after_menu"] == 2
+    assert d["loading_normal_before_menu"] == 5
+    assert d["loading_normal_after_menu"] == 0
+    assert d["gate_ok"] is True
+
+
+def test_expect_no_fr_defaults_to_cleaned_metric(tmp_path):
+    log = tmp_path / "starsector.log"
+    agent = tmp_path / "agent.log"
+    out = tmp_path / "out.json"
+    write_cleaned_nofr_log(log, 10, 0)
+    agent.write_text(NOFR_AGENT, encoding="utf-8")
+
+    r = _run_measure(log, agent, out, "--expect-no-fr")
+    assert r.returncode == 0, r.stdout + r.stderr
+    d = json.loads(out.read_text(encoding="utf-8"))
+    assert d["normal_metric"] == "cleaned"
+    assert d["normal_before_menu"] == 10
+    assert d["loading_normal_before_menu"] == 0
+
+
+def test_default_metric_is_loading(tmp_path):
+    log = tmp_path / "starsector.log"
+    agent = tmp_path / "agent.log"
+    out = tmp_path / "out.json"
+    write_cleaned_nofr_log(log, 30, 0, loading_before=4)
+    agent.write_text(NOFR_AGENT, encoding="utf-8")
+
+    r = _run_measure(log, agent, out)
+    assert r.returncode == 0, r.stdout + r.stderr
+    d = json.loads(out.read_text(encoding="utf-8"))
+    assert d["normal_metric"] == "loading"
+    assert d["normal_before_menu"] == 4
+    assert d["normal_after_menu"] == 0
+
+
+def test_normal_metric_rejects_unknown_value(tmp_path):
+    log = tmp_path / "starsector.log"
+    agent = tmp_path / "no-agent.log"
+    out = tmp_path / "out.json"
+    write_log(log, 0, 0)
+
+    r = _run_measure(log, agent, out, "--normal-metric", "bogus")
+    assert r.returncode == 2

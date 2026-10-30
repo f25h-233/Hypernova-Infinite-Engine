@@ -21,9 +21,17 @@ NORMAL = re.compile(
     r"^\d+ \[[^\]]+\] INFO  com\.fs\.graphics\.TextureLoader  - "
     r"Loading image \[cache/[^\]]*_normal\.png\]"
 )
+# 真 no-FR 会话里 vanilla TextureLoader 不写 "Loading image"；同等信号是
+# "Cleaned buffer for texture cache/..._normal.png"，计数口径由 --normal-metric 选择。
+CLEANED_NORMAL = re.compile(
+    r"^\d+ \[[^\]]+\] INFO  com\.fs\.graphics\.TextureLoader  - "
+    r"Cleaned buffer for texture (cache/[^\s]*_normal\.png)"
+)
 # 真实日志里有大量 1–2 ms 的时间戳倒序（多线程写日志），不能当会话边界。
 # 只有倒退超过 1 s 才说明日志跨了两次启动。
 ROLLOVER_GAP_MS = 1000
+FAILED_TEXTURE = "Failed to load texture"
+FR_MISSING = "FR missing; scripts cache disabled"
 
 
 def _select_session(lines: list[str]) -> tuple[list[str], str]:
@@ -75,13 +83,26 @@ def _last_agent_session(lines: list[str]) -> list[str]:
 
 def measure(log_path: str | Path, agent_log: str | Path | None = None,
             baseline: int = 30378, threshold: float = 0.2,
-            max_normal: int = 50) -> dict:
+            max_normal: int = 50, expect_no_fr: bool = False,
+            normal_metric: str | None = None) -> dict:
     lines = Path(log_path).read_text(encoding="utf-8", errors="replace").splitlines()
     lines, session_source = _select_session(lines)
+    fr_present = any(SESSION_ANCHOR in line for line in lines)
+    failed_texture_lines = sum(1 for line in lines if FAILED_TEXTURE in line)
+
+    # --expect-no-fr implies the cleaned metric: vanilla TextureLoader emits
+    # "Cleaned buffer for texture cache/..._normal.png" instead of "Loading image".
+    metric = normal_metric or ("cleaned" if expect_no_fr else "loading")
+    if metric not in ("loading", "cleaned"):
+        raise ValueError(f"unknown normal_metric: {metric!r}")
+
     menu_t: int | None = None
-    before = 0
-    after = 0
-    window: list[int] = []
+    loading_before = 0
+    loading_after = 0
+    cleaned_before = 0
+    cleaned_after = 0
+    loading_window: list[int] = []
+    cleaned_window: list[int] = []
     for line in lines:
         m = TS.match(line)
         if not m:
@@ -91,14 +112,26 @@ def measure(log_path: str | Path, agent_log: str | Path | None = None,
             menu_t = t
         if NORMAL.match(line):
             if menu_t is None:
-                before += 1
-                window.append(t)
+                loading_before += 1
+                loading_window.append(t)
             else:
-                after += 1
+                loading_after += 1
+        if CLEANED_NORMAL.match(line):
+            if menu_t is None:
+                cleaned_before += 1
+                cleaned_window.append(t)
+            else:
+                cleaned_after += 1
+
+    if metric == "cleaned":
+        before, after, window = cleaned_before, cleaned_after, cleaned_window
+    else:
+        before, after, window = loading_before, loading_after, loading_window
 
     patched = False
     patch_line = None
     mismatch_line = None
+    fr_missing_disabled = False
     if agent_log and Path(agent_log).is_file():
         agent_lines = Path(agent_log).read_text(
             encoding="utf-8", errors="replace"
@@ -109,6 +142,8 @@ def measure(log_path: str | Path, agent_log: str | Path | None = None,
                 patch_line = line
             elif "textures: TextureData sha mismatch" in line and mismatch_line is None:
                 mismatch_line = line
+            if FR_MISSING in line:
+                fr_missing_disabled = True
 
     drop = 1.0 - (before / baseline) if baseline > 0 else 0.0
     cap = min(max(50, int(baseline * threshold)), max_normal)
@@ -117,12 +152,17 @@ def measure(log_path: str | Path, agent_log: str | Path | None = None,
         and patched
         and mismatch_line is None
         and before <= cap
+        and (not expect_no_fr or (not fr_present and fr_missing_disabled
+                                  and failed_texture_lines == 0))
     )
     return {
         "menu_s": round(menu_t / 1000.0, 1) if menu_t is not None else None,
         "session_source": session_source,
+        "normal_metric": metric,
         "normal_before_menu": before,
         "normal_after_menu": after,
+        "loading_normal_before_menu": loading_before,
+        "loading_normal_after_menu": loading_after,
         "normal_window_s": (
             round((window[-1] - window[0]) / 1000.0, 1) if len(window) > 1 else 0.0
         ),
@@ -132,6 +172,10 @@ def measure(log_path: str | Path, agent_log: str | Path | None = None,
         "patched": patched,
         "patch_line": patch_line,
         "mismatch_line": mismatch_line,
+        "fr_present": fr_present,
+        "fr_missing_disabled": fr_missing_disabled,
+        "failed_texture_lines": failed_texture_lines,
+        "expect_no_fr": expect_no_fr,
         "gate_ok": gate_ok,
     }
 
@@ -143,11 +187,17 @@ def main() -> int:
     ap.add_argument("--baseline", type=int, default=30378)
     ap.add_argument("--threshold", type=float, default=0.2)
     ap.add_argument("--max-normal", type=int, default=50)
+    ap.add_argument("--expect-no-fr", action="store_true",
+                    help="require a true no-FR session: no FR anchor, agent logs "
+                         "'FR missing', and no failed texture loads")
+    ap.add_argument("--normal-metric", choices=("loading", "cleaned"), default=None,
+                    help="normal-count signal; default loading, cleaned when "
+                         "--expect-no-fr is set")
     ap.add_argument("--json-out", default=None)
     args = ap.parse_args()
 
     result = measure(args.log, args.agent_log, args.baseline, args.threshold,
-                     args.max_normal)
+                     args.max_normal, args.expect_no_fr, args.normal_metric)
     text = json.dumps(result, ensure_ascii=False, indent=2)
     print(text)
     if args.json_out:

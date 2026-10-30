@@ -50,6 +50,7 @@ SendInput/PostMessage 进不了游戏，所以「模拟点击」这条路在本�
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import re
@@ -83,6 +84,12 @@ PROFILES = {
         "game": "Starsector-098-260mods",
         "java": "jdk-28+13/bin/java.exe",
         "vmparams": "../Miko_Lite.txt",
+        "cwd": "starsector-core",
+    },
+    "miko-lite-nofr": {
+        "game": "Starsector-098-260mods",
+        "java": "jdk-28+13/bin/java.exe",
+        "vmparams": "../Miko_Lite_nofr.txt",
         "cwd": "starsector-core",
     },
 }
@@ -181,6 +188,16 @@ def agent_results(game: Path, since_bytes: int) -> dict:
             out["breakdown"] = line
         elif "scripts cache written:" in line:
             out.setdefault("writes", []).append(line)
+        elif "FR missing; scripts cache disabled" in line:
+            out["fr_missing"] = line
+        elif "textures: patched" in line:
+            out["textures_patched"] = line
+        elif "textures: TextureData sha mismatch" in line:
+            out["textures_mismatch"] = line
+        elif "cache key ready (background):" in line:
+            out["key_ready"] = line
+        elif "cache key breakdown:" in line:
+            out["key_breakdown"] = line
     return out
 
 
@@ -241,6 +258,50 @@ def graceful_stop(proc: subprocess.Popen, wait_s: float = 40.0) -> str:
 
 # ---------------------------------------------------------------- one round
 
+def build_command(java: str, vmparams_arg: str, direct: list[str],
+                  jvm_args: list[str]) -> list[str]:
+    """JVM props and the argfile are all JVM args; -D must come before @file."""
+    return [java, *direct, *jvm_args, f"@{vmparams_arg}"]
+
+
+if sys.platform == "win32":
+    from ctypes import wintypes
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    _k32.OpenProcess.restype = wintypes.HANDLE
+    _k32.GetProcessIoCounters.argtypes = [wintypes.HANDLE, ctypes.POINTER(_IoCounters)]
+    _k32.GetProcessIoCounters.restype = wintypes.BOOL
+    _k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _k32.CloseHandle.restype = wintypes.BOOL
+
+    def io_read_bytes(pid: int) -> int | None:
+        # PROCESS_QUERY_LIMITED_INFORMATION works for same-user processes.
+        handle = _k32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return None
+        try:
+            counters = _IoCounters()
+            if not _k32.GetProcessIoCounters(handle, ctypes.byref(counters)):
+                return None
+            return int(counters.ReadTransferCount)
+        finally:
+            _k32.CloseHandle(handle)
+else:
+    def io_read_bytes(pid: int) -> int | None:
+        return None
+
+
 def one_round(cfg: dict, game: Path, args) -> dict:
     java = game / cfg["java"]
     cwd = game / cfg["cwd"]
@@ -262,7 +323,7 @@ def one_round(cfg: dict, game: Path, args) -> dict:
         f"-DstartFS={'true' if args.fullscreen else 'false'}",
         "-DstartSound=true",
     ]
-    cmd = [str(java), *direct, f"@{vmparams_arg}"]
+    cmd = build_command(str(java), vmparams_arg, direct, args.jvm_arg)
     t0 = time.time()
     # 不要用 CREATE_NEW_PROCESS_GROUP：实测它会让 Popen.pid 与实际 java 进程
     # 不一致（Popen 拿到的是中间进程），导致 kill 打空、游戏残留（已实测踩到）。
@@ -280,10 +341,13 @@ def one_round(cfg: dict, game: Path, args) -> dict:
 
     print(f">>> 主菜单到达：{menu_s:.1f}s（从进程启动算）")
 
+    read_menu = io_read_bytes(proc.pid)
+
     if args.linger > 0:
         print(f">>> 停留 {args.linger:.0f}s（给 CacheWriter 稳定窗口）")
         time.sleep(args.linger)
 
+    read_exit = io_read_bytes(proc.pid)
     how = graceful_stop(proc)
     wall = time.time() - t0
     print(f">>> 退出方式：{how}；总墙钟 {wall:.1f}s")
@@ -294,6 +358,8 @@ def one_round(cfg: dict, game: Path, args) -> dict:
         "menu_s": round(menu_s, 1),
         "wall_s": round(wall, 1),
         "stop": how,
+        "read_bytes_menu": read_menu,
+        "read_bytes_exit": read_exit,
         "agent": agent_results(game, agent_off),
     }
 
@@ -321,8 +387,15 @@ def summarize(rows: list[dict]) -> None:
                 pre_ms = f"{m.group(1)}ms"
         # menu_s 是唯一可信的端到端指标：日志里 Playing music 锚点，
         # 不会像"缓存停止增长"那样在加载中途的停顿处误判。
+        flags = []
+        if "fr_missing" in a:
+            flags.append("no-FR")
+        if "textures_patched" in a:
+            flags.append("textures:patched")
+        if "textures_mismatch" in a:
+            flags.append("textures:MISMATCH")
         print(f"#{i}: menu={r['menu_s']}s wall={r['wall_s']}s preload={pre}({pre_ms}) "
-              f"stop={r['stop']}")
+              f"stop={r['stop']} {' '.join(flags)}")
         if "breakdown" in a:
             print(f"     {a['breakdown'].split('INFO ')[-1]}")
 
@@ -340,6 +413,8 @@ def main() -> int:
     ap.add_argument("--start-res", default="1707x1067",
                     help="直接启动时传给游戏的 startRes")
     ap.add_argument("--fullscreen", action="store_true", help="直接启动时全屏")
+    ap.add_argument("--jvm-arg", action="append", default=[],
+                    help="extra JVM argument, e.g. -Dhypernova.textures=false")
     ap.add_argument("--json-out", default="")
     args = ap.parse_args()
 
