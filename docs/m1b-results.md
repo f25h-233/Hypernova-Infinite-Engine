@@ -15,7 +15,7 @@
 | A | `true` | **85.5 s** | **0** | 0 | **0.0 s** | true | null | **true** |
 | B | `false` | 144.7 s | 30,378 | 2 | 37.0 s | false | null | false |
 
-- **A − B = 59.2 s**，这是 M-1b 补丁的隔离收益。
+- **A − B = 59.2 s**，这是单次 A/B 的端到端差（含单轮波动与次级效应；B 的法线窗口为 37.0 s；同配置早前 A 冒烟为 98.2 s），不能当作纯纹理净收益。
 - 启动期法线加载：30,378 → 0，下降 **100%**（门禁要求 ≥80%，且绝对 ≤50 行）。
 - A 组 agent 日志：
   - `textures: cache probe ready, files=31627`
@@ -23,17 +23,27 @@
 - B 组 `normal_after_menu=2` 是菜单出现后才加载的 2 行，不参与门禁；门禁只看 `normal_before_menu`。
 - 口径说明：B 组 `menu_s`（日志口径）为 144.7 s，冒烟器墙钟口径为 144.8 s，两者不矛盾。
 
-门禁判定（`tools/m1b_measure.py`）：只分析最后一个 agent 会话，要求 `patched=true`、`mismatch_line=null`、`normal_before_menu <= min(max(50, baseline * 0.2), 50) = 50`。A 组全部满足。
+门禁判定（`tools/m1b_measure.py`）：只分析最后一个 agent 会话，要求 `menu_t is not None`、`patched=true`、`mismatch_line=null`、`normal_before_menu <= min(max(50, baseline * 0.2), 50) = 50`。A 组全部满足。
 
 ### 1.2 基线与背景
 
 | 阶段 | 主菜单 | 启动期法线行数 | 说明 |
 |---|---:|---:|---|
+| 10-25 无 agent 历史基线（`run2`） | 92.7 s | 30,401 | 法线窗口 29.4 s；M-1 热缓存中位数 86.5 s / 30,378 / 29.6 s（规格 §2） |
 | 原始基线（M-1d scripts on、oracle 修前） | 187.5 s | 30,378 | 本轮优化前的起点 |
-| M-1d oracle 修后、纹理补丁未生效 | 130.2 / 99.2 s | 30,378 | 多轮波动，未装/未生效补丁 |
+| M-1d oracle 修后、纹理补丁未生效 | 130.2 / 99.2 s | 30,378 | 按补丁未生效推断，非直接测量；两轮未存对应 JSON |
 | 最终 B（补丁关闭） | 144.7 s | 30,378 | 同一次 A/B 的对照 |
 
-**不要混口径**：187.5 → 85.5 s 是 M-1d oracle 修复与 M-1b 的累计收益，不能全部归因于 M-1b；M-1b 单独的收益以 §1.1 的 A − B = 59.2 s 为准。
+**不要混口径**：187.5 → 85.5 s 是 M-1d oracle 修复与 M-1b 的累计收益，不能全部归因于 M-1b；§1.1 的 59.2 s 只是单次 A/B 端到端差（含单轮波动与次级效应；B 的法线窗口为 37.0 s；同配置早前 A 冒烟为 98.2 s），不能当作纯纹理净收益。
+
+### 1.3 为什么 29.4 s 窗口没有变成 29.4 s 收益
+
+- 92.7 s 是**无 agent** 的历史基线；当前 A 是 **agent+补丁**，两者不是同一配置。
+- 29.4 s 是法线日志窗口，不等于关键路径耗时：它与脚本编译、DDS 句柄登记、mod 初始化交错，取消法线加载不会等量缩短首屏。
+- agent 直接加载开销实测很小：premain 20 ms、transformers 26 ms、cache 预载 8 ms、CacheProbe 扫描 <1 s；后台 key 5.6 s + oracle 3.9 s（抢 I/O）。
+- 单轮波动 85.5–144.7 s，不能把单次差值当净收益；确定性证据是法线 30,378 → 0。
+
+**M-1b 的确定性出口是法线计数；时间收益量级 10–30 s，需多轮中位数才能钉死，不能从单轮宣称 30 s/59 s。**
 
 ## 2. 门禁结论
 
@@ -99,7 +109,7 @@ new TextureEntry(null, cachePath, 1f, !autoGenOverride, true, false, false)
 | 项 | 值 |
 |---|---|
 | 原 `TextureData.class` SHA-256 | `6a4302bcacd2dd90f6637c815d1443ddfdb3d28ff59095d48c875358de4e8594` |
-| 补丁 `TextureData.class` SHA-256 | `89185fc00b42c865571de746c25cec185cfbe96e921ced0552e018aeb791c9d1` |
+| 补丁 `TextureData.class` SHA-256 | `789bb790b24c368017cea78e6d087e417393f961fc5c2454862cbbaecb100d22`（probe 修复后的最终产物） |
 | 编译目标 | `--release 17`（class major 61） |
 | 锁定版本 | GraphicsLib 1.12.1；Fast Rendering 0.9.5 |
 
