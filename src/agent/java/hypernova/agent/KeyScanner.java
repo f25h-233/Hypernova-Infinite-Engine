@@ -31,6 +31,9 @@ import java.util.concurrent.Future;
  *
  * <p>行为必须与旧 {@code ScriptCacheKey.collectFiles} 逐字等价；等价性由
  * {@code KeyScannerTest} 对着一份旧算法复刻来守护。
+ *
+ * <p>扫描错误一律 fail-closed：任何源根不可读或并行任务失败都会让 {@link #scan}
+ * 抛异常，由调用方禁用本次缓存——绝不从残缺的文件集合产出 key。
  */
 public final class KeyScanner {
     /** 一个进入指纹的文件；mtime 用毫秒，与 {@link KeyManifest.Entry} 一致。 */
@@ -107,7 +110,6 @@ public final class KeyScanner {
             t.setDaemon(true);
             return t;
         });
-        boolean interrupted = false;
         try {
             List<Callable<Map<String, FileInfo>>> tasks = new ArrayList<>(roots.size());
             for (Path root : roots) {
@@ -121,23 +123,31 @@ public final class KeyScanner {
                 try {
                     out.putAll(f.get());
                 } catch (ExecutionException e) {
-                    AgentLog.fail("key scan task failed", e.getCause());
+                    // 失败必须关闭缓存：少一个源根的 key 可能命中不含该 mod 类的旧缓存，
+                    // 或在下次运行产生不同 key。宁可本次禁用缓存，不可产出不完整的 key。
+                    throw new IllegalStateException(
+                            "key scan task failed: " + e.getCause(), e.getCause());
                 }
             }
         } catch (InterruptedException e) {
-            interrupted = true;
             Thread.currentThread().interrupt();
+            throw new IllegalStateException("key scan interrupted", e);
         } finally {
             pool.shutdownNow();
-        }
-        if (interrupted) {
-            // 被中断时 invokeAll 可能只跑了一部分；串行补全，绝不漏文件。
-            for (Path r : roots) walkTree(r, out);
         }
     }
 
     private static void walkTree(Path root, Map<String, FileInfo> out) {
-        if (!Files.isDirectory(root)) return;
+        BasicFileAttributes rootAttrs;
+        try {
+            rootAttrs = Files.readAttributes(root, BasicFileAttributes.class);
+        } catch (java.nio.file.NoSuchFileException e) {
+            // 大多数 mod 没有 data/scripts：缺失是正常情况，不是错误。
+            return;
+        } catch (IOException e) {
+            throw new IllegalStateException("cannot stat key scan root: " + root, e);
+        }
+        if (!rootAttrs.isDirectory()) return;
         try {
             Files.walkFileTree(root, new SimpleFileVisitor<>() {
                 @Override
@@ -147,14 +157,14 @@ public final class KeyScanner {
                 }
 
                 @Override
-                public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                    // 与旧 Files.walk 不同：单个子树不可读时继续扫兄弟节点（更安全方向：
-                    // 宁可多收，不可漏收；漏收会让缓存带毒）。
-                    return FileVisitResult.CONTINUE;
+                public FileVisitResult visitFileFailed(Path file, IOException exc) throws IOException {
+                    // 不允许静默丢弃：少一个文件就可能让 key 命中一份不完整的旧缓存。
+                    // 与旧的 Files.walk 一致：不可读的树让整个 key 计算失败，本次禁用缓存。
+                    throw exc;
                 }
             });
         } catch (IOException e) {
-            AgentLog.fail("walk failed: " + root, e);
+            throw new IllegalStateException("walk failed: " + root, e);
         }
     }
 

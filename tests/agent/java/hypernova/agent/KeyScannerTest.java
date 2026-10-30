@@ -40,6 +40,8 @@ class KeyScannerTest {
         Files.write(a.resolve("jars/sub/nested.jar"), new byte[]{2});
         Files.write(a.resolve("jars/hypernova.agent.jar"), new byte[]{3});
         Files.write(a.resolve("root.jar"), new byte[]{4});
+        // 根级 agent jar 走的是 addFile（不是 walk）：同样必须排除。
+        Files.write(a.resolve("hypernova.agent.jar"), new byte[]{7});
         Files.writeString(a.resolve("data/scripts/z/S.java"), "class S {}");
         // 目录名以 .jar 结尾：旧实现只收普通文件，必须排除。
         Files.createDirectories(a.resolve("dir.jar"));
@@ -146,6 +148,48 @@ class KeyScannerTest {
         Set<String> scanned = paths(KeyScanner.scan(ctx));
         assertEquals(legacy, scanned,
                 "a symlink to a regular file was fingerprinted by the legacy walk; keep it");
+    }
+
+    @Test
+    void scanReturnsSortedUniquePaths() throws Exception {
+        Path game = tmp.resolve("gameSorted");
+        Path mods = game.resolve("mods");
+        for (int m = 0; m < 3; m++) {
+            Path mod = mods.resolve("m" + m);
+            Files.createDirectories(mod.resolve("src"));
+            Files.writeString(mod.resolve("mod_info.json"), "{\"id\":\"m" + m + "\"}");
+            Files.writeString(mod.resolve("src/C" + m + ".java"), "class C" + m + " {}");
+        }
+        Files.writeString(mods.resolve("enabled_mods.json"), "{\"enabledMods\":[]}");
+
+        java.util.List<KeyScanner.FileInfo> files = KeyScanner.scan(ctx(game, mods));
+        java.util.Set<java.nio.file.Path> seen = new java.util.HashSet<>();
+        for (int i = 0; i < files.size(); i++) {
+            assertTrue(seen.add(files.get(i).path()), "duplicate path: " + files.get(i).path());
+            if (i > 0) {
+                assertTrue(files.get(i - 1).path().toString()
+                                .compareTo(files.get(i).path().toString()) < 0,
+                        "paths must be sorted by toString()");
+            }
+        }
+    }
+
+    @Test
+    void threadsPropertyFallsBackSafely() {
+        String old = System.getProperty("hypernova.keyThreads");
+        try {
+            System.setProperty("hypernova.keyThreads", "1");
+            assertEquals(1, KeyScanner.threads());
+            System.setProperty("hypernova.keyThreads", "abc");
+            assertTrue(KeyScanner.threads() >= 1);
+            System.setProperty("hypernova.keyThreads", "0");
+            assertTrue(KeyScanner.threads() >= 1);
+            System.setProperty("hypernova.keyThreads", "999");
+            assertEquals(32, KeyScanner.threads());
+        } finally {
+            if (old == null) System.clearProperty("hypernova.keyThreads");
+            else System.setProperty("hypernova.keyThreads", old);
+        }
     }
 
     private Set<String> paths(java.util.List<KeyScanner.FileInfo> files) {
