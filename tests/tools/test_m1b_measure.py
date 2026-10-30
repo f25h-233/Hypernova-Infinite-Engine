@@ -146,13 +146,36 @@ def test_max_normal_cap_rejects_partial_patch(tmp_path):
     assert d["gate_ok"] is False
 
 
+def test_uses_timestamp_rollover_when_anchor_missing(tmp_path):
+    log = tmp_path / "starsector.log"
+    lines = []
+    for i in range(5):
+        lines.append(f"{5010 + i} [Thread-3] INFO  com.fs.graphics.TextureLoader  - "
+                     f"Loading image [cache/first{i}_normal.png]")
+    lines.append("6000 [Thread-21] INFO  sound.H  - "
+                 "Playing music with id [miscallenous_main_menu.ogg]")
+    lines.append("1000 [Thread-3] INFO  com.fs.graphics.TextureLoader  - "
+                 "Loading image [cache/second0_normal.png]")
+    lines.append("2000 [Thread-21] INFO  sound.H  - "
+                 "Playing music with id [miscallenous_main_menu.ogg]")
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out = tmp_path / "out.json"
+    r = subprocess.run([sys.executable, str(ROOT / "tools/m1b_measure.py"),
+                        "--log", str(log), "--baseline", "100",
+                        "--json-out", str(out)],
+                       capture_output=True, text=True)
+    assert r.returncode == 1
+    d = json.loads(out.read_text(encoding="utf-8"))
+    assert d["normal_before_menu"] == 1
+    assert d["menu_s"] is not None
+    assert d["gate_ok"] is False
+
+
 def test_no_session_anchor_fails_closed(tmp_path):
+    # 既无 FR 锚点，也无毫秒时间戳：没有会话信息，必须失败关闭。
     log = tmp_path / "starsector.log"
     log.write_text(
-        "1010 [Thread-3] INFO  com.fs.graphics.TextureLoader  - "
-        "Loading image [cache/z_normal.png]\n"
-        "2000 [Thread-21] INFO  sound.H  - "
-        "Playing music with id [miscallenous_main_menu.ogg]\n",
+        "INFO  sound.H  - Playing music with id [miscallenous_main_menu.ogg]\n",
         encoding="utf-8",
     )
     out = tmp_path / "out.json"

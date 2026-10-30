@@ -24,12 +24,27 @@ NORMAL = re.compile(
 
 
 def _last_session(lines: list[str]) -> list[str]:
-    """Return only the last game session, or [] when there is no anchor.
+    """Return only the last game session.
 
-    Failing closed prevents a stale session from satisfying the gate.
+    Prefer the last `Fast Rendering` anchor. Log rotation can swallow that
+    anchor, so fall back to the last millisecond-timestamp rollover
+    (`t < prev`) as the session boundary. If timestamps never roll over,
+    treat the whole file as a single session.
     """
     starts = [i for i, line in enumerate(lines) if SESSION_ANCHOR in line]
-    return lines[starts[-1]:] if starts else []
+    if starts:
+        return lines[starts[-1]:]
+    prev: int | None = None
+    rollover: int | None = None
+    for i, line in enumerate(lines):
+        m = TS.match(line)
+        if not m:
+            continue
+        t = int(m.group(1))
+        if prev is not None and t < prev:
+            rollover = i
+        prev = t
+    return lines[rollover:] if rollover is not None else lines
 
 
 def _last_agent_session(lines: list[str]) -> list[str]:
