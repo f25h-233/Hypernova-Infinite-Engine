@@ -10,5 +10,8 @@
     "cache_max_bytes": 2147483648,
     "cache_generations": 2,
     "preload_max_millis": 3000
+  },
+  "textures": {
+    "enabled": true
   }
 }

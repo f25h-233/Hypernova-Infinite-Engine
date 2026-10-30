@@ -1,5 +1,8 @@
 package hypernova.agent;
 
+import hypernova.agent.textures.TextureCacheTransformer;
+import hypernova.agent.textures.TexturePatchConfig;
+
 import java.lang.instrument.Instrumentation;
 
 public final class HypernovaAgent {
@@ -12,6 +15,20 @@ public final class HypernovaAgent {
             AgentLog.init(ctx.logFile());
             AgentLog.info("hypernova agent premain; config=" + ctx.config()
                     + ", cacheRoot=" + ctx.cacheRoot());
+            try {
+                TexturePatchConfig textures = TexturePatchConfig.load();
+                if (textures.enabled()) {
+                    TextureCacheTransformer transformer = TextureCacheTransformer.create();
+                    if (transformer != null) {
+                        instrumentation.addTransformer(transformer, false);
+                        AgentLog.info("textures normal-cache transformer registered");
+                    }
+                } else {
+                    AgentLog.info("textures normal-cache disabled by config");
+                }
+            } catch (Throwable t) {
+                AgentLog.fail("textures normal-cache init failed; continuing", t);
+            }
             ScriptCacheHook.setContext(ctx);
             if (!ctx.config().scriptsEnabled()) {
                 AgentLog.info("scripts cache disabled by config");
