@@ -1254,3 +1254,16 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ## Execution Handoff
 
 本计划按 **pipeline** 执行。Task 1 先过全量 agent 测试才进入 Task 2；Task 2 的 key 级测试必须证明「无变化不写清单」与「rehash 能强制重算」；Task 3 的 3 次热启动是里程碑出口门禁，数字必须来自日志而非期望值。每个任务独立 commit，审查输入为 brief + report + diff。
+
+---
+
+## Addendum A（2026-10-30，Task 1 审查后 controller 裁决 R5，优先于上文代码块）
+
+**变更**：`KeyScanner` 的扫描失败处理从「继续/只记日志」改为 **fail closed**。
+
+- `walkTree`：`visitFileFailed` 直接 `throw exc`；根不可读（非 `NoSuchFileException`）抛 `IllegalStateException`。
+- `walkAll`：任一并行任务 `ExecutionException` → 抛 `IllegalStateException`；中断同样失败。
+- 结果：任何扫描根不可读都会让本次 key 计算失败、`scripts` 缓存本次禁用，退回原版全量编译；不会用不完整的文件集合产出 key。
+- 理由：少一个 mod 的源文件可能命中一份不含/旧版该 mod 类的旧缓存（违反「宁可 miss 不可陈旧」）；旧 `Files.walk` 遇到 `UncheckedIOException` 本来就会让整个 key 失败，这是恢复旧语义。
+- 附带补测：根级 `hypernova.agent.jar` 排除（M5 变异存活）、`scan` 输出按 `path.toString()` 有序且去重、`threads()` 非法值回退。
+- **不可单测项（⚠️）**：Windows 上难以稳定制造「目录不可读」，`visitFileFailed` 的 fail-closed 路径无法在本机用单测覆盖；由代码审查 + 逻辑推演确认。
