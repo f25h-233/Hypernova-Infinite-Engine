@@ -9,6 +9,8 @@ winpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else pr
 ROOT_W="$(winpath "$ROOT")"
 GAME="$ROOT_W/Starsector-098-Base/starsector-core"
 LIB="$ROOT_W/lib"
+JAVA_RUNTIME="${JAVA_RUNTIME:-java}"
+echo "runtime: $("$JAVA_RUNTIME" -version 2>&1 | head -n 1)"
 # 每个进程独立输出目录：并行跑测试时互不 rm -rf（否则会随机假红）。
 RUN_TAG="$$-$(date +%s%N)"; OUT="$ROOT_W/build/java/run-$RUN_TAG/test-classes"
 if [ ! -f "$LIB/junit-platform-console-standalone.jar" ]; then
@@ -25,7 +27,7 @@ find "$ROOT_W/tests/java" -name '*.java' > "$OUT/../test-sources.txt"
 javac --release 17 -encoding UTF-8 -cp "$CP;$MAIN_OUT" -d "$OUT" @"$OUT/../test-sources.txt"
 FILTER=".*"
 if [ -n "${1:-}" ]; then FILTER=".*${1}.*"; fi
-java -jar "$LIB/junit-platform-console-standalone.jar" \
+"$JAVA_RUNTIME" -jar "$LIB/junit-platform-console-standalone.jar" \
   --class-path "$OUT;$MAIN_OUT;$GAME/starfarer.api.jar;$GAME/json.jar;$GAME/lwjgl.jar;$GAME/log4j-1.2.9.jar" \
   --scan-class-path "$OUT" \
   --include-classname="$FILTER" \

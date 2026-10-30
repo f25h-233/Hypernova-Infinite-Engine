@@ -6,6 +6,8 @@ winpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else pr
 ROOT_W="$(winpath "$ROOT")"
 GAME="$ROOT_W/Starsector-098-Base/starsector-core"
 LIB="$ROOT_W/lib"
+JAVA_RUNTIME="${JAVA_RUNTIME:-java}"
+echo "runtime: $("$JAVA_RUNTIME" -version 2>&1 | head -n 1)"
 bash "$ROOT_W/tools/java/build-agent.sh"
 ASM="$ROOT_W/build/agent/lib/asm-9.1.jar"
 OUT="$ROOT_W/build/agent/run-$$-$(date +%s%N)"
@@ -25,7 +27,7 @@ javac --release 17 -encoding UTF-8 \
   -d "$OUT/tests" @"$OUT/test-sources.txt"
 FILTER=".*"
 if [ -n "${1:-}" ]; then FILTER=".*${1}.*"; fi
-java -jar "$LIB/junit-platform-console-standalone.jar" \
+"$JAVA_RUNTIME" -jar "$LIB/junit-platform-console-standalone.jar" \
   --class-path "$OUT/classes;$OUT/tests;$GAME/json.jar;$ASM" \
   --scan-class-path "$OUT/tests" \
   --include-classname="$FILTER" \
