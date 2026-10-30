@@ -125,13 +125,21 @@ def cmd_adopt(args) -> int:
         if not src_dds.is_file():
             print(f"missing DDS {src_dds}", file=sys.stderr)
             return 2
-        info = dds_info(src_dds)
+        try:
+            info = dds_info(src_dds)
+        except ValueError as exc:
+            print(f"not a DDS / corrupt: {src_dds}: {exc}", file=sys.stderr)
+            return 2
         if info["dxgiFormat"] != BC7_DXGI:
             print(f"not BC7: {src_dds} ({info})", file=sys.stderr)
             return 2
         src_png = cache_dir / Path(out["RelativeImagePath"].replace("\\", "/")).name
         if src_png.is_file():
-            w, h = png_size(src_png)
+            try:
+                w, h = png_size(src_png)
+            except ValueError as exc:
+                print(f"not a PNG / corrupt: {src_png}: {exc}", file=sys.stderr)
+                return 2
             if (w, h) != (info["width"], info["height"]):
                 print(f"size mismatch {src_png}: png={w}x{h} dds={info['width']}x{info['height']}",
                       file=sys.stderr)
@@ -167,6 +175,11 @@ def cmd_adopt(args) -> int:
 
 
 def cmd_verify(args) -> int:
+    """校验 cache\\ 条目的 DDS 存在性、DX10/BC7 头、以及与源 PNG 的尺寸一致。
+
+    PNG 缺失时只打印 warning（无法比对，不计 bad）；PNG/DDS 损坏或截断时
+    打印 not a ... / corrupt 并返回 2。
+    """
     _, mods = game_paths(args.game)
     meta_path = mods / "DDSCache/GraphicsLib/dds_metadata.json"
     if not meta_path.is_file():
@@ -174,6 +187,7 @@ def cmd_verify(args) -> int:
         return 2
     entries = [e for e in json.loads(meta_path.read_text(encoding="utf-8"))
                if e.get("RelativeImagePath", "").replace("/", "\\").startswith("cache\\")]
+    png_dir = mods / "GraphicsLib/cache"
     bad = 0
     for e in entries:
         dds = mods / "DDSCache/GraphicsLib" / Path(e["DDSFilePath"].split("GraphicsLib\\", 1)[-1].replace("\\", "/"))
@@ -181,10 +195,28 @@ def cmd_verify(args) -> int:
             bad += 1
             print("missing", dds, file=sys.stderr)
             continue
-        info = dds_info(dds)
+        try:
+            info = dds_info(dds)
+        except ValueError as exc:
+            print(f"not a DDS / corrupt: {dds}: {exc}", file=sys.stderr)
+            return 2
         if info["dxgiFormat"] != BC7_DXGI:
             bad += 1
             print("not BC7", dds, info, file=sys.stderr)
+            continue
+        png = png_dir / Path(e["RelativeImagePath"].replace("\\", "/")).name
+        if not png.is_file():
+            print(f"warning: no source PNG to compare size: {png}", file=sys.stderr)
+            continue
+        try:
+            w, h = png_size(png)
+        except ValueError as exc:
+            print(f"not a PNG / corrupt: {png}: {exc}", file=sys.stderr)
+            return 2
+        if (w, h) != (info["width"], info["height"]):
+            bad += 1
+            print(f"size mismatch {png}: png={w}x{h} dds={info['width']}x{info['height']}",
+                  file=sys.stderr)
     print(f"verified {len(entries)} entries, {bad} bad")
     return 0 if bad == 0 else 1
 

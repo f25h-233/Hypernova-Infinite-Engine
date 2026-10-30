@@ -119,8 +119,11 @@ python tools/dds_normal_cache.py adopt
 python tools/dds_normal_cache.py verify
 ```
 
-检查每个 `cache\` 条目：DDS 文件存在、DX10 头、BC7（98）。全部通过打印
-`verified N entries, 0 bad` 并返回 0；有坏条目返回 1；metadata 缺失返回 2。
+检查每个 `cache\` 条目：DDS 文件存在、DX10 头、BC7（98），并用
+`RelativeImagePath` 的 basename 到 `mods/GraphicsLib/cache/<basename>` 找源 PNG，
+比对 `Width`/`Height` 是否一致。源 PNG 不存在时只打印 warning（无法比对，不计 bad）；
+DDS/PNG 损坏或截断时打印 `not a DDS / corrupt` 并返回 2。
+全部通过打印 `verified N entries, 0 bad` 并返回 0；有坏条目返回 1；metadata 缺失返回 2。
 
 ## 4. 产物布局与 FR 的 key 规则
 
@@ -138,12 +141,20 @@ mods/DDSCache/GraphicsLib/
   "ModID": "GraphicsLib",
   "ModFolderName": "GraphicsLib",
   "RelativeImagePath": "cache\\<name>_normal.png",
+  "ImageType": "Png",
   "DDSFilePath": "\\mods\\DDSCache\\GraphicsLib\\cache\\<name>_normal.dds",
   "CompressionFormat": "BC7",
   "Width": 256,
-  "Height": 128
+  "Height": 128,
+  "Mean": [0.5, 0.5, 1.0],
+  "Weighted": [0.5, 0.5, 1.0],
+  "Median": [0.5, 0.5, 1.0]
 }
 ```
+
+> **手改 metadata 时 `Mean` / `Weighted` / `Median` 不能省。** FR 的
+> `readTextureData` 会读取这三个字段；缺字段会导致**整个** `dds_metadata.json`
+> 加载失败（不是单条失效）。`adopt` 直接复制 DDSCreator 的条目，这三个字段天然存在。
 
 DDSCache（VOpt）按 **`<DDSCache>/<ModFolderName>/dds_metadata.json`** 找条目，
 再用条目里的 **`RelativeImagePath`**（反斜杠转正斜杠）作为图像 key 去
@@ -162,7 +173,7 @@ DDSCache（VOpt）按 **`<DDSCache>/<ModFolderName>/dds_metadata.json`** 找条�
 
 ```bash
 # 安装目录配置：mods/hypernova_infinite_engine/data/config/hypernova/hypernova.json
-# 加入（当前安装版可能还没有 textures 段；默认 enabled=true）
+# 当前安装版已有 "textures": { "enabled": true }；A/B 期间改成 false，跑完恢复 true
 "textures": { "enabled": false }
 ```
 
@@ -180,8 +191,32 @@ python tools/m1b_measure.py \
   --json-out build/m1b-dds-on-measure.json
 ```
 
-**B（DDS 关）**：把 `mods/DDSCache/GraphicsLib` 临时改名为
-`mods/DDSCache/GraphicsLib.off`，重跑同样的两条命令（输出改 `-off`）。跑完恢复目录名。
+**B（DDS 关）**：**不要只改目录名**。FR 的 `DDSIntegration.findDDSMetadata()`
+会扫描 `DDSCache` 下任意子目录里以 `dds_metadata.json` 结尾的文件；目录改名后
+metadata 仍会被加载，但 DDS 路径全部失效，`readTextureBytes` 会抛
+RuntimeException。正确做法二选一：
+
+1. 把 metadata 文件本身改名（推荐，改动最小）：
+   ```bash
+   mv mods/DDSCache/GraphicsLib/dds_metadata.json \
+      mods/DDSCache/GraphicsLib/dds_metadata.json.off
+   ```
+   `endsWith("dds_metadata.json")` 不再匹配，FR 不会加载它。
+2. 把整个目录移出 `DDSCache`：
+   ```bash
+   mv mods/DDSCache/GraphicsLib mods/GraphicsLib-dds-off
+   ```
+
+然后重跑同样的两条命令（输出改 `-off`）。恢复：
+
+```bash
+# 方式 1 恢复
+mv mods/DDSCache/GraphicsLib/dds_metadata.json.off \
+   mods/DDSCache/GraphicsLib/dds_metadata.json
+
+# 方式 2 恢复
+mv mods/GraphicsLib-dds-off mods/DDSCache/GraphicsLib
+```
 
 读取 `normal_before_menu`、`normal_window_s`、`menu_s` 对比。注意：A/B 都关了
 `textures` 补丁，`m1b_measure.py` 的 `gate_ok` 会因为 `patched=false` 而恒为 false，
@@ -211,7 +246,8 @@ python tools/m1b_measure.py \
    ```
 2. 只删本路线产物：删除 `mods/DDSCache/GraphicsLib/cache/*.dds`，并从
    `dds_metadata.json` 中删除 `RelativeImagePath` 以 `cache\` 开头的条目
-   （其余 GraphicsLib 条目不要动）。
+   （其余 GraphicsLib 条目不要动）。若手工重建/新增条目，必须带上
+   `Mean` / `Weighted` / `Median`（见 §4），否则 FR 会拒绝整个 metadata 文件。
 
 回滚后重启游戏即可恢复 PNG 路径。staging 目录可整体删除
 （`mods/hypernova_dds_staging`），不影响已采纳的硬链接副本。
