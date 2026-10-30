@@ -1,7 +1,7 @@
 # M-1b 实测结果：法线缓存懒加载（agent 路线）
 
 > 日期：2026-10-30
-> 环境：Starsector 0.98a + 260mods、热缓存、`scripts.enabled=true`、GraphicsLib 1.12.1、Fast Rendering 0.9.5
+> 环境：Starsector 0.98a + 260mods、Miko Lite（JDK 28；`--env 260mods-lite`）、热缓存、`scripts.enabled=true`、GraphicsLib 1.12.1、Fast Rendering 0.9.5
 > 结论：**agent 路线通过出口门禁**（含 2026-10-30 战斗内法线人工检查 PASS）；DDS 烘焙是可选工具，不参与门禁。
 
 ## 1. 实测
