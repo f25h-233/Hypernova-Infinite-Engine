@@ -1,10 +1,16 @@
 package hypernova.agent;
 
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -13,21 +19,77 @@ import java.util.stream.Stream;
  * <p>用途：区分「真正的缓存 miss（本可以命中，但缓存里没有）」和「探测性查询
  * （游戏 jar 里的类，根本没有源码，永远不可能命中）」。前者才是命中率的分母。
  *
- * <p>实现取自 FR 实际使用的 {@code com.fs.starfarer.loading.JavaSourceFinder}
- * 的搜索根：基座的 {@code data/scripts}、每个 mod 的 {@code src} 与
- * {@code data/scripts}。这里不复刻它的 obfuscation 逻辑，只做「目录里有没有这个
- * 相对路径的 .java」的存在性判断——用于统计，不参与加载。
+ * <p><b>M-1d 热修（2026-10-30）：</b>旧实现在每次 {@link #hasSource(String)} 时
+ * 对每个 root 做一次 {@code Files.isRegularFile}。260mods 的 FR rulecmd 探测有
+ * 11,264 次 miss、389 个 root，合计约 4.38M 次 stat；实测给首屏加了 45–53 s。
+ * 现在 {@link #from(RuntimeContext)} 在后台线程一次性遍历 root，建立
+ * 「相对路径 -> .java」集合；{@code hasSource} 只做 O(1) set lookup。
+ *
+ * <p>没有 roots 或索引为空时保守返回 true（与旧行为一致：不把真实缺陷掩盖成
+ * 「本来就不该命中」）。
  */
 public final class SourceOracle {
+    /** 这些目录不可能包含 .java 源码；遍历时整棵子树跳过，避免扫 125k 张图。 */
+    private static final Set<String> SKIP_DIRS = Set.of(
+            "graphics", "sounds", "sound", "images", "music", "jars", "cache",
+            "saves", "screenshots", "javadoc", ".git", "build", "dist", "logs", "common");
+
     /** 源根列表（absolute）。 */
     private final List<Path> roots;
+    /** root.relativize(file) 的 POSIX 形式，例如 "src/a/ModClass.java"。 */
+    private final Set<String> sourcePaths;
 
-    private SourceOracle(List<Path> roots) {
+    private SourceOracle(List<Path> roots, Set<String> sourcePaths) {
         this.roots = roots;
+        this.sourcePaths = sourcePaths;
     }
 
-    /** 从运行时上下文收集搜索根。任何异常都返回空根集（= 全部视为有源码，保守）。 */
+    /** 从运行时上下文收集搜索根，并在后台线程一次性建立源码索引。 */
     public static SourceOracle from(RuntimeContext ctx) {
+        List<Path> roots = collectRoots(ctx);
+        return new SourceOracle(roots, indexSources(roots));
+    }
+
+    /** 空判定器：没有根时一切按「有源码」处理（保守，不虚报命中率）。 */
+    public static SourceOracle empty() {
+        return new SourceOracle(List.of(), Set.of());
+    }
+
+    public List<Path> roots() {
+        return roots;
+    }
+
+    /** 索引里的 .java 文件数；用于 agent 日志诊断。 */
+    public int sourceCount() {
+        return sourcePaths.size();
+    }
+
+    /**
+     * 点分类名是否有对应源码。
+     *
+     * <p>内嵌类（{@code Outer$Inner}）由同一份源编译产出，按外部类判定。
+     * 本方法只读构造期索引，**绝不访问文件系统**。
+     */
+    public boolean hasSource(String binaryName) {
+        if (binaryName == null || binaryName.isEmpty()) return false;
+        // 没有根 / 索引为空：无法判断，返回 true 保守，不把真实缺陷掩盖成「不该命中」。
+        if (roots.isEmpty() || sourcePaths.isEmpty()) return true;
+        String base = binaryName;
+        int dollar = base.indexOf('$');
+        if (dollar > 0) base = base.substring(0, dollar);
+        String rel = base.replace('.', '/') + ".java";
+        return sourcePaths.contains(rel);
+    }
+
+    @Override
+    public String toString() {
+        return "SourceOracle" + roots.stream().map(Path::toString)
+                .map(s -> s.toLowerCase(Locale.ROOT)).toList();
+    }
+
+    // ------------------------------------------------------------------ roots
+
+    private static List<Path> collectRoots(RuntimeContext ctx) {
         List<Path> roots = new ArrayList<>();
         try {
             Path game = ctx.gameRoot();
@@ -44,7 +106,6 @@ public final class SourceOracle {
                     s.filter(Files::isDirectory).forEach(dir -> {
                         // mod 根本身：包名是按 mod 目录的相对路径组织的，
                         // 例如 data/scripts/AvaliModPlugin.java 对应类 data.scripts.AvaliModPlugin。
-                        // 这一条覆盖 data/scripts、data/missions、data/hullmods 等全部 data.* 包。
                         roots.add(dir.toAbsolutePath().normalize());
                         Path src = dir.resolve("src");
                         if (Files.isDirectory(src)) roots.add(src.toAbsolutePath().normalize());
@@ -58,48 +119,49 @@ public final class SourceOracle {
         } catch (Throwable ignored) {
             // 任何失败都退化为「全部视为有源码」
         }
-        return new SourceOracle(roots);
-    }
-
-    /** 空判定器：没有根时一切按「有源码」处理（保守，不虚报命中率）。 */
-    public static SourceOracle empty() {
-        return new SourceOracle(List.of());
-    }
-
-    public List<Path> roots() {
         return roots;
     }
 
-    /**
-     * 点分类名是否有对应源码。
-     *
-     * <p>内嵌类（{@code Outer$Inner}）由同一份源编译产出，按外部类判定。
-     */
-    public boolean hasSource(String binaryName) {
-        // 空名不是"有源码"——它是无效探测，不该进 sourced miss 样本
-        // （m1d S5 冷跑实测出现过 3 条空名，污染了 sourced_misses 计数）。
-        if (binaryName == null || binaryName.isEmpty()) return false;
-        // 没有根时无法判断：返回 true 保守，不把真实缺陷掩盖成"不该命中"。
-        if (roots.isEmpty()) return true;
-        String base = binaryName;
-        int dollar = base.indexOf('$');
-        if (dollar > 0) base = base.substring(0, dollar);
-        String rel = base.replace('.', '/') + ".java";
-        for (Path root : roots) {
-            try {
-                if (Files.isRegularFile(root.resolve(rel))) return true;
-            } catch (Throwable ignored) {
-                // 单个根出错继续看下一个
-            }
-        }
-        // 有些 mod 把源码放在 src/data/scripts/... 下，也已由上面的 src 根覆盖；
-        // 这里不再做大小写不敏感回退，保持确定性。
-        return false;
+    // ----------------------------------------------------------------- index
+
+    private static Set<String> indexSources(List<Path> roots) {
+        Set<String> out = new HashSet<>(16_384);
+        // 每个 root 是独立的命名空间：同一个文件在 mod 根下是 src/a/X.java，
+        // 在 src 根下是 a/X.java；两者都必须进集合，否则 hasSource("a.X") 会漏。
+        // 嵌套 root 重复遍历 source 目录的代价很小（相对 4.38M 次 stat），必须保留。
+        for (Path root : roots) walk(root, out);
+        return out;
     }
 
-    @Override
-    public String toString() {
-        return "SourceOracle" + roots.stream().map(Path::toString)
-                .map(s -> s.toLowerCase(Locale.ROOT)).toList();
+    private static void walk(Path root, Set<String> out) {
+        try {
+            Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    if (!dir.equals(root)) {
+                        String name = dir.getFileName() == null
+                                ? "" : dir.getFileName().toString().toLowerCase(Locale.ROOT);
+                        if (SKIP_DIRS.contains(name)) return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    String name = file.getFileName() == null ? "" : file.getFileName().toString();
+                    if (name.toLowerCase(Locale.ROOT).endsWith(".java")) {
+                        out.add(root.relativize(file).toString().replace('\\', '/'));
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException | RuntimeException ignored) {
+            // 单个 root 失败不影响其它 root；索引为空时 hasSource 保守返回 true。
+        }
     }
 }

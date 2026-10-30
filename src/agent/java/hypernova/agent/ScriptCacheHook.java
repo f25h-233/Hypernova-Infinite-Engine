@@ -177,6 +177,7 @@ public final class ScriptCacheHook {
                 SourceOracle o = SourceOracle.from(ctx);
                 sourceOracle = o;
                 AgentLog.info("source oracle ready: roots=" + o.roots().size()
+                        + ", sources=" + o.sourceCount()
                         + ", took " + (System.nanoTime() - t0) / 1_000_000 + " ms");
             } catch (Throwable e) {
                 sourceOracle = SourceOracle.empty();

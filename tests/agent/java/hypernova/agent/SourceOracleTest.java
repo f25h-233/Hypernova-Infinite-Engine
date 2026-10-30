@@ -99,4 +99,55 @@ class SourceOracleTest {
 
         assertTrue(oracle.hasSource("world.Gen"));
     }
+
+    @Test
+    void hasSourceUsesSnapshotNotFilesystem() throws Exception {
+        Path game = tmp.resolve("g4");
+        Path mods = game.resolve("mods");
+        Path mod = mods.resolve("m");
+        Files.createDirectories(mod.resolve("src/a"));
+        Path source = mod.resolve("src/a/ModClass.java");
+        Files.writeString(source, "package a; class ModClass {}");
+
+        SourceOracle oracle = SourceOracle.from(ctx(game, mods));
+
+        // 删除源文件后仍然必须判 true：hasSource 只能读 from() 时建立的索引。
+        // 旧实现每次调用都 Files.isRegularFile，删除后会变 false，导致
+        // 11,264 次 rulecmd 探测 × 389 roots ≈ 4.38M stat 的启动回归。
+        Files.delete(source);
+        assertTrue(oracle.hasSource("a.ModClass"),
+                "hasSource 必须使用构造期快照，不能在每次调用时访问文件系统");
+    }
+
+    @Test
+    void hasSourceIsCheapWithManyRoots() throws Exception {
+        Path game = tmp.resolve("g5");
+        Path mods = game.resolve("mods");
+        Files.createDirectories(mods);
+        for (int i = 0; i < 300; i++) {
+            Files.createDirectories(mods.resolve("m" + i + "/src"));
+        }
+
+        SourceOracle oracle = SourceOracle.from(ctx(game, mods));
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> {
+            for (int i = 0; i < 11_264; i++) {
+                oracle.hasSource("com.fs.starfarer.api.impl.campaign.rulecmd.T" + i + "CMD");
+            }
+        }, "11,264 次 hasSource 在 300 个 roots 下必须远低于 5 s（旧实现约 30–50 s）");
+    }
+
+    @Test
+    void findsSourceInTopLevelPackageDir() throws Exception {
+        Path game = tmp.resolve("g6");
+        Path mods = game.resolve("mods");
+        Path mod = mods.resolve("m");
+        Files.createDirectories(mod.resolve("org/example"));
+        Files.writeString(mod.resolve("org/example/TopLevel.java"),
+                "package org.example; class TopLevel {}");
+
+        SourceOracle oracle = SourceOracle.from(ctx(game, mods));
+
+        assertTrue(oracle.hasSource("org.example.TopLevel"),
+                "mod 根下的顶层包目录（不在 src/ 下）也必须被索引");
+    }
 }
