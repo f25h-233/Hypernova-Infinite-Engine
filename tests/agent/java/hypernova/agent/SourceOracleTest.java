@@ -110,6 +110,8 @@ class SourceOracleTest {
         Files.writeString(source, "package a; class ModClass {}");
 
         SourceOracle oracle = SourceOracle.from(ctx(game, mods));
+        assertTrue(oracle.sourceCount() > 0,
+                "前置条件：索引必须非空，否则 hasSource 会走空索引短路而测不到快照语义");
 
         // 删除源文件后仍然必须判 true：hasSource 只能读 from() 时建立的索引。
         // 旧实现每次调用都 Files.isRegularFile，删除后会变 false，导致
@@ -127,8 +129,13 @@ class SourceOracleTest {
         for (int i = 0; i < 300; i++) {
             Files.createDirectories(mods.resolve("m" + i + "/src"));
         }
+        Path present = mods.resolve("m0/src/a/Present.java");
+        Files.createDirectories(present.getParent());
+        Files.writeString(present, "package a; class Present {}");
 
         SourceOracle oracle = SourceOracle.from(ctx(game, mods));
+        assertTrue(oracle.hasSource("a.Present"),
+                "前置条件：索引必须非空，确保 11,264 次循环走真实 set 查表而不是空索引短路");
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> {
             for (int i = 0; i < 11_264; i++) {
                 oracle.hasSource("com.fs.starfarer.api.impl.campaign.rulecmd.T" + i + "CMD");
@@ -149,5 +156,27 @@ class SourceOracleTest {
 
         assertTrue(oracle.hasSource("org.example.TopLevel"),
                 "mod 根下的顶层包目录（不在 src/ 下）也必须被索引");
+    }
+
+    @Test
+    void findsSourceInPackageDirNamedLikeAsset() throws Exception {
+        Path game = tmp.resolve("g7");
+        Path mods = game.resolve("mods");
+        Path mod = mods.resolve("m");
+        Files.createDirectories(mod.resolve("org/dark/graphics/plugins"));
+        Files.writeString(mod.resolve("org/dark/graphics/plugins/LightInjector.java"),
+                "package org.dark.graphics.plugins; class LightInjector {}");
+        // 必须有另一个未被剪枝的源文件：索引为空时 hasSource 保守返回 true，
+        // 会掩盖「graphics 包目录被剪掉」的缺陷，让本测试假绿。
+        Files.createDirectories(mod.resolve("org/example"));
+        Files.writeString(mod.resolve("org/example/Real.java"),
+                "package org.example; class Real {}");
+
+        SourceOracle oracle = SourceOracle.from(ctx(game, mods));
+        assertTrue(oracle.sourceCount() > 0,
+                "前置条件：索引必须非空，否则空索引短路会掩盖剪枝缺陷");
+
+        assertTrue(oracle.hasSource("org.dark.graphics.plugins.LightInjector"),
+                "org/dark/graphics 是包目录，不能因为名叫 graphics 就剪枝");
     }
 }

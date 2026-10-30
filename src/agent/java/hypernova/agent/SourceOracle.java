@@ -25,14 +25,15 @@ import java.util.stream.Stream;
  * 现在 {@link #from(RuntimeContext)} 在后台线程一次性遍历 root，建立
  * 「相对路径 -> .java」集合；{@code hasSource} 只做 O(1) set lookup。
  *
- * <p>没有 roots 或索引为空时保守返回 true（与旧行为一致：不把真实缺陷掩盖成
- * 「本来就不该命中」）。
+ * <p>没有 roots 或索引为空时保守返回 true。这比旧实现更保守：旧实现在 roots
+ * 非空但一个 .java 都没有时会返回 false；这里不把真实缺陷掩盖成
+ * 「本来就不该命中」。
  */
 public final class SourceOracle {
-    /** 这些目录不可能包含 .java 源码；遍历时整棵子树跳过，避免扫 125k 张图。 */
+    /** 资源目录名：只在 root 的直接子目录按这些名字剪枝，避免扫 125k 张图。 */
     private static final Set<String> SKIP_DIRS = Set.of(
             "graphics", "sounds", "sound", "images", "music", "jars", "cache",
-            "saves", "screenshots", "javadoc", ".git", "build", "dist", "logs", "common");
+            "saves", "screenshots", "javadoc", ".git");
 
     /** 源根列表（absolute）。 */
     private final List<Path> roots;
@@ -72,7 +73,7 @@ public final class SourceOracle {
      */
     public boolean hasSource(String binaryName) {
         if (binaryName == null || binaryName.isEmpty()) return false;
-        // 没有根 / 索引为空：无法判断，返回 true 保守，不把真实缺陷掩盖成「不该命中」。
+        // 没有根 / 索引为空：无法判断，返回 true（比旧实现更保守，不把真实缺陷掩盖成「不该命中」）。
         if (roots.isEmpty() || sourcePaths.isEmpty()) return true;
         String base = binaryName;
         int dollar = base.indexOf('$');
@@ -129,16 +130,27 @@ public final class SourceOracle {
         // 每个 root 是独立的命名空间：同一个文件在 mod 根下是 src/a/X.java，
         // 在 src 根下是 a/X.java；两者都必须进集合，否则 hasSource("a.X") 会漏。
         // 嵌套 root 重复遍历 source 目录的代价很小（相对 4.38M 次 stat），必须保留。
-        for (Path root : roots) walk(root, out);
+        for (Path root : roots) walk(root, out, !isSourceRoot(root));
         return out;
     }
 
-    private static void walk(Path root, Set<String> out) {
+    /** src 与 data/scripts 是显式源根：里面即使有名为 graphics 的包目录也不能剪。 */
+    private static boolean isSourceRoot(Path root) {
+        Path name = root.getFileName();
+        if (name == null) return false;
+        String n = name.toString();
+        if (n.equalsIgnoreCase("src")) return true;
+        Path parent = root.getParent();
+        return n.equalsIgnoreCase("scripts") && parent != null && parent.getFileName() != null
+                && parent.getFileName().toString().equalsIgnoreCase("data");
+    }
+
+    private static void walk(Path root, Set<String> out, boolean pruneDirectChildren) {
         try {
             Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                    if (!dir.equals(root)) {
+                    if (pruneDirectChildren && !dir.equals(root) && root.equals(dir.getParent())) {
                         String name = dir.getFileName() == null
                                 ? "" : dir.getFileName().toString().toLowerCase(Locale.ROOT);
                         if (SKIP_DIRS.contains(name)) return FileVisitResult.SKIP_SUBTREE;
