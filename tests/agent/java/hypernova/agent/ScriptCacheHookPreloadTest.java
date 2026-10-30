@@ -219,6 +219,37 @@ class ScriptCacheHookPreloadTest {
         return cw.toByteArray();
     }
 
+    @Test
+    void preloadDoesNotBlockOnSourceOracle() throws Exception {
+        // 回归：SourceOracle 曾在 preload 里同步构建，260mods 上要 18 s，
+        // 直接把启动拖慢到比缓存省下的还多。它必须在后台线程建。
+        Path game = tmp.resolve("gslow");
+        Path mods = game.resolve("mods");
+        // 造 300 个模组目录，让同步扫描有明显耗时（真实环境是 389 个源根）。
+        for (int i = 0; i < 300; i++) {
+            Path m = mods.resolve("m" + i);
+            Files.createDirectories(m.resolve("src/p"));
+            Files.writeString(m.resolve("mod_info.json"), "{\"id\":\"m" + i + "\"}");
+            Files.writeString(m.resolve("src/p/C" + i + ".java"),
+                    "package p; class C" + i + " {}");
+        }
+        Files.writeString(mods.resolve("enabled_mods.json"), "{\"enabledMods\":[]}");
+        Path saves = tmp.resolve("saves-slow");
+        ScriptCacheConfig cfg = new ScriptCacheConfig(true, 1L << 20, 2, 3000, false);
+        RuntimeContext ctx = new RuntimeContext(game, mods, saves, saves.resolve("cache"),
+                saves.resolve("agent.log"), saves.resolve("telemetry.jsonl"), cfg);
+
+        Object loader = transformedLoader();
+        long t0 = System.nanoTime();
+        ScriptCacheHook.preload(loader, ctx);
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+
+        // preload 自身（算 key + 读缓存）应远快于全量源根扫描。
+        // 300 个目录的同步扫描通常要数秒；给 2.5 s 的宽容上限，防止 CI 抖动。
+        assertTrue(ms < 2500,
+                "preload 不应等待 source oracle 构建，实测 " + ms + " ms");
+    }
+
     /** 与 ScriptCacheTransformerTest.ByteArrayClassLoader 同一模式。 */
     private static final class ByteArrayDefiner extends ClassLoader {
         ByteArrayDefiner(ClassLoader parent) {

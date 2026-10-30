@@ -139,3 +139,12 @@ def test_dry_run_does_not_copy_agent_jar(tmp_path):
     installed = game / "mods/hypernova_infinite_engine/jars/hypernova.agent.jar"
     assert not installed.exists()
     assert launch.read_text(encoding="utf-8") == original
+
+
+def test_env_mapping_points_at_the_right_launch_file(tmp_path):
+    """装错文件不会报错，只会静默不加载——所以映射必须锁死到实际 .bat。"""
+    game = tmp_path
+    assert ia.launch_file(game, "base") == game / "starsector-core" / "fr.vmparams"
+    assert ia.launch_file(game, "260mods") == game / "Miko_Simple.txt"
+    assert ia.launch_file(game, "260mods-simple") == game / "Miko_Simple.txt"
+    assert ia.launch_file(game, "260mods-lite") == game / "Miko_Lite.txt"

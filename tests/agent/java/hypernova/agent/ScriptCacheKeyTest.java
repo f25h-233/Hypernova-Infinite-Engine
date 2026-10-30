@@ -284,6 +284,35 @@ class ScriptCacheKeyTest {
         assertEquals(key1, key2, "an mtime-only change must not change the key");
     }
 
+    /**
+     * 本 agent 的 jar 每次重建都变，绝不能进指纹；否则每次发版都会让所有用户的
+     * 缓存失效、被迫冷启动。这是 m1d S4 冒烟实际踩到的回归（重建诊断版 agent
+     * 后 key 从 8a26482e… 变成 2da1735d…，缓存整体 miss）。
+     */
+    @Test
+    void agentJarIsExcludedFromFingerprint() throws Exception {
+        Path game = tmp.resolve("gameAjar");
+        Path mods = game.resolve("mods");
+        Path self = mods.resolve("hypernova_infinite_engine");
+        Files.createDirectories(self.resolve("jars"));
+        Files.writeString(self.resolve("mod_info.json"), "{\"id\":\"hypernova_infinite_engine\"}");
+        Files.writeString(mods.resolve("enabled_mods.json"),
+                "{\"enabledMods\":[\"hypernova_infinite_engine\"]}");
+
+        Path agentJar = self.resolve("jars/hypernova.agent.jar");
+        Files.write(agentJar, new byte[]{1, 2, 3});
+        RuntimeContext ctx = ctx(game, mods);
+        String key1 = ScriptCacheKey.compute(ctx).id();
+
+        // 重建 agent：内容变、大小变、mtime 变。
+        Files.write(agentJar, new byte[]{9, 9, 9, 9, 9, 9, 9});
+        Files.setLastModifiedTime(agentJar,
+                FileTime.fromMillis(System.currentTimeMillis() + 60_000L));
+        String key2 = ScriptCacheKey.compute(ctx).id();
+
+        assertEquals(key1, key2, "rebuilding hypernova.agent.jar must not invalidate the cache key");
+    }
+
     private RuntimeContext ctx(Path game, Path mods) {
         Path saves = tmp.resolve("saves-" + Math.abs(game.hashCode()));
         ScriptCacheConfig cfg = new ScriptCacheConfig(true, 1L << 20, 2, 3000, false);

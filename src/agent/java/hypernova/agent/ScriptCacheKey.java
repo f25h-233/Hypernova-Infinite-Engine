@@ -188,7 +188,12 @@ public final class ScriptCacheKey {
     }
 
     private static void addFile(Path p, Set<Path> out) {
-        if (p != null && Files.isRegularFile(p)) out.add(p.toAbsolutePath().normalize());
+        if (p == null || !Files.isRegularFile(p)) return;
+        // 本 agent 自己的 jar 绝不能进指纹：它每次发版/重建都变，一旦计入，
+        // 所有用户的缓存会在每次更新后整体失效（被迫 25 s 冷启动）。
+        // 它不是编译输入——脚本 loader 的 classpath 里没有它（见 classpathOrder 的同名过滤）。
+        if (p.getFileName().toString().equals("hypernova.agent.jar")) return;
+        out.add(p.toAbsolutePath().normalize());
     }
 
     /**

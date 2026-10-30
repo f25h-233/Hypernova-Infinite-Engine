@@ -21,9 +21,24 @@ FR_LINE = "-javaagent:fr.agent.jar"
 MAIN_CLASS = "com.fs.starfarer.StarfarerLauncher"
 
 
+# 每个 env 对应哪个启动参数文件。**必须与实际用的 .bat 一致**：
+#   启动-高性能.bat       -> starsector-core/fr.vmparams
+#   启动-Miko高性能.bat   -> Miko_Simple.txt   (jdk-28 + 16 GB)
+#   启动-Miko省内存.bat   -> Miko_Lite.txt     (jdk-28 + 10 GB)
+# 装错了不会报错——游戏照常启动，只是 agent 不加载（静默失效）。
+_ENV_FILES = {
+    "base": Path("starsector-core") / "fr.vmparams",
+    "260mods": Path("Miko_Simple.txt"),
+    "260mods-simple": Path("Miko_Simple.txt"),
+    "260mods-lite": Path("Miko_Lite.txt"),
+}
+
+
 def launch_file(game: Path, env: str) -> Path:
-    return (game / "starsector-core" / "fr.vmparams"
-            if env == "base" else game / "Miko_Lite.txt")
+    try:
+        return game / _ENV_FILES[env]
+    except KeyError:
+        raise SystemExit(f"unknown env {env!r}; known: {', '.join(sorted(_ENV_FILES))}")
 
 
 def _assert_main_class_last(lines: list[str]) -> None:
@@ -79,7 +94,9 @@ def write_lf(path: Path, lines: list[str]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--game", required=True)
-    parser.add_argument("--env", choices=["base", "260mods"], required=True)
+    parser.add_argument("--env", choices=sorted(_ENV_FILES), required=True,
+                        help="base=启动-高性能.bat / 260mods[-simple]=启动-Miko高性能.bat / "
+                             "260mods-lite=启动-Miko省内存.bat")
     parser.add_argument("--action", choices=["install", "uninstall"], default="install")
     parser.add_argument("--jar", default="build/agent/hypernova.agent.jar")
     parser.add_argument("--dry-run", action="store_true")

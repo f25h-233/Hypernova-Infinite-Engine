@@ -24,6 +24,10 @@ public final class HypernovaAgent {
             instrumentation.addTransformer(new ScriptCacheTransformer(), false);
             Runtime.getRuntime().addShutdownHook(new Thread(ScriptCacheHook::shutdown,
                     "Hypernova-ScriptCache-Shutdown"));
+            ScriptCacheHook.markAgentStart();
+            // 后台算缓存 key：premain 到 preload 之间有约 20 s 的游戏自身初始化，
+            // 把 3–15 s 的 sha256 扫描藏进去，不占主加载线程。
+            ScriptCacheHook.startKeyComputationAsync(ctx);
             Thread summary = new Thread(() -> {
                 while (true) {
                     try {
