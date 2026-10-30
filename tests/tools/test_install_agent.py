@@ -10,12 +10,24 @@ import install_agent as ia
 FR = "-javaagent:fr.agent.jar\n"
 
 
-def test_patch_inserts_after_fr_and_is_idempotent():
+def test_patch_inserts_before_fr_and_is_idempotent():
     lines = ["-Xmx10g\n", FR, "-classpath\n"]
     out = ia.patch_lines(lines)
-    assert out[2] == ia.AGENT_LINE + "\n"
-    assert out[0] == "-Xmx10g\n" and out[1] == FR and out[3] == "-classpath\n"
+    assert out == ["-Xmx10g\n", ia.AGENT_LINE + "\n", FR, "-classpath\n"]
     assert ia.patch_lines(out) == out
+
+
+def test_patch_migrates_agent_that_follows_fr():
+    # 旧安装：FR -> agent -> main。迁移后必须是 agent -> FR -> main。
+    lines = [FR, ia.AGENT_LINE + "\n", ia.MAIN_CLASS]
+    out = ia.patch_lines(lines)
+    assert out == [ia.AGENT_LINE + "\n", FR, ia.MAIN_CLASS]
+    assert ia.patch_lines(out) == out
+
+
+def test_patch_is_idempotent_when_agent_already_precedes_fr():
+    lines = ["-Xmx10g\n", ia.AGENT_LINE + "\n", FR, "-classpath\n", ia.MAIN_CLASS]
+    assert ia.patch_lines(lines) == lines
 
 
 def test_patch_without_fr_fails():
@@ -45,7 +57,7 @@ def test_agent_line_never_after_main_class():
 
 
 def test_patch_refuses_agent_after_main_class():
-    # FR 行错放在主类之后时，插在 FR 后的 agent 行也会落在主类之后 -> 必须拒绝。
+    # FR 行错放在主类之后时，插在 FR 前的 agent 行也会落在主类之后 -> 必须拒绝。
     lines = [ia.MAIN_CLASS + "\n", FR]
     with pytest.raises(SystemExit) as excinfo:
         ia.patch_lines(lines)
@@ -116,7 +128,7 @@ def test_backupCreatedEvenWhenAlreadyPatched(tmp_path):
     game, _ = _fake_game(tmp_path)
     # 预先放一个已含 agent 行、且没有任何备份的启动文件。
     launch = game / "starsector-core" / "fr.vmparams"
-    pre = "-Xmx10g\n" + FR + ia.AGENT_LINE + "\n-classpath\n" + ia.MAIN_CLASS
+    pre = "-Xmx10g\n" + ia.AGENT_LINE + "\n" + FR + "-classpath\n" + ia.MAIN_CLASS
     launch.write_text(pre, encoding="utf-8", newline="\n")
     backup = launch.with_name(launch.name + ".bak-hypernova")
     assert not backup.exists()

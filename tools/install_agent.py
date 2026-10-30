@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Install/uninstall the optional Hypernova scripts-cache agent.
 
-The agent line is inserted immediately after the Fast Rendering agent line, so
-the transformer chain order is FR -> scripts. Writes LF line endings (argfiles
-must be LF) and is idempotent. A backup is kept as *.bak-hypernova.
+The agent line is inserted immediately *before* the Fast Rendering agent line.
+FR's BytecodeFileTransformer rewrites TextureData's constant pool
+(org/lwjgl/opengl/GLxx -> com/genir/renderer/bridge/opengl/GLxx), so a texture
+transformer registered after FR sees rewritten bytes, its hash guard no longer
+matches the locked vanilla class, and the patch silently no-ops. The transformer
+chain order must therefore be scripts -> FR.
+
+Legacy installs placed the agent after FR; patch_lines() migrates them by
+removing the old line and re-inserting it before FR. Writes LF line endings
+(argfiles must be LF) and is idempotent. A backup is kept as *.bak-hypernova.
 
 Backup semantics: *.bak-hypernova is a snapshot of the launch file as it was
 *before the most recent install*. Every install refreshes it (including installs
@@ -57,18 +64,30 @@ def _assert_main_class_last(lines: list[str]) -> None:
 
 
 def patch_lines(lines: list[str]) -> list[str]:
-    if any(line.strip() == AGENT_LINE for line in lines):
+    fr_idx = None
+    for i, line in enumerate(lines):
+        if line.strip() == FR_LINE:
+            fr_idx = i
+            break
+    if fr_idx is None:
+        raise SystemExit(f"FR agent line not found; expected: {FR_LINE}")
+
+    agent_indices = [i for i, line in enumerate(lines) if line.strip() == AGENT_LINE]
+    if len(agent_indices) == 1 and agent_indices[0] < fr_idx:
+        # Already canonical: the agent is registered before FR (any position
+        # before it preserves the required transformer order).
         _assert_main_class_last(lines)
         return lines
+
+    # Fresh install or legacy install (agent after FR): rebuild with exactly
+    # one agent line immediately before FR, dropping any old/duplicate lines.
     out: list[str] = []
-    inserted = False
-    for line in lines:
-        out.append(line)
-        if not inserted and line.strip() == FR_LINE:
+    for i, line in enumerate(lines):
+        if line.strip() == AGENT_LINE:
+            continue
+        if i == fr_idx:
             out.append(AGENT_LINE + "\n")
-            inserted = True
-    if not inserted:
-        raise SystemExit(f"FR agent line not found; expected: {FR_LINE}")
+        out.append(line)
     _assert_main_class_last(out)
     return out
 
