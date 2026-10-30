@@ -18,7 +18,7 @@ public final class CacheProbe {
             File[] files = new File(modRoot, "cache").listFiles();
             if (files != null) {
                 for (File f : files) {
-                    if (f.isFile()) out.add(f.getName());
+                    if (f.isFile() && f.length() >= 8L) out.add(f.getName());
                 }
             }
         } catch (Throwable ignored) {
