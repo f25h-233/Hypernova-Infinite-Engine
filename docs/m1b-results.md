@@ -29,17 +29,19 @@
 
 | 阶段 | 主菜单 | 启动期法线行数 | 说明 |
 |---|---:|---:|---|
-| 10-25 无 agent 历史基线（`run2`） | 92.7 s | 30,401 | 法线窗口 29.4 s；M-1 热缓存中位数 86.5 s / 30,378 / 29.6 s（规格 §2） |
+| 10-25 无 agent 历史基线（`run2`） | 92.7 s | **30,378**（`m1b_measure` 重测） | `m1b_measure` 法线窗口 **27.9 s**（`run4` 29.6 s）；30,401 / 29.4 s 来自 `m1_measure` 的**全会话**计数，与 `m1b_measure` 的菜单前计数混了两个工具，不可直接混用 |
 | 原始基线（M-1d scripts on、oracle 修前） | 187.5 s | 30,378 | 本轮优化前的起点 |
 | M-1d oracle 修后、纹理补丁未生效 | 130.2 / 99.2 s | 30,378 | 时间为主菜单直接实测（两份 JSON：130.2/155.8、99.2/125.2）；30,378 法线计数系据日志推断（JSON 无 textures 字段），非直接测量 |
 | 最终 B（补丁关闭） | 144.7 s | 30,378 | 同一次 A/B 的对照 |
 
+**口径统一（2026-10-30 终审）**：上表「启动期法线行数」统一按 `m1b_measure`（最后一个游戏会话、主菜单前）口径。用 `m1b_measure` 重测同一份 `run2` 日志得到 **30,378 行 / 27.9 s**（`run4` 为 29.6 s）；历史文档里的 30,401 / 29.4 s 是 `m1_measure` 的**全会话**计数，92.7 s 是 `m1b_measure` 的菜单锚点——这几个数来自不同工具/范围，不能拼成一个基线。M-1 热缓存中位数 86.5 s 是规格 §2 的独立口径。
+
 **不要混口径**：187.5 → 85.5 s 是 M-1d oracle 修复与 M-1b 的累计收益，不能全部归因于 M-1b；§1.1 的 59.2 s 只是单次 A/B 端到端差（含单轮波动与次级效应；B 的法线窗口为 37.0 s；同配置早前 A 冒烟为 98.2 s），不能当作纯纹理净收益。
 
-### 1.3 为什么 29.4 s 窗口没有变成 29.4 s 收益
+### 1.3 为什么 27.9 s 窗口没有变成 27.9 s 收益
 
-- 92.7 s 是**无 agent** 的历史基线；当前 A 是 **agent+补丁**，两者不是同一配置。
-- 29.4 s 是法线日志窗口，不等于关键路径耗时：它与脚本编译、DDS 句柄登记、mod 初始化交错，取消法线加载不会等量缩短首屏。
+- 92.7 s 是**无 agent** 的 `run2` 历史基线（`m1b_measure` 菜单锚点口径）；当前 A 是 **agent+补丁**，两者不是同一配置。
+- 27.9 s 是法线日志窗口（`m1b_measure` 口径；`m1_measure` 的全会话窗口为 29.4 s），不等于关键路径耗时：它与脚本编译、DDS 句柄登记、mod 初始化交错，取消法线加载不会等量缩短首屏。
 - agent 直接加载开销实测很小：premain 20 ms、transformers 26 ms、cache 预载 8 ms、CacheProbe 扫描 <1 s；后台 key 5.6 s + oracle 3.9 s（抢 I/O）。
 - A 同配置 98.2→85.5 s；A/B 跨配置差 59.2 s；B 144.7 s 为慢跑。不能把单次差值当净收益；确定性证据是法线 30,378 → 0。
 
@@ -124,7 +126,7 @@ new TextureEntry(null, cachePath, 1f, !autoGenOverride, true, false, false)
 4. 检查 `starsector.log`：战斗加载期间应出现 `Loading image [cache/..._normal.png]`（说明懒加载真的在工作），且不出现 `Failed to load texture`。
 5. 截图留档；若异常，记录 mod/舰船名并回滚补丁（`textures.enabled=false`）。
 
-补充观察：懒条目把加载从菜单推迟到战斗前/首次使用，战斗加载阶段会承担原先首屏的一部分成本；检查时一并留意是否有不可接受的卡顿。
+补充观察：原版在 `preloadAllMaps=false` 时启动期就 load+unload 每张法线图，首次使用时再加载；懒条目没有把工作转移到战斗，只是去掉了启动期「加载仅为拿尺寸」这一步，战斗前的加载与原始行为一致。检查时仍可留意首次使用是否有不可接受卡顿。
 
 ## 5. 回滚
 
@@ -165,17 +167,17 @@ python tools/install_agent.py --game Starsector-098-260mods --env 260mods-lite -
 - **版本锁**：仅 GraphicsLib 1.12.1 且原 class SHA-256 精确匹配时生效。其它版本或被其它 agent 改写过的字节会 hash mismatch，补丁静默 no-op（日志有 `textures: TextureData sha mismatch`），不会崩溃。
 - **agent 顺序**：超新星 agent 必须在 FR 之前；用户手动改启动参数可能破坏顺序，补丁随之失效。
 - **probe 失败**：agent 域无法解析 mod 根或扫描异常时 `CacheProbe` 为空集，懒加载禁用，回退原路径。
-- **白屏观察**：本轮 A/B 两次都在 260mods 加载画面出现白屏；B 组最终 144.8 s 到达主菜单，日志无补丁相关异常（只有 mod 版本检查器网络超时）。现有证据不能把白屏归因于补丁，但需在人工战斗中继续观察。
+- **白屏观察**：本轮两次冒烟都在 260mods 加载画面出现白屏，但分属不同轮次：第一次是被中止的 A 轮（不属于 §1.1 表内 A 组），第二次是 B 轮（最终 144.8 s 到达主菜单）。B 轮日志无补丁相关异常（只有 mod 版本检查器网络超时）。现有证据不能把白屏归因于补丁，但需在人工战斗中继续观察。
 - **首屏下限**：即使法线全部不加载，实测首屏仍 85.5 s，高于规格早先估计的 ~56 s；差额来自其它加载阶段（脚本、DDS 句柄登记、mod 数据等）。M-1b 单独不足以达标 G-01。
-- **成本转移**：懒条目在战斗前/首次使用时加载，战斗加载阶段会承担原先首屏的一部分成本；需人工确认无不可接受卡顿。
+- **成本归属（不是成本转移）**：原版在 `preloadAllMaps=false` 时启动期就 load+unload 每张法线图，首次使用再加载；懒条目只是去掉了启动期「加载仅为拿尺寸」这一步，没有把工作转移到战斗，战斗前的加载与原始行为一致。
 - **DDS 线**：BC7 有损，画质只能肉眼确认；本机尚未对安装目录执行完整烘焙与 A/B，当前没有 DDS 数字。
 
 ## 7. 验证记录（本次文档任务）
 
 | 命令 | 结果 |
 |---|---|
-| `bash tools/java/run-agent-tests.sh` | **47/47 passed** |
+| `bash tools/java/run-agent-tests.sh` | **50/50 passed**（oracle 开关新增 3 个；本轮 CacheProbe 新增 3 个后为 **53/53**） |
 | `bash tools/java/run-tests.sh` | **95/95 passed** |
-| `python -m pytest tests/tools -q` | **139 passed, 2 failed** |
+| `python -m pytest tests/tools -q` | **142 passed, 2 failed**（新增 3 条 m1b_measure 会话切分测试） |
 
 2 条失败为 `tests/tools/test_smoke_check.py::test_jar_provenance_detects_mismatch` 与 `test_provenance_mismatch_fails_without_skip`，属 M1 遗留问题（安装 jar 不是有效 zip 的夹具场景），**deferred**，不是 M-1b 引入。本任务未重跑游戏冒烟；A/B 数据由 controller 于 2026-10-30 19:47–19:57 采集，战斗内检查由用户执行。

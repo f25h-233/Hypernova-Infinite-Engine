@@ -5,7 +5,7 @@
 > 让 DDSCache/VOpt 在运行时直接上传压缩纹理。两条路线可以独立验证，不要同时开。
 >
 > 工具：`tools/dds_normal_cache.py`（`prepare` / `adopt` / `verify`）
-> 测试：`tests/tools/test_dds_normal_cache.py`（3 passed）
+> 测试：`tests/tools/test_dds_normal_cache.py`（6 passed）
 
 ## 1. 为什么 DDSCreator 会跳过我们
 
