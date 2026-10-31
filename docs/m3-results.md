@@ -31,7 +31,16 @@
 
 - agent 日志：`file index: written entries=223536, dirs=17067`；索引落盘
   `saves/hypernova/file-index.idx.gz`（3,332,575 B）。
-- 本轮 menu **83.2 s**（含首次全量写索引），按约定排除，不参与中位数。
+- 本轮 menu **83.2 s**：一次性构建成本（较同日 control 中位 68.1 s 慢 **+15.1 s**），
+  按约定排除，不参与 A/B 中位数。
+- 排除冷缓存解释：本轮 `preload=hit`（2,113 条，8 ms），
+  `read_bytes_menu=805,074,400`，与 control 三轮的 802,191,527 / 803,356,488 /
+  804,566,658 基本一致。因此 +15.1 s 不是 scripts 冷启动或 OS 缓存差异，而是
+  索引 `save` 路径本身（223,536 entries + 17,067 dirs + key 归一化 + gzip）。
+- 诚实修正：计划预期首次构建只慢 1–2 s，实测 +15.1 s，该预期是错的；更细的拆分
+  （例如在同一 warm 机器上做第二次构建）留给 Task 6 / 下一里程碑。
+- 后续方向（不在 M3 范围）：异步/惰性 save，或更快的 key 生成路径，可削减这项
+  一次性成本。
 
 ### 3.2 同日 A/B（`miko-lite`，warm，control → treatment 各 3 轮）
 
