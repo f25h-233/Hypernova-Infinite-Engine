@@ -259,6 +259,96 @@ def test_l3_dedupes_duplicate_mod_id_folders(mini_game):
     assert len(keys) == len(set(keys))
 
 
+def test_renamed_mod_folder_resolves_by_mod_id(mini_game):
+    from conftest import _png, _write
+    p = mini_game / "mods" / "mod_b" / "graphics" / "renamed.png"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(_png(6, 8))
+    dds = mini_game / "mods" / "DDSCache" / "old_b" / "graphics" / "renamed.dds"
+    dds.parent.mkdir(parents=True, exist_ok=True)
+    dds.write_bytes(b"DDS ")
+    _write(
+        mini_game / "mods" / "DDSCache" / "old_b" / "dds_metadata.json",
+        json.dumps([{
+            "ModID": "mod_b",
+            "ModFolderName": "old_b",
+            "RelativeImagePath": "graphics\\renamed.png",
+            "DDSFilePath": "\\mods\\DDSCache\\old_b\\graphics\\renamed.dds",
+            "Width": 6,
+            "Height": 8,
+        }]),
+    )
+    m = _build(mini_game, include_l2=False)
+    entry = next(e for e in m["layers"]["L3"] if e["path"] == "graphics/renamed.png")
+    assert entry["modId"] == "mod_b"
+    assert Path(entry["absolutePath"]) == (
+        mini_game / "mods" / "mod_b" / "graphics" / "renamed.png"
+    ).resolve()
+    assert m["stats"]["coverage"]["baked"] == 1.0
+    assert m["stats"]["unresolved_baked_count"] == 0
+
+
+def test_missing_source_is_unresolved(mini_game):
+    from conftest import _write
+    _write(
+        mini_game / "mods" / "DDSCache" / "mod_a" / "dds_metadata.json",
+        json.dumps([{
+            "ModID": "mod_a",
+            "ModFolderName": "mod_a",
+            "RelativeImagePath": "graphics\\missing.png",
+            "DDSFilePath": "\\mods\\DDSCache\\mod_a\\graphics\\missing.dds",
+            "Width": 1,
+            "Height": 1,
+        }]),
+    )
+    m = _build(mini_game, include_l2=False)
+    assert m["stats"]["coverage"]["baked"] < 1.0
+    assert m["stats"]["unresolved_baked_count"] >= 1
+
+
+def test_mods_summary_sums_match_layers(mini_game):
+    m = _build(mini_game)
+    sums = {
+        layer: sum(row["layers"][layer] for row in m["mods"])
+        for layer in ("L1", "L2", "L3")
+    }
+    assert sums == {layer: len(m["layers"][layer]) for layer in ("L1", "L2", "L3")}
+    assert any(row["modId"] == "core" for row in m["mods"])
+
+
+def test_tier_override_moves_whole_mod(mini_game):
+    m = _build(mini_game, include_l2=False, tier_overrides={"mod_a": "L3"})
+    assert all(e["modId"] != "mod_a" for e in m["layers"]["L1"])
+    assert any(e["modId"] == "mod_a" for e in m["layers"]["L3"])
+    summary = {row["modId"]: row for row in m["mods"]}
+    assert summary["mod_a"]["tier"] == "L3"
+    assert summary["mod_a"]["layers"]["L1"] == 0
+    assert m["stats"]["tiers"] == {"mod_a": "L3"}
+
+
+def test_unknown_tier_mod_is_reported_not_applied(mini_game):
+    m = _build(mini_game, tier_overrides={"no_such_mod": "L1"})
+    assert m["stats"]["tiers_unknown"] == ["no_such_mod"]
+    assert "no_such_mod" not in m["stats"]["tiers"]
+
+
+def test_invalid_tier_raises(mini_game):
+    import pytest
+    with pytest.raises(ValueError):
+        _build(mini_game, tier_overrides={"mod_a": "L9"})
+
+
+def test_same_path_first_enabled_wins(mini_game):
+    """mod_a 与 mod_b 都有 graphics/ships/h_alpha.png；enabled 顺序 mod_a 在前。"""
+    m = _build(mini_game, include_l2=False)
+    hits = [
+        e for e in m["layers"]["L1"] + m["layers"]["L2"] + m["layers"]["L3"]
+        if e["path"] == "graphics/ships/h_alpha.png"
+    ]
+    assert len(hits) == 1
+    assert hits[0]["modId"] == "mod_a"
+
+
 def test_cli_writes_manifest(mini_game):
     _seed_core(mini_game)
     out = mini_game / "out.json"

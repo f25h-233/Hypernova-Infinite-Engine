@@ -10,7 +10,7 @@ from pathlib import Path
 # `python -I` 不会把脚本目录加入 sys.path；工具内部自行补上。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from manifest_builder import build_manifest  # noqa: E402
+from manifest_builder import build_manifest, load_tier_overrides  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,6 +23,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-core", action="store_true")
     parser.add_argument("--no-l2", action="store_true")
     parser.add_argument("--variant-limit", type=int, default=0)
+    parser.add_argument("--tiers", type=Path,
+                        help='JSON: {"mods": {"<modId>": "L1|L2|L3"}}')
     args = parser.parse_args(argv)
 
     result = build_manifest(
@@ -31,6 +33,7 @@ def main(argv: list[str] | None = None) -> int:
         include_core=not args.no_core,
         include_l2=not args.no_l2,
         variant_limit=args.variant_limit,
+        tier_overrides=load_tier_overrides(args.tiers) if args.tiers else {},
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(
