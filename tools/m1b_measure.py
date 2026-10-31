@@ -13,7 +13,9 @@ import re
 import sys
 from pathlib import Path
 
-SESSION_ANCHOR = "Fast Rendering: v0.9.5"
+# Prefix match: FR 0.9.5 logs "v0.9.5", FR 0.9.7rc2 logs "v0.9.7rc2".
+# A version-pinned anchor silently stops finding sessions after an FR upgrade.
+SESSION_ANCHOR = "Fast Rendering: v0.9."
 MENU_ANCHOR = "Playing music with id [miscallenous_main_menu.ogg]"
 AGENT_ANCHOR = "hypernova agent premain"
 TS = re.compile(r"^(\d+) ")

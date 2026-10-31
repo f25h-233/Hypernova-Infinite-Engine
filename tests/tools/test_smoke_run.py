@@ -36,3 +36,13 @@ def test_io_read_bytes_for_own_process():
     value = smoke.io_read_bytes(os.getpid())
     assert value is not None
     assert value > 0
+
+
+def test_session_anchor_accepts_097rc2(tmp_path):
+    log = tmp_path / "starsector.log"
+    old = b"1000 [main] INFO  com.genir.renderer.agent.Agent  - Fast Rendering: v0.9.5\n"
+    new = b"2000 [main] INFO  com.genir.renderer.agent.Agent  - Fast Rendering: v0.9.7rc2\n"
+    data = old + b"middle\n" + new
+    log.write_bytes(data)
+    assert smoke.session_offset(log) == data.rfind(smoke.SESSION_ANCHOR)
+    assert smoke.session_offset(log) > len(old)

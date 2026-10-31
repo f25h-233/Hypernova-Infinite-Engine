@@ -480,3 +480,16 @@ def test_cleaned_metric_counts_whitespace_filenames(tmp_path):
     d = json.loads(out.read_text(encoding="utf-8"))
     assert d["normal_before_menu"] == 2
     assert d["gate_ok"] is True
+
+
+def test_097_anchor_is_recognized(tmp_path):
+    log_text = "\n".join([
+        "1000 [main] INFO  com.genir.renderer.agent.Agent  - "
+        "Fast Rendering: v0.9.7rc2",
+        normal_line(1010, "a"),
+        menu_line(1100),
+    ]) + "\n"
+    _, d = run_measure(tmp_path, log_text)
+    assert d["fr_present"] is True
+    assert d["session_source"] == "anchor"
+    assert d["normal_before_menu"] == 1

@@ -95,7 +95,9 @@ PROFILES = {
 }
 
 MENU_ANCHOR = b"Playing music with id [miscallenous_main_menu.ogg]"
-SESSION_ANCHOR = b"Fast Rendering: v0.9.5"
+# Prefix match: FR 0.9.5 logs "v0.9.5", FR 0.9.7rc2 logs "v0.9.7rc2".
+# A version-pinned anchor silently stops finding sessions after an FR upgrade.
+SESSION_ANCHOR = b"Fast Rendering: v0.9."
 
 
 # ---------------------------------------------------------------- log helpers
