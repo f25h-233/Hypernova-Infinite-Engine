@@ -317,9 +317,12 @@ public final class FileIndexHook {
                     return;
                 }
                 SAVE_THREAD.set(writer);
+                // start() inside the lock: a concurrent caller must observe this
+                // writer as alive and skip, never start a second writer that would
+                // write the same .tmp file.
+                writer.start();
             }
             AgentLog.info("file index: save scheduled entries=" + count);
-            writer.start();
         } catch (Throwable t) {
             AgentLog.fail("file index save failed; next launch will crawl", t);
         }

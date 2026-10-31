@@ -258,6 +258,8 @@ class FileIndexHookTest {
         Object loc = location(mod);
         FileLoaderFast first = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
         assertTrue(first.crawlAndSave() > 0);
+        Path indexFile = ctx.cacheRoot().getParent().resolve("file-index.idx.gz");
+        assertTrue(Files.isRegularFile(indexFile), "first crawl must persist an index");
 
         Files.writeString(empty.resolve("new.png"), "new");
         Thread.sleep(20);
@@ -278,6 +280,9 @@ class FileIndexHookTest {
         List<FileIndex.Dir> ok = FileIndexHook.captureDirs(Set.of(mod.toString()), stableCrawlEnd);
         assertNotNull(ok);
         assertEquals(1, ok.size());
+        long exact = mod.toFile().lastModified();
+        assertNotNull(FileIndexHook.captureDirs(Set.of(mod.toString()), exact),
+                "an mtime exactly equal to the crawl end must be accepted");
         assertNull(FileIndexHook.captureDirs(Set.of(mod.toString()), 0L),
                 "a directory modified after the crawl must abort the save");
         assertNull(FileIndexHook.captureDirs(
@@ -323,6 +328,7 @@ class FileIndexHookTest {
                 System.currentTimeMillis() + 5_000));
         FileIndex index = FileIndex.read(target, "0.9.7rc2", "stamp");
         assertNotNull(index, "written index must be readable with the same stamps");
+        assertNull(index.firstMismatchedDir(), "recorded mtimes must match the directories");
         assertEquals(keys, index.locations());
         assertFalse(index.entries().isEmpty());
     }
