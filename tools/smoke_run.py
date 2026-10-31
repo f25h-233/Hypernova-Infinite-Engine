@@ -86,6 +86,12 @@ PROFILES = {
         "vmparams": "../Miko_Lite.txt",
         "cwd": "starsector-core",
     },
+    "miko-lite-phase": {
+        "game": "Starsector-098-260mods",
+        "java": "jdk-28+13/bin/java.exe",
+        "vmparams": "../Miko_Lite_phase.txt",
+        "cwd": "starsector-core",
+    },
     "miko-lite-nofr": {
         "game": "Starsector-098-260mods",
         "java": "jdk-28+13/bin/java.exe",
@@ -200,6 +206,8 @@ def agent_results(game: Path, since_bytes: int) -> dict:
             out["key_ready"] = line
         elif "cache key breakdown:" in line:
             out["key_breakdown"] = line
+        elif "file index:" in line:
+            out.setdefault("file_index", []).append(line)
     return out
 
 
@@ -398,6 +406,8 @@ def summarize(rows: list[dict]) -> None:
             flags.append("textures:MISMATCH")
         print(f"#{i}: menu={r['menu_s']}s wall={r['wall_s']}s preload={pre}({pre_ms}) "
               f"stop={r['stop']} {' '.join(flags)}")
+        if a.get("file_index"):
+            print(f"     {a['file_index'][-1].split('INFO ')[-1]}")
         if "breakdown" in a:
             print(f"     {a['breakdown'].split('INFO ')[-1]}")
 

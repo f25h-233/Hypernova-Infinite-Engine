@@ -6,6 +6,10 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
+# pytest under `python -I` does not put the repo root on sys.path; the
+# tools/ directory is not a package, so make `tools.smoke_run` importable.
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 _spec = importlib.util.spec_from_file_location("smoke_run", REPO / "tools" / "smoke_run.py")
 smoke = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(smoke)
@@ -46,3 +50,11 @@ def test_session_anchor_accepts_097rc2(tmp_path):
     log.write_bytes(data)
     assert smoke.session_offset(log) == data.rfind(smoke.SESSION_ANCHOR)
     assert smoke.session_offset(log) > len(old)
+
+
+def test_miko_lite_phase_profile_uses_derived_file():
+    from tools.smoke_run import PROFILES
+    cfg = PROFILES["miko-lite-phase"]
+    assert cfg["game"] == "Starsector-098-260mods"
+    assert cfg["vmparams"] == "../Miko_Lite_phase.txt"
+    assert cfg["cwd"] == "starsector-core"

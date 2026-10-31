@@ -13,8 +13,10 @@ public final class HypernovaAgent {
         try {
             RuntimeContext ctx = RuntimeContext.fromEnvironment();
             AgentLog.init(ctx.logFile());
+            StartupTimeline.start();
             AgentLog.info("hypernova agent premain; config=" + ctx.config()
                     + ", cacheRoot=" + ctx.cacheRoot());
+            instrumentation.addTransformer(new StartupTimelineTransformer(), false);
             try {
                 TexturePatchConfig textures = TexturePatchConfig.load();
                 if (textures.enabled()) {

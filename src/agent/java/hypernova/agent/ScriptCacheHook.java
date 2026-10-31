@@ -25,6 +25,8 @@ public final class ScriptCacheHook {
     private static final LongAdder SOURCELESS_MISSES = new LongAdder();
     private static final AtomicLong FIRST = new AtomicLong(0);
     private static final AtomicLong LAST = new AtomicLong(0);
+    private static final AtomicLong FIRST_EPOCH = new AtomicLong(0);
+    private static final AtomicLong LAST_EPOCH = new AtomicLong(0);
     private static final Set<Object> PRELOADED = ConcurrentHashMap.newKeySet();
     private static final List<String> MISS_SAMPLE =
             Collections.synchronizedList(new ArrayList<>());
@@ -216,6 +218,8 @@ public final class ScriptCacheHook {
             long now = System.nanoTime();
             FIRST.compareAndSet(0, now);
             LAST.set(now);
+            if (FIRST_EPOCH.get() == 0) FIRST_EPOCH.set(System.currentTimeMillis());
+            LAST_EPOCH.set(System.currentTimeMillis());
             FINDS.increment();
             counted = true;
             Map<String, byte[]> map = currentMap;
@@ -308,6 +312,10 @@ public final class ScriptCacheHook {
             if (!all.isEmpty()) {
                 AgentLog.info("miss sample (" + all.size() + "): " + all);
             }
+            AgentLog.info("find span: first_epoch_ms=" + FIRST_EPOCH.get()
+                    + ", last_epoch_ms=" + LAST_EPOCH.get()
+                    + ", span_ms=" + spanMillis()
+                    + ", finds=" + FINDS.sum() + ", hits=" + HITS.sum() + ", misses=" + MISSES.sum());
         } catch (Throwable ignored) {
             // 诊断日志绝不能影响游戏
         }
@@ -360,6 +368,8 @@ public final class ScriptCacheHook {
         MISSES.reset();
         FIRST.set(0);
         LAST.set(0);
+        FIRST_EPOCH.set(0);
+        LAST_EPOCH.set(0);
         PRELOADED.clear();
         MISS_SAMPLE.clear();
         SOURCED_MISS_SAMPLE.clear();
