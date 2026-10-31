@@ -163,17 +163,6 @@ public class HypernovaPlugin extends BaseModPlugin {
     }
 
     /**
-     * 兜底自检（REQ-R1-01）：从 manifest 里挑出「此刻 getSprite 仍为空」的路径，
-     * 逐条 ensureLoaded，再查 getSprite 是否非空。
-     *
-     * <p>这是唯一不依赖外部测试 mod 的验证方式：本方法运行在主线程 + GL 上下文中，
-     * 能用引擎自己的 {@code getTextureId()} 作为判据。
-     *
-     * <p>调用点已从 {@code onApplicationLoad} 移到首次主线程 {@code advance}：
-     * FR 0.9.7 的 {@code onApplicationLoad} 在 {@code Thread-N-FR-Main-Loader} 上执行，
-     * 在那里调用 {@code ensureLoaded} 必然触发主线程断言。
-     */
-    /**
      * 启动期只允许 L1 进入本组件队列（REQ-R1-05）。自检是唯一会在
      * 主线程早期取路径的入口，因此这里把候选集硬限制在 L1；L2/L3
      * 只能由运行期触发点按各自层入队。
@@ -197,12 +186,25 @@ public class HypernovaPlugin extends BaseModPlugin {
         return out;
     }
 
+    /**
+     * 兜底自检（REQ-R1-01）：从 manifest 的 L1 候选里挑出「此刻 getSprite 仍为空」
+     * 的路径，逐条 ensureLoaded，再查 getSprite 是否非空。
+     *
+     * <p>候选集只取 L1（REQ-R1-05）；L2/L3 只能由运行期触发点按各自层入队。
+     *
+     * <p>这是唯一不依赖外部测试 mod 的验证方式：本方法运行在主线程 + GL 上下文中，
+     * 能用引擎自己的 {@code getTextureId()} 作为判据。
+     *
+     * <p>调用点已从 {@code onApplicationLoad} 移到首次主线程 {@code advance}：
+     * FR 0.9.7 的 {@code onApplicationLoad} 在 {@code Thread-N-FR-Main-Loader} 上执行，
+     * 在那里调用 {@code ensureLoaded} 必然触发主线程断言。
+     */
     private void runFallbackSelfCheck(int limit) {
         var log = Global.getLogger(HypernovaPlugin.class);
         List<String> candidates = selfCheckCandidates(manifest, service::isLoaded, limit);
         log.info("selfcheck: layer=L1 candidates(not-yet-registered)=" + candidates.size());
         if (candidates.isEmpty()) {
-            log.info("selfcheck: INCONCLUSIVE — every manifest path is already registered in this session");
+            log.info("selfcheck: INCONCLUSIVE — every L1 manifest path is already registered in this session");
             return;
         }
         int ok = 0;

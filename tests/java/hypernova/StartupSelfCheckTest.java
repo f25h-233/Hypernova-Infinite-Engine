@@ -45,7 +45,7 @@ class StartupSelfCheckTest {
     @Test
     void loadedAndLimitAreHonored() throws Exception {
         TextureManifest m = TextureManifest.fromJson(manifest(
-                "L1", List.of(entry("a.png"), entry("b.png"), entry("c.png")),
+                "L1", List.of(entry("a.png"), entry("b.png"), entry("c.png"), entry("d.png")),
                 "L2", List.of(),
                 "L3", List.of()));
         assertEquals(List.of("b.png", "c.png"),
