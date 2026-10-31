@@ -18,13 +18,13 @@
 | 3 | 55.1 | 57.1 |
 | 中位 | **55.6** | **57.6** |
 
-- `delta_s = -2.0`（`tools/m3_ab.py` 口径：control 中位 − treatment 中位；负值 = treatment 更慢；`delta_pct = -3.6%`）。等价地，首次构建相对同日 control 的一阶成本为 **+2.0 s**（55.6 → 57.6 s）。M3 同步 save 的历史一次性成本为 **+15.1 s**（68.1 → 83.2 s；**pre-reboot、不同环境/日期**，仅作历史量级参照，不与本轮绝对值直接可比；同一脚本口径下即 −15.1）。**判定**：按 ≤2.0 s 判据字面成立（2.0 ≤ 2.0），但三轮 treatment 全部慢于对应 control（+1.0 / +2.0 / +2.0），0.1 s 分辨率下不能确认严格达标；最终裁决见 Task 4。
+- `delta_s = -2.0`（`tools/m3_ab.py` 口径：control 中位 − treatment 中位；负值 = treatment 更慢；`delta_pct = -3.6%`）。等价地，首次构建相对同日 control 的一阶成本为 **+2.0 s**（55.6 → 57.6 s）。M3 同步 save 的历史一次性成本为 **+15.1 s**（68.1 → 83.2 s；**pre-reboot、不同 boot/时段（与 M3 同日）**，仅作历史量级参照，不与本轮绝对值直接可比；同一脚本口径下即 −15.1）。**判定**：按 ≤2.0 s 判据字面成立（2.0 ≤ 2.0），但三轮 treatment 全部慢于对应 control（+1.0 / +2.0 / +2.0），0.1 s 分辨率下不能确认严格达标；最终裁决见 Task 4。
 - 每轮 treatment 均 `save scheduled` → `written`，无 `save failed` / `save skipped` / `save already in progress`。三份 `written` 行：`entries=223536, dirs=17389, ms=11602` / `ms=11697` / `ms=11328`（warm-up treatment 为 `ms=10699`，恢复轮 `ms=12193`）。
 - 时间线（premain 时钟）：crawl 决策约 +1.7 s；`save scheduled` 约 +5.7 s；`written` 中位 **+17.3 s**（范围 16.8–17.5；主菜单约 +57.6 s 是 smoke_run 的**进程时钟**，不是 premain 时钟）。`timeline: mods.start` 约 +29.1–30.1 s，writer 在 mod 加载开始前约 12 s 就已结束，实际重叠的是 dds/script/find 阶段，**不是** `initMods`。
 - **+2.0 s 的归因（假设，未隔离）**：主要嫌疑是异步 writer 与启动早期阶段（dds/script/find）的 CPU/GC 竞争；另一候选是 crawler 线程上的快照成本（`locationKeys` + `collector.toArray()`）。本轮没有“关闭 writer”的对照，不能定论。
 - 重建索引 3,337,599 B（Step 1 实删的旧索引为 3,332,609 B；M3 文档的 3,332,575 B 是 pre-reboot 构建口径）；`dirs` 17,389（M3 17,067，来自目录自身路径硬化），entries 不变 223,536。
 - warm-up 两轮（不计入中位）：control 67.2 s、treatment 58.1 s（首轮噪声大，故按计划排除）。
-- **环境漂移（同日同 boot，不同 uptime）**：M3 的干净 control 中位 50.1 s 取自今日 reboot 后不久；本轮 control 中位 55.6 s 是同一 boot 数小时后（机器上有 Edge/WebView2、QQ、Steam++、Huorong 等后台负载；当前 15.5 GB 空闲 / 31.2 GB）。两者差 +5.5 s 属环境漂移，不是代码回归；`read_bytes_menu` 两轮均约 805 MB，I/O 体量相同。因此只使用本轮**交错** C/T 的差值，不与 M3 的绝对值直接比较。
+- **环境漂移（同日同 boot，不同 uptime）**：M3 的干净 control 中位 50.1 s 取自今日 reboot 后不久；本轮 control 中位 55.6 s 是同一 boot 数小时后（机器上有 Edge/WebView2、QQ、Steam++、Huorong 等后台负载；22:29 事后快照 15.5 GB 空闲 / 31.2 GB，⚠️ 非 A/B 窗口 21:37–21:57 的同步记录）。两者差 +5.5 s 的**归因是环境漂移（未隔离）**；control 走 `fileIndex=false`、不注册 `FileIndexTransformer`，本次代码改动只在 save 路径，没有代码回归的机理；`read_bytes_menu` 两轮均约 805 MB，I/O 体量相同。因此只使用本轮**交错** C/T 的差值，不与 M3 的绝对值直接比较。
 
 ## 3. 3/3 命中
 | 轮 | menu_s | `file index: loaded` | `full crawl` |
@@ -54,3 +54,4 @@
 - 异步窗口内目录被写 → 本次不落盘（下次重建）；比同步 save 的静默接受更保守。
 - 爬取过程中（crawlEnd 之前的）写入仍是既有盲区，M3.1 不改变该窗口。
 - 已有 v2 索引不会被强制重建；空叶子硬化在下次重建后生效。
+- 异步窗口内目录被写：若某个 mod 在启动早期反复写自己的目录，可能**每轮重建都 skip**（不只是“下次一次”）；日志每轮出现 `save skipped; directory changed after crawl`。本轮 0 次。
