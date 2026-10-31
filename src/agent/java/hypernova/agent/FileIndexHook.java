@@ -18,6 +18,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Injects a persisted directory enumeration into FR FileLoaderFast.DirectoryCrawler.
@@ -40,6 +41,8 @@ public final class FileIndexHook {
     private static volatile RuntimeContext context;
     private static final Set<Object> LOADED = Collections.newSetFromMap(new IdentityHashMap<>());
     private static final AtomicInteger LAST_LOADED = new AtomicInteger(Integer.MIN_VALUE);
+    private static final AtomicReference<Thread> SAVE_THREAD = new AtomicReference<>();
+    private static final Object SAVE_LOCK = new Object();
 
     private record LocationFields(Field type, Field path, Field isMod) {
     }
@@ -256,7 +259,17 @@ public final class FileIndexHook {
         }
     }
 
-    /** Persists a freshly crawled map. No-op when disabled, already loaded, or failed. */
+    /**
+     * Schedules the index write on a daemon thread and returns immediately.
+     *
+     * <p>The snapshot is taken on the crawler thread: {@link Thread#start()}
+     * publishes every write that happened before it (including the crawl's
+     * {@code FileHandle} fields), and FR discards the crawler right after
+     * {@code cacheLocations} returns. The payload is written to a {@code .tmp}
+     * file and only renamed into place when complete, so a process that exits
+     * early leaves either no index or a complete one; the next launch then
+     * fail-opens to a full crawl.
+     */
     public static void save(Object crawler, int count) {
         if (!enabled() || count <= 0 || LOADED.contains(crawler)) return;
         RuntimeContext ctx = context;
@@ -279,12 +292,50 @@ public final class FileIndexHook {
             List<FileIndex.Location> keys = locationKeys(locations);
             if (keys == null) return;
 
-            IdentityHashMap<Object, Integer> index = new IdentityHashMap<>();
-            for (int i = 0; i < locations.size(); i++) index.put(locations.get(i), i);
+            // The injected call runs right before cacheLocations returns, so the
+            // enumeration is complete; this timestamp bounds what the writer may
+            // accept as an unchanged directory.
+            long crawlEndMs = System.currentTimeMillis();
+            Object[] items = collector.toArray();
+            Object[] allLocations = locations.toArray();
+            Path target = indexFile(ctx);
 
-            List<FileIndex.Entry> entries = new ArrayList<>(count);
+            Thread writer = new Thread(() -> {
+                try {
+                    writeIndex(frVersion, shapeStamp, keys, allLocations, items, target,
+                            crawlEndMs);
+                } finally {
+                    SAVE_THREAD.compareAndSet(Thread.currentThread(), null);
+                }
+            }, "hypernova-file-index-writer");
+            writer.setDaemon(true);
+            writer.setPriority(Thread.MIN_PRIORITY);
+            synchronized (SAVE_LOCK) {
+                Thread previous = SAVE_THREAD.get();
+                if (previous != null && previous.isAlive()) {
+                    AgentLog.info("file index: save already in progress; skipping");
+                    return;
+                }
+                SAVE_THREAD.set(writer);
+            }
+            AgentLog.info("file index: save scheduled entries=" + count);
+            writer.start();
+        } catch (Throwable t) {
+            AgentLog.fail("file index save failed; next launch will crawl", t);
+        }
+    }
+
+    /** Writes the snapshot; false means the index was not persisted. */
+    static boolean writeIndex(String frVersion, String shapeStamp,
+                              List<FileIndex.Location> keys, Object[] locations,
+                              Object[] items, Path target, long crawlEndMs) {
+        long start = System.currentTimeMillis();
+        try {
+            IdentityHashMap<Object, Integer> index = new IdentityHashMap<>();
+            for (int i = 0; i < locations.length; i++) index.put(locations[i], i);
+            List<FileIndex.Entry> entries = new ArrayList<>(Math.max(16, items.length));
             Set<String> dirs = new LinkedHashSet<>();
-            for (Object item : collector) {
+            for (Object item : items) {
                 if (item instanceof List<?> list) {
                     for (Object handle : list) addSaved(handle, index, entries, dirs);
                 } else {
@@ -297,18 +348,56 @@ public final class FileIndexHook {
                 File root = new File(location.path());
                 if (root.isDirectory()) dirs.add(root.getPath());
             }
-            List<FileIndex.Dir> dirList = new ArrayList<>(dirs.size());
-            for (String dir : dirs) {
-                long mtime = new File(dir).lastModified();
-                if (mtime == 0) return;
-                dirList.add(new FileIndex.Dir(dir, mtime));
-            }
-            if (entries.isEmpty() && dirList.isEmpty()) return;
-            new FileIndex(frVersion, shapeStamp, keys, dirList, entries).write(indexFile(ctx));
+            List<FileIndex.Dir> dirList = captureDirs(dirs, crawlEndMs);
+            if (dirList == null) return false;
+            if (entries.isEmpty() && dirList.isEmpty()) return false;
+            new FileIndex(frVersion, shapeStamp, keys, dirList, entries).write(target);
             AgentLog.info("file index: written entries=" + entries.size()
-                    + ", dirs=" + dirList.size());
+                    + ", dirs=" + dirList.size() + ", ms="
+                    + (System.currentTimeMillis() - start));
+            return true;
         } catch (Throwable t) {
             AgentLog.fail("file index save failed; next launch will crawl", t);
+            return false;
+        }
+    }
+
+    /**
+     * Reads the recorded directory mtimes. Returns null when a directory
+     * disappeared or was modified after the crawl finished: the enumeration
+     * would then describe an older state than the timestamps, and a later cache
+     * hit could hide the change. Aborting is fail-open (next launch crawls).
+     */
+    static List<FileIndex.Dir> captureDirs(Set<String> dirs, long crawlEndMs) {
+        List<FileIndex.Dir> out = new ArrayList<>(dirs.size());
+        for (String dir : dirs) {
+            long mtime = new File(dir).lastModified();
+            if (mtime == 0) {
+                AgentLog.info("file index: save skipped; directory missing [" + dir + "]");
+                return null;
+            }
+            if (mtime > crawlEndMs) {
+                AgentLog.info("file index: save skipped; directory changed after crawl ["
+                        + dir + "]");
+                return null;
+            }
+            out.add(new FileIndex.Dir(dir, mtime));
+        }
+        return out;
+    }
+
+    /** Waits for the currently scheduled writer; exposed for the test fixture. */
+    public static void awaitSavesForTest(long timeoutMs) {
+        for (int i = 0; i < 10; i++) {
+            Thread writer = SAVE_THREAD.get();
+            if (writer == null) return;
+            try {
+                writer.join(timeoutMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (SAVE_THREAD.get() == writer) return;
         }
     }
 
@@ -317,6 +406,7 @@ public final class FileIndexHook {
     }
 
     static void resetForTest() {
+        awaitSavesForTest(30_000);
         LOADED.clear();
         LAST_LOADED.set(Integer.MIN_VALUE);
         context = null;
@@ -432,6 +522,11 @@ public final class FileIndexHook {
             File file = (File) get(handle, "file");
             Integer locationIndex = index.get(location);
             if (file == null || locationIndex == null) return;
+            // FR enumerates directories as handles too. Recording each directory's
+            // own path is what makes a directory that was EMPTY at build time
+            // invalidate the index when a file appears inside it later (its
+            // parent's mtime does not change in that case).
+            if (file.isDirectory()) dirs.add(file.getPath());
             String key = keyFor(file, location);
             if (key.isEmpty()) return;
             entries.add(new FileIndex.Entry(key, file.getPath(), locationIndex));

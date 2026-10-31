@@ -29,6 +29,7 @@ public class FileLoaderFast {
         DirectoryCrawler crawler = new DirectoryCrawler();
         int count = crawler.cacheLocations();
         FileIndexHook.save(crawler, count);
+        FileIndexHook.awaitSavesForTest(30_000);
         return count;
     }
 

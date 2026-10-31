@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -247,6 +248,89 @@ class FileIndexHookTest {
             if (oldMods == null) System.clearProperty("com.fs.starfarer.settings.paths.mods");
             else System.setProperty("com.fs.starfarer.settings.paths.mods", oldMods);
         }
+    }
+
+    @Test
+    void emptyLeafDirectoryInvalidatesWhenAFileAppears() throws Exception {
+        Path mod = tmp.resolve("game/mods/mod1");
+        Path empty = mod.resolve("graphics/empty");
+        Files.createDirectories(empty);
+        Object loc = location(mod);
+        FileLoaderFast first = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
+        assertTrue(first.crawlAndSave() > 0);
+
+        Files.writeString(empty.resolve("new.png"), "new");
+        Thread.sleep(20);
+        empty.toFile().setLastModified(System.currentTimeMillis());
+
+        FileLoaderFast second = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
+        assertEquals(-1, FileIndexHook.tryLoad(crawlerOf(second)),
+                "a directory that was empty at build time must invalidate the index");
+        assertTrue(mapOf(second).isEmpty(), "failed load must not leave partial entries");
+        assertTrue(crawl(second) > 0, "full crawl must see the new file");
+    }
+
+    @Test
+    void captureDirsRejectsChangedAndMissingDirectories() throws Exception {
+        Path mod = tmp.resolve("game/mods/mod1");
+        Files.createDirectories(mod);
+        long stableCrawlEnd = System.currentTimeMillis() + 5_000;
+        List<FileIndex.Dir> ok = FileIndexHook.captureDirs(Set.of(mod.toString()), stableCrawlEnd);
+        assertNotNull(ok);
+        assertEquals(1, ok.size());
+        assertNull(FileIndexHook.captureDirs(Set.of(mod.toString()), 0L),
+                "a directory modified after the crawl must abort the save");
+        assertNull(FileIndexHook.captureDirs(
+                Set.of(tmp.resolve("game/mods/never-existed").toString()), stableCrawlEnd),
+                "a missing directory must abort the save");
+    }
+
+    @Test
+    void writeIndexSkipsWhenTheDirectorySetChangedAfterTheCrawl() throws Exception {
+        Path mod = tmp.resolve("game/mods/mod1");
+        Object loc = location(mod);
+        FileLoaderFast fast = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
+        Object crawler = crawlerOf(fast);
+        cacheLocations(crawler);
+        Object outer = field(crawler, "this$0");
+        @SuppressWarnings("unchecked")
+        List<Object> locations = (List<Object>) field(outer, "allLocations");
+        @SuppressWarnings("unchecked")
+        List<Object> collector = (List<Object>) field(crawler, "collector");
+        List<FileIndex.Location> keys = FileIndexHook.locationKeysForTest(locations);
+        Path target = tmp.resolve("idx.gz");
+        assertFalse(FileIndexHook.writeIndex("0.9.7rc2", "stamp", keys,
+                locations.toArray(), collector.toArray(), target, 0L));
+        assertFalse(Files.exists(target), "aborted save must not write the final file");
+    }
+
+    @Test
+    void writeIndexPersistsAReadableIndexWhenDirectoriesAreStable() throws Exception {
+        Path mod = tmp.resolve("game/mods/mod1");
+        Object loc = location(mod);
+        FileLoaderFast fast = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
+        Object crawler = crawlerOf(fast);
+        cacheLocations(crawler);
+        Object outer = field(crawler, "this$0");
+        @SuppressWarnings("unchecked")
+        List<Object> locations = (List<Object>) field(outer, "allLocations");
+        @SuppressWarnings("unchecked")
+        List<Object> collector = (List<Object>) field(crawler, "collector");
+        List<FileIndex.Location> keys = FileIndexHook.locationKeysForTest(locations);
+        Path target = tmp.resolve("idx.gz");
+        assertTrue(FileIndexHook.writeIndex("0.9.7rc2", "stamp", keys,
+                locations.toArray(), collector.toArray(), target,
+                System.currentTimeMillis() + 5_000));
+        FileIndex index = FileIndex.read(target, "0.9.7rc2", "stamp");
+        assertNotNull(index, "written index must be readable with the same stamps");
+        assertEquals(keys, index.locations());
+        assertFalse(index.entries().isEmpty());
+    }
+
+    private static Object field(Object target, String name) throws Exception {
+        Field f = target.getClass().getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(target);
     }
 
     @Test
