@@ -173,6 +173,19 @@ def agent_log_for(game: Path) -> Path:
     return game / "saves" / "hypernova" / "scripts-agent.log"
 
 
+def index_path_for(game: Path) -> Path:
+    return game / "saves" / "hypernova" / "file-index.idx.gz"
+
+
+def clear_index(game: Path) -> bool:
+    """Deletes the file index; True when a file was removed."""
+    index = index_path_for(game)
+    if not index.exists():
+        return False
+    index.unlink()
+    return True
+
+
 def agent_results(game: Path, since_bytes: int) -> dict:
     """从 agent 日志里抓最近一轮的关键行。"""
     p = agent_log_for(game)
@@ -422,6 +435,8 @@ def main() -> int:
     ap.add_argument("--linger", type=float, default=8.0)
     ap.add_argument("--clear-cache-first", action="store_true",
                     help="第 1 轮前删除 scripts-cache（测冷跑）")
+    ap.add_argument("--clear-index-each-round", action="store_true",
+                    help="每轮启动前删除 file-index.idx.gz（测首次构建成本）")
     ap.add_argument("--start-res", default="1707x1067",
                     help="直接启动时传给游戏的 startRes")
     ap.add_argument("--fullscreen", action="store_true", help="直接启动时全屏")
@@ -446,6 +461,8 @@ def main() -> int:
 
     rows = []
     for i in range(1, args.rounds + 1):
+        if args.clear_index_each_round and clear_index(game):
+            print(f"[smoke] cleared {index_path_for(game)}")
         print(f"\n########## 第 {i}/{args.rounds} 轮 ##########")
         rows.append(one_round(cfg, game, args))
         if i < args.rounds:

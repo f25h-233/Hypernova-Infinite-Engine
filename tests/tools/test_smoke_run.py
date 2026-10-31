@@ -58,3 +58,20 @@ def test_miko_lite_phase_profile_uses_derived_file():
     assert cfg["game"] == "Starsector-098-260mods"
     assert cfg["vmparams"] == "../Miko_Lite_phase.txt"
     assert cfg["cwd"] == "starsector-core"
+
+
+def test_index_path_for_points_at_saves_index():
+    game = Path("game-root")
+    assert smoke.index_path_for(game) == game / "saves" / "hypernova" / "file-index.idx.gz"
+
+
+def test_clear_index_removes_only_the_index(tmp_path):
+    index = smoke.index_path_for(tmp_path)
+    index.parent.mkdir(parents=True)
+    index.write_bytes(b"x")
+    keep = index.parent / "scripts-cache"
+    keep.write_bytes(b"keep")
+    assert smoke.clear_index(tmp_path) is True
+    assert not index.exists()
+    assert keep.exists()
+    assert smoke.clear_index(tmp_path) is False
