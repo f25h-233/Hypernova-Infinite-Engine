@@ -76,22 +76,29 @@
 
 ## 3. 杠杆与 A/B
 
-### 3.1 索引构建（单独一轮，不计入 A/B）
+### 3.1 索引构建（两轮 warm 构建，不计入 A/B）
 
-`python -I tools/smoke_run.py --profile miko-lite --rounds 1 --json-out build/m3-index-build.json`
+- 原始构建：`python -I tools/smoke_run.py --profile miko-lite --rounds 1 --json-out build/m3-index-build.json`
+- v2 格式戳重建：同一命令，`--json-out build/m3-timeline-rebuild.json`
 
-- agent 日志：`file index: written entries=223536, dirs=17067`；索引落盘
-  `saves/hypernova/file-index.idx.gz`（3,332,575 B）。
-- 本轮 menu **83.2 s**：一次性构建成本（较同日 control 中位 68.1 s 慢 **+15.1 s**），
-  按约定排除，不参与 A/B 中位数。
-- 排除冷缓存解释：本轮 `preload=hit`（2,113 条，8 ms），
-  `read_bytes_menu=805,074,400`，与 control 三轮的 802,191,527 / 803,356,488 /
-  804,566,658 基本一致。因此 +15.1 s 不是 scripts 冷启动或 OS 缓存差异的大头；
-  **最可能**是同步 `save` 路径（223,536 entries + 17,067 dirs + key 归一化 + gzip），
-  但只有这一轮构建、没有第二次 warm 构建、也没有“关闭 save”的对照，所以这是
-  **高概率推断，不是已隔离的结论**。
-- 诚实修正：计划预期首次构建只慢 1–2 s，实测 +15.1 s，该预期是错的；更细的拆分
-  （例如在同一 warm 机器上做第二次构建）留给下一里程碑。
+- **两轮独立的 warm 构建**，均为完整 crawl + 写入：
+  - 原始构建（`build/m3-index-build.json`，agent 日志 08:41）：menu **83.2 s**，
+    `file index: written entries=223536, dirs=17067`；索引落盘
+    `saves/hypernova/file-index.idx.gz`（3,332,575 B）。
+  - v2 格式戳重建（`build/m3-timeline-rebuild.json`，agent 日志 09:41）：menu **83.2 s**，
+    `file index: absent, corrupt, or FR version/shape mismatch; full crawl` →
+    `written entries=223536, dirs=17067`。
+- 两轮都按约定排除，不参与 A/B 中位数；一次性构建成本 = 较同日 control 中位 68.1 s
+  慢 **+15.1 s**。
+- 排除冷缓存解释：两轮均 `preload=hit`（2,113 条；8 ms / 25 ms），
+  `read_bytes_menu` 805,074,400（原始）/ 804,205,637（重建），与 control 三轮的
+  802,191,527 / 803,356,488 / 804,566,658 基本一致。因此 +15.1 s 不是 scripts
+  冷启动或 OS 缓存差异的大头；两轮独立 warm 构建给出**相同**的构建成本，且都是
+  完整 crawl + 相同 223,536/17,067 写入，进一步支持**最可能**是同步 `save` 路径
+  （223,536 entries + 17,067 dirs + key 归一化 + gzip）。但仍没有“关闭 save”的
+  对照，所以这是**高概率推断，不是已隔离的结论**。
+- 诚实修正：计划预期首次构建只慢 1–2 s，实测 +15.1 s，该预期是错的；两轮构建
+  成本一致，说明不是单轮异常（更细的 save 拆分留给下一里程碑）。
 - 产品含义：首次安装、更换 mod 列表、修改 mod 目录内容都会触发重建，各慢约 15 s。
   最坏情况是某个 mod 在会话中往自己的目录写文件（日志/缓存/生成配置）→ 下一次启动
   `directory changed [...]` → 全量 crawl + 再写索引；对这类 mod 集合，杠杆从
@@ -153,10 +160,11 @@
 - **处置（待用户裁决，不单方面改目标）**：
   - **A. 修订 G-01'' = ≤55 s（约 −9–10%）**，保留 file index；
   - **B. 接受当前值，关闭 M3**，把 0–50 s 桶留给 M2（manifest 驱动）/ FR 上游。
-- **一次性成本**：首次索引构建 **83.2 s**（较同日 control +15.1 s）；该轮
-  `preload=hit`、`read_bytes_menu≈805 MB` 与 control 一致，**最可能**是同步
-  `save` 路径（223,536 条 + 17,067 目录 + key 归一化 + gzip），但只有一轮、
-  未单独隔离 save，属高概率推断。首次安装/更换 mod 列表/修改 mod 目录内容会
+- **一次性成本**：两轮独立的 warm 构建（原始索引 + v2 格式戳重建）均为 **83.2 s**
+  （各较同日 control +15.1 s），均完整 crawl 并写入 223,536 entries / 17,067 dirs；
+  两轮 `preload=hit`、`read_bytes_menu≈804–805 MB` 与 control 一致，**最可能**是
+  同步 `save` 路径（223,536 条 + 17,067 目录 + key 归一化 + gzip）；两轮同价
+  加强了该推断，但仍未单独隔离 save。首次安装/更换 mod 列表/修改 mod 目录内容会
   再次重建，各慢约 15 s；若某个 mod 在会话中往自己目录写文件，下一次启动会
   `directory changed` → 全量 crawl + 重建，对该 mod 集合杠杆变成每次净亏。
 - **回滚**：`-Dhypernova.fileIndex=false`（系统属性优先）或
