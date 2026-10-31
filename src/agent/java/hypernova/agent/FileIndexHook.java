@@ -58,6 +58,92 @@ public final class FileIndexHook {
         context = ctx;
     }
 
+    /**
+     * FR builds this lever's assumptions into the injected {@code F_SAME} frame and
+     * into the cached key normalization. Only the pinned 0.9.7 line is supported;
+     * anything else disables the transformer before it can emit unverifiable bytecode.
+     */
+    static boolean supportedFrVersion() {
+        return supportedFrVersion(frVersion());
+    }
+
+    static boolean supportedFrVersion(String version) {
+        String v = normalizeFrVersion(version);
+        return "0.9.7rc2".equals(v) || "0.9.7".equals(v);
+    }
+
+    static String normalizeFrVersion(String version) {
+        if (version == null) return "unknown";
+        String v = version.trim().toLowerCase(Locale.ROOT);
+        if (v.startsWith("v")) v = v.substring(1).trim();
+        return v.isEmpty() ? "unknown" : v;
+    }
+
+    /** {@code starsector-core/fr.version.txt} first, reflection second, else unknown. */
+    static String frVersion() {
+        RuntimeContext ctx = context;
+        if (ctx != null) {
+            Path file = ctx.gameRoot().resolve("starsector-core/fr.version.txt");
+            try {
+                if (Files.isRegularFile(file)) {
+                    String raw = Files.readString(file).trim();
+                    if (!raw.isEmpty()) return normalizeFrVersion(raw);
+                }
+            } catch (Throwable ignored) {
+                // fail open: try reflection, then report unknown
+            }
+        }
+        try {
+            Class<?> cls = Class.forName(
+                    "com.genir.renderer.Version", false, ClassLoader.getSystemClassLoader());
+            Object value = cls.getMethod("getVersion").invoke(null);
+            if (value != null) {
+                String v = normalizeFrVersion(String.valueOf(value));
+                if (!"unknown".equals(v)) return v;
+            }
+        } catch (Throwable ignored) {
+            // FR absent or shape changed; unknown disables the lever
+        }
+        return "unknown";
+    }
+
+    /**
+     * Stable fingerprint of the runtime shapes the transformer assumes: the
+     * obfuscated location class, the resolved enum/String/boolean fields, and the
+     * {@code FileHandle} constructor parameters. Any drift rejects the index.
+     */
+    static String shapeStamp(List<Object> locations, ClassLoader loader) {
+        try {
+            if (locations == null || locations.isEmpty()) return null;
+            Class<?> locationClass = locations.get(0).getClass();
+            LocationFields fields = LOCATION_FIELDS.get(locationClass);
+            if (fields == null) return null;
+            Constructor<?> ctor = fileHandleCtor(loader);
+            if (ctor == null) return null;
+            StringBuilder out = new StringBuilder(locationClass.getSimpleName());
+            out.append('|').append(fieldSignature(fields.type()));
+            out.append('|').append(fieldSignature(fields.path()));
+            out.append('|').append(fieldSignature(fields.isMod()));
+            out.append('|');
+            Class<?>[] params = ctor.getParameterTypes();
+            for (int i = 0; i < params.length; i++) {
+                if (i > 0) out.append(',');
+                out.append(params[i].getSimpleName());
+            }
+            return out.toString();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static String fieldSignature(Field field) {
+        Class<?> type = field.getType();
+        if (type.isEnum()) return "enum";
+        if (type == String.class) return "String";
+        if (type == boolean.class || type == Boolean.class) return "boolean";
+        return type.getSimpleName();
+    }
+
     static boolean enabled() {
         String prop = System.getProperty("hypernova.fileIndex");
         if (prop != null) return Boolean.parseBoolean(prop);
@@ -90,8 +176,21 @@ public final class FileIndexHook {
             List<Object> locations = (List<Object>) get(outer, "allLocations");
             if (target == null || locations == null || locations.isEmpty()) return -1;
 
-            FileIndex index = FileIndex.read(indexFile(ctx));
-            if (index == null) return -1;
+            String frVersion = frVersion();
+            if (!supportedFrVersion(frVersion)) {
+                AgentLog.info("file index: unsupported FR version " + frVersion + "; full crawl");
+                return -1;
+            }
+            String shapeStamp = shapeStamp(locations, outer.getClass().getClassLoader());
+            if (shapeStamp == null) {
+                AgentLog.info("file index: cannot resolve runtime shape; full crawl");
+                return -1;
+            }
+            FileIndex index = FileIndex.read(indexFile(ctx), frVersion, shapeStamp);
+            if (index == null) {
+                AgentLog.info("file index: absent, corrupt, or FR version/shape mismatch; full crawl");
+                return -1;
+            }
             List<FileIndex.Location> current = locationKeys(locations);
             if (current == null || current.size() != index.locations().size()) return -1;
 
@@ -170,6 +269,13 @@ public final class FileIndexHook {
             @SuppressWarnings("unchecked")
             List<Object> collector = (List<Object>) get(crawler, "collector");
             if (locations == null || collector == null || locations.isEmpty()) return;
+            String frVersion = frVersion();
+            if (!supportedFrVersion(frVersion)) return;
+            String shapeStamp = shapeStamp(locations, outer.getClass().getClassLoader());
+            if (shapeStamp == null) {
+                AgentLog.info("file index: cannot resolve runtime shape; index not saved");
+                return;
+            }
             List<FileIndex.Location> keys = locationKeys(locations);
             if (keys == null) return;
 
@@ -198,7 +304,7 @@ public final class FileIndexHook {
                 dirList.add(new FileIndex.Dir(dir, mtime));
             }
             if (entries.isEmpty() && dirList.isEmpty()) return;
-            new FileIndex(keys, dirList, entries).write(indexFile(ctx));
+            new FileIndex(frVersion, shapeStamp, keys, dirList, entries).write(indexFile(ctx));
             AgentLog.info("file index: written entries=" + entries.size()
                     + ", dirs=" + dirList.size());
         } catch (Throwable t) {

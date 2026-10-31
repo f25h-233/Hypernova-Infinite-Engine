@@ -20,13 +20,14 @@ import java.util.zip.GZIPOutputStream;
 /**
  * Persistent file-enumeration index. Compile-time independent of FR/game classes.
  *
- * <p>Format (gzip): magic, version, locations[type,path,isMod], dirs[path,mtime],
- * entries[key,filePath,locationIndex]. Any decode failure returns null; callers
- * must fall back to the original FR crawl.
+ * <p>Format (gzip): magic, version, frVersion, shapeStamp, locations[type,path,isMod],
+ * dirs[path,mtime], entries[key,filePath,locationIndex]. Any decode failure or a
+ * FR version / runtime-shape mismatch returns null; callers must fall back to the
+ * original FR crawl.
  */
 public final class FileIndex {
     static final int MAGIC = 0x484E4649; // "HNFI"
-    static final int VERSION = 1;
+    static final int VERSION = 2;
     private static final int MAX_RECORDS = 2_000_000;
     private static final int MAX_STRING = 1 << 20;
 
@@ -50,27 +51,43 @@ public final class FileIndex {
         }
     }
 
+    private final String frVersion;
+    private final String shapeStamp;
     private final List<Location> locations;
     private final List<Dir> dirs;
     private final List<Entry> entries;
 
-    public FileIndex(List<Location> locations, List<Dir> dirs, List<Entry> entries) {
+    public FileIndex(String frVersion, String shapeStamp,
+                     List<Location> locations, List<Dir> dirs, List<Entry> entries) {
+        this.frVersion = Objects.requireNonNull(frVersion, "frVersion");
+        this.shapeStamp = Objects.requireNonNull(shapeStamp, "shapeStamp");
         this.locations = List.copyOf(locations);
         this.dirs = List.copyOf(dirs);
         this.entries = List.copyOf(entries);
     }
 
+    public String frVersion() { return frVersion; }
+    public String shapeStamp() { return shapeStamp; }
     public List<Location> locations() { return locations; }
     public List<Dir> dirs() { return dirs; }
     public List<Entry> entries() { return entries; }
 
-    /** Returns null for absent, corrupt, truncated, or unknown-version files. */
-    public static FileIndex read(Path file) {
+    /**
+     * Returns null for absent, corrupt, truncated, unknown-version files, or when
+     * the header's FR version / runtime shape stamp does not match the caller.
+     */
+    public static FileIndex read(Path file, String expectedFrVersion, String expectedShapeStamp) {
         if (file == null || !Files.isRegularFile(file)) return null;
         try (DataInputStream in = new DataInputStream(
                 new GZIPInputStream(new BufferedInputStream(Files.newInputStream(file))))) {
             if (in.readInt() != MAGIC) return null;
             if (in.readInt() != VERSION) return null;
+            String frVersion = readString(in);
+            String shapeStamp = readString(in);
+            if (!Objects.equals(frVersion, expectedFrVersion)
+                    || !Objects.equals(shapeStamp, expectedShapeStamp)) {
+                return null;
+            }
 
             int locationCount = count(in);
             List<Location> locations = new ArrayList<>(locationCount);
@@ -87,7 +104,7 @@ public final class FileIndex {
             for (int i = 0; i < entryCount; i++) {
                 entries.add(new Entry(readString(in), readString(in), in.readInt()));
             }
-            return new FileIndex(locations, dirs, entries);
+            return new FileIndex(frVersion, shapeStamp, locations, dirs, entries);
         } catch (IOException | RuntimeException e) {
             return null;
         }
@@ -101,6 +118,8 @@ public final class FileIndex {
                 new GZIPOutputStream(new BufferedOutputStream(Files.newOutputStream(tmp))))) {
             out.writeInt(MAGIC);
             out.writeInt(VERSION);
+            writeString(out, frVersion);
+            writeString(out, shapeStamp);
             out.writeInt(locations.size());
             for (Location location : locations) {
                 writeString(out, location.type());

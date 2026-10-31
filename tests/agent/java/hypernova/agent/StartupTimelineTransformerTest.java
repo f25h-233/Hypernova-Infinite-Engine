@@ -4,10 +4,18 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * The transformer must patch classes that are actually loaded and executed under
+ * their own names. The old donor-class fixture was a false green: FR merges those
+ * donor bytes into game classes, so the donor class itself never ran.
+ */
 class StartupTimelineTransformerTest {
 
     @BeforeEach
@@ -19,27 +27,44 @@ class StartupTimelineTransformerTest {
     }
 
     @Test
-    void injectsStartAndEndMarksIntoAllThreeMethods() throws Exception {
-        byte[] original = readClassBytes();
-        byte[] transformed = new StartupTimelineTransformer().transform(
-                getClass().getClassLoader(), StartupTimelineTransformer.TARGET,
-                null, null, original);
-        assertNotNull(transformed, "transformer must patch ResourceLoaderState");
-        assertTrue(new String(transformed, java.nio.charset.StandardCharsets.ISO_8859_1)
-                .contains("hypernova/agent/StartupTimeline"), "mark hook reference missing");
+    void injectsLoaderStartAndEndIntoFileLoaderFastConstructor() throws Exception {
+        Class<?> cls = defineTransformed(
+                StartupTimelineTransformer.LOADER_TARGET, "<init>", "(Ljava/util/List;)V");
+        assertNotNull(cls, "FileLoaderFast constructor must be patched");
 
-        ByteArrayClassLoader loader = new ByteArrayClassLoader(getClass().getClassLoader());
-        Class<?> cls = loader.define(StartupTimelineTransformer.TARGET.replace('/', '.'), transformed);
-        Object state = cls.getDeclaredConstructor().newInstance();
-        cls.getMethod("run").invoke(state);
+        Constructor<?> ctor = cls.getConstructor(List.class);
+        ctor.newInstance(List.of());
 
         List<String> marks = StartupTimeline.marksForTest();
-        assertTrue(marks.contains("initFileLoaders.start"), marks.toString());
-        assertTrue(marks.contains("initFileLoaders.end"), marks.toString());
-        assertTrue(marks.contains("initSpecStore.start"), marks.toString());
-        assertTrue(marks.contains("initSpecStore.end"), marks.toString());
-        assertTrue(marks.contains("initMods.start"), marks.toString());
-        assertTrue(marks.contains("initMods.end"), marks.toString());
+        assertTrue(marks.contains("loader.start"), marks.toString());
+        assertTrue(marks.contains("loader.end"), marks.toString());
+    }
+
+    @Test
+    void injectsDdsStartAndEndIntoInitialize() throws Exception {
+        Class<?> cls = defineTransformed(
+                StartupTimelineTransformer.DDS_TARGET, "initialize", "()V");
+        assertNotNull(cls, "DDSIntegration.initialize must be patched");
+
+        cls.getMethod("initialize").invoke(null);
+
+        List<String> marks = StartupTimeline.marksForTest();
+        assertTrue(marks.contains("dds.start"), marks.toString());
+        assertTrue(marks.contains("dds.end"), marks.toString());
+    }
+
+    @Test
+    void injectsModsStartIntoExecutedMarkovNamesAnchor() throws Exception {
+        Class<?> cls = defineTransformed(
+                StartupTimelineTransformer.MODS_TARGET, "loadIfNeeded", "()V");
+        assertNotNull(cls, "MarkovNames.loadIfNeeded must be patched");
+
+        Method load = cls.getMethod("loadIfNeeded");
+        load.invoke(null);
+
+        List<String> marks = StartupTimeline.marksForTest();
+        assertTrue(marks.contains("mods.start"), marks.toString());
+        assertFalse(marks.contains("mods.end"), "mods phase ends at the menu, not in this method");
     }
 
     @Test
@@ -49,8 +74,19 @@ class StartupTimelineTransformerTest {
         assertNull(transformed);
     }
 
-    private static byte[] readClassBytes() throws Exception {
-        String resource = "/" + StartupTimelineTransformer.TARGET + ".class";
+    private Class<?> defineTransformed(String target, String method, String descriptor) throws Exception {
+        byte[] original = readClassBytes(target);
+        byte[] transformed = new StartupTimelineTransformer().transform(
+                getClass().getClassLoader(), target, null, null, original);
+        if (transformed == null) return null;
+        assertTrue(new String(transformed, StandardCharsets.ISO_8859_1)
+                .contains("hypernova/agent/StartupTimeline"), "mark hook reference missing");
+        ByteArrayClassLoader loader = new ByteArrayClassLoader(getClass().getClassLoader());
+        return loader.define(target.replace('/', '.'), transformed);
+    }
+
+    private static byte[] readClassBytes(String target) throws Exception {
+        String resource = "/" + target + ".class";
         try (InputStream in = StartupTimelineTransformerTest.class.getResourceAsStream(resource)) {
             assertNotNull(in, "fixture class not on test classpath: " + resource);
             return in.readAllBytes();

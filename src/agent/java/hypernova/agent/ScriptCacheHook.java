@@ -65,6 +65,7 @@ public final class ScriptCacheHook {
     }
 
     public static void preload(Object loader) {
+        StartupTimeline.mark("script.loader");
         PRELOAD_CALLS.incrementAndGet();
         try {
             RuntimeContext ctx = context;
@@ -216,9 +217,12 @@ public final class ScriptCacheHook {
         boolean counted = false;
         try {
             long now = System.nanoTime();
-            FIRST.compareAndSet(0, now);
+            boolean first = FIRST.compareAndSet(0, now);
             LAST.set(now);
-            if (FIRST_EPOCH.get() == 0) FIRST_EPOCH.set(System.currentTimeMillis());
+            if (first) {
+                FIRST_EPOCH.set(System.currentTimeMillis());
+                StartupTimeline.mark("script.first");
+            }
             LAST_EPOCH.set(System.currentTimeMillis());
             FINDS.increment();
             counted = true;

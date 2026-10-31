@@ -31,6 +31,8 @@ class FileIndexHookTest {
         Path saves = game.resolve("saves");
         Path mod = mods.resolve("mod1");
         Files.createDirectories(mod.resolve("graphics"));
+        Files.createDirectories(game.resolve("starsector-core"));
+        Files.writeString(game.resolve("starsector-core/fr.version.txt"), "v0.9.7rc2");
         Files.writeString(mod.resolve("graphics/a.png"), "a");
         Files.writeString(mod.resolve("data.json"), "{}");
         ctx = new RuntimeContext(
@@ -111,6 +113,7 @@ class FileIndexHookTest {
             Path mod = mods.resolve("mod1");
             Files.createDirectories(core.resolve("graphics"));
             Files.writeString(core.resolve("graphics/core.png"), "core");
+            Files.writeString(core.resolve("fr.version.txt"), "v0.9.7rc2");
             Files.createDirectories(saves);
             Files.writeString(saves.resolve("old.sav"), "old");
             Files.createDirectories(mod.resolve("graphics"));
@@ -196,6 +199,7 @@ class FileIndexHookTest {
             Path excluded = game.resolve("starfarer.res/res");
             Files.createDirectories(core);
             Files.writeString(core.resolve("core.dat"), "core");
+            Files.writeString(core.resolve("fr.version.txt"), "v0.9.7rc2");
             Files.createDirectories(saves);
             Files.createDirectories(mod);
             Files.writeString(mod.resolve("a.png"), "a");
@@ -243,6 +247,36 @@ class FileIndexHookTest {
             if (oldMods == null) System.clearProperty("com.fs.starfarer.settings.paths.mods");
             else System.setProperty("com.fs.starfarer.settings.paths.mods", oldMods);
         }
+    }
+
+    @Test
+    void supportedFrVersionsArePinned() {
+        assertTrue(FileIndexHook.supportedFrVersion("0.9.7rc2"));
+        assertTrue(FileIndexHook.supportedFrVersion("v0.9.7rc2"));
+        assertTrue(FileIndexHook.supportedFrVersion("V0.9.7RC2"));
+        assertTrue(FileIndexHook.supportedFrVersion("0.9.7"));
+        assertTrue(FileIndexHook.supportedFrVersion("v0.9.7"));
+        assertFalse(FileIndexHook.supportedFrVersion("0.9.5"));
+        assertFalse(FileIndexHook.supportedFrVersion("0.9.8"));
+        assertFalse(FileIndexHook.supportedFrVersion("unknown"));
+        assertFalse(FileIndexHook.supportedFrVersion(""));
+        assertFalse(FileIndexHook.supportedFrVersion(null));
+    }
+
+    @Test
+    void unsupportedFrVersionRejectsIndexAndFallsBack() throws Exception {
+        Object loc = location(tmp.resolve("game/mods/mod1"));
+        FileLoaderFast first = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
+        assertTrue(first.crawlAndSave() > 0);
+
+        Files.writeString(
+                ctx.gameRoot().resolve("starsector-core/fr.version.txt"), "v0.9.5");
+
+        FileLoaderFast second = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
+        assertEquals(-1, FileIndexHook.tryLoad(crawlerOf(second)),
+                "index built under 0.9.7rc2 must not replay under another FR version");
+        assertTrue(mapOf(second).isEmpty(), "rejected index must not pollute cachedFiles");
+        assertTrue(crawl(second) > 0, "FR's own crawl must still run");
     }
 
     private static Object location(Path path) {

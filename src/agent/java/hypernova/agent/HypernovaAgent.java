@@ -16,15 +16,21 @@ public final class HypernovaAgent {
             StartupTimeline.start();
             FileIndexHook.setContext(ctx);
             if (frPresent()) {
-                if (FileIndexHook.enabled()) {
+                if (!FileIndexHook.enabled()) {
+                    AgentLog.info("file index disabled by config");
+                } else if (!FileIndexHook.supportedFrVersion()) {
+                    AgentLog.info("file index: unsupported FR version "
+                            + FileIndexHook.frVersion() + "; disabled");
+                } else {
                     instrumentation.addTransformer(new FileIndexTransformer(), false);
                     AgentLog.info("file index transformer registered");
-                } else {
-                    AgentLog.info("file index disabled by config");
                 }
             }
             AgentLog.info("hypernova agent premain; config=" + ctx.config()
                     + ", cacheRoot=" + ctx.cacheRoot());
+            AgentLog.info("timeline: donor target not executed (mergeClass donor, not a class load):"
+                    + " ResourceLoaderState; FileLoader.initModLoading ->"
+                    + " MarkovNames.loadIfNeeded");
             instrumentation.addTransformer(new StartupTimelineTransformer(), false);
             try {
                 TexturePatchConfig textures = TexturePatchConfig.load();
