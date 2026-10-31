@@ -150,17 +150,31 @@
 | 确认 3+3（control warm-up） | 50.1 / 50.1 / 48.1，中位 **50.1** | 47.6 / 48.1 / 48.1，中位 **48.1** | 2.0 s / 3.99% |
 
 - 首轮 treatment 中位 47.6 ≤ 48.5；确认轮 48.1 ≤ 48.5，**余量 0.4 s**。
-- 干净 file-index 收益区间 **2.0–4.0 s**；pre-reboot 的 6.5 s（§3.2）保留为历史口径，
+- 排除的 warm-up：clean treatment 预热轮 **65.1 s**；确认轮 control 预热 **53.1 s**。
+  首轮 control 有下降趋势 53.6 → 51.6 → 49.1；把 warm-up 计入后两个中位数仍为
+  47.6 / 50.1，故排除不影响结论。确认轮是在 C1 显示残余 cold-crawl 偏差后补跑的，
+  因此确认轮的 **2.0 s** 是更保守估计。
+- 干净 file-index 收益：两轮批次中位 **2.0–4.0 s**（首轮 4.0、确认轮 2.0）；
+  逐对 delta 为 6.0 / 4.0 / 2.5 与 2.5 / 2.0 / **0.0**，确认轮有一对 0.0 s，
+  所以**不是每次启动的保证**。pre-reboot 的 6.5 s（§3.2）保留为历史口径，
   不与干净轮混用。
 
 #### 3.4.2 无 Hypernova 基线（移除 agent，保留 FR/VOpt）
 
 - 3 轮 **83.1 / 75.6 / 75.6 s**，warm 中位 **75.6 s**。
 - `loading_normal_before_menu=30378`：证明无 Hypernova 时法线图在启动期全量加载；
-  `m1b_measure` 报出的 `patched=true` 是旧 agent 日志的残留行，**不属于本轮**。
-- **整体 Hypernova 贡献**：无 Hypernova **75.6 s** → 有 Hypernova control **50.1 s**，
-  约 **25.5 s**（textures + scripts + file index 合计；不是 file-index 单独收益）。
-  file-index 单独：50.1 → 48.1 = **2.0 s**（干净区间 2.0–4.0 s）。
+  这是 noagent 的计时/行为证据。`build/m3-noagent-measure.json` 的 `patched=true`、
+  `gate_ok=true`、`drop=1.0`、`normal_before_menu=0` 都来自旧 agent 日志（同一 stale
+  `patch_line`），**不适用于本轮**；其 `menu_s=75.1` 也不对应 83.1/75.6/75.6 中的
+  任何一轮，不作为 noagent 计时证据。
+- **贡献分解（顺序消融，不是与干净 A/B 交错）**：
+  - **textures + scripts**：无 Hypernova **75.6 s** → 有 Hypernova **control 50.1 s**
+    ≈ **25.5 s**。该 control 使用 `-Dhypernova.fileIndex=false`，所以 25.5 s **不含**
+    file-index。
+  - **file-index 单独**：control **50.1 s** → treatment **48.1 s** = **2.0 s**
+    （两轮批次中位区间 2.0–4.0 s，非单次保证）。
+  - **默认全产品（file index 开启）**：无 Hypernova **75.6 s** → treatment **48.1 s**
+    ≈ **27.5 s**（= 25.5 + 2.0；若用首轮 treatment 47.6 则约 **28.0 s**）。
 
 ## 4. 停止条件 / 目标修订
 
@@ -175,12 +189,15 @@
   - 旧 G-01'（≤48.5 s）在两个干净轮上数值达成（47.6 / 48.1），但余量只有
     0.4–0.9 s，且干净环境 control 50.1 s 比 M-1f 基线 60.6 s 快约 10 s；
     pre-reboot 的 61.6 s 未达标。因此不把“≤48.5 s”作为稳定目标，修订为 ≤50 s。
-  - 干净 file-index 收益：确认轮 **2.0 s**、首轮 **4.0 s**，区间 **2.0–4.0 s**；
+  - 干净 file-index 收益：确认轮 **2.0 s**、首轮 **4.0 s**，**两轮批次中位区间
+    2.0–4.0 s**；逐对 delta 含 **0.0 s**（确认轮一对），不是每次启动的保证。
     §3.2 的 pre-reboot **6.5 s** 只作历史口径，不与干净轮混用。
-  - 整体 Hypernova 贡献：无 Hypernova warm 中位 **75.6 s**（§3.4.2）→ 有 Hypernova
-    control **50.1 s**，约 **25.5 s**（textures + scripts + file index 合计，
-    不是 file-index 单独收益）。无 Hypernova 臂保留 FR/VOpt，仅移除 agent；
-    `loading_normal_before_menu=30378` 证明法线图仍在启动期全量加载。
+  - 贡献分解（详见 §3.4.2；无 Hypernova 是顺序消融）：无 Hypernova warm 中位
+    **75.6 s** → 有 Hypernova **control 50.1 s** ≈ **25.5 s**，这是
+    **textures + scripts**（control 为 `fileIndex=false`，不含 file-index）；
+    file-index 单独 **2.0 s**（50.1 → 48.1）；默认全产品 **75.6 → 48.1 ≈ 27.5 s**
+    （若用首轮 treatment 47.6 约 28.0 s）。无 Hypernova 臂保留 FR/VOpt，仅移除
+    agent；`loading_normal_before_menu=30378` 证明法线图仍在启动期全量加载。
 - **真实相位（C1 修复后，pre-reboot，menu 65,868 ms）**：`initFileLoaders`
   **4,983 ms**、`initSpecStore` **25,950 ms**、`initMods` **32,581 ms**；闭合校验
   2,354 + 4,983 + 25,950 + 32,581 = **65,868 ms** = `menu_ms`；
