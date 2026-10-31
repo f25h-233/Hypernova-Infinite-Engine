@@ -25,7 +25,12 @@ PRELOAD_RE = __import__("re").compile(
 
 
 def _read(paths: list[str]) -> str:
-    return b"".join(Path(p).read_bytes() for p in paths).decode("utf-8", "replace")
+    """Concatenate files oldest->newest so the LAST session is the newest run."""
+    try:
+        ordered = sorted(paths, key=lambda p: Path(p).stat().st_mtime)
+    except OSError:
+        ordered = list(paths)
+    return b"".join(Path(p).read_bytes() for p in ordered).decode("utf-8", "replace")
 
 
 def parse_session(text: str):
@@ -77,7 +82,8 @@ def phases(marks: dict[str, dict[str, int]]) -> dict[str, int]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--log", action="append", required=True)
+    ap.add_argument("--log", action="append", required=True,
+                    help="session log(s); rotated files are read oldest->newest by mtime")
     ap.add_argument("--agent-log", action="append", default=[])
     ap.add_argument("--json-out", default="")
     args = ap.parse_args(argv)
