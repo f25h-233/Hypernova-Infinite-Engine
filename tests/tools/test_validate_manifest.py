@@ -369,6 +369,18 @@ def test_string_zero_unresolved_count_is_not_flagged(mini_game):
     assert "baked_unresolved" not in codes()
 
 
+def test_infinite_unresolved_count_does_not_crash(mini_game):
+    """json.loads 默认接受 Infinity；非有限值不得让 validate() 崩溃或误报。"""
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    for bad in (float("inf"), float("-inf")):
+        m["stats"]["unresolved_baked_count"] = bad
+        findings = validate(m, mini_game)
+        assert isinstance(findings, list)
+        assert "baked_unresolved" not in {f.code for f in findings}
+
+
 def test_malformed_mods_shape_is_critical(mini_game):
     from test_manifest_builder import _seed_core, build_manifest
     _seed_core(mini_game)

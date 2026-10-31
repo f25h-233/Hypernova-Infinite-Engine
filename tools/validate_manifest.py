@@ -196,14 +196,14 @@ def validate(
             Finding("Critical", "coverage_baked", f"baked={baked_cov} < 1.0")
         )
     unresolved_count = stats.get("unresolved_baked_count")
-    # 容错：手改/外来 manifest 可能给出字符串或布尔值；无法解释为整数时跳过，
-    # 避免 "0"（真值）等误报 Critical。布尔值不是合法的计数。
+    # 容错：手改/外来 manifest 可能给出字符串、布尔值或 ±Infinity；无法解释为
+    # 整数时跳过（不设计数门禁），避免 "0"（真值）误报或 Infinity 崩溃。
     if isinstance(unresolved_count, bool) or unresolved_count is None:
         unresolved_count = None
     else:
         try:
             unresolved_count = int(unresolved_count)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             unresolved_count = None
     if unresolved_count is not None and unresolved_count > 0:
         sample = stats.get("unresolved_baked") or []
