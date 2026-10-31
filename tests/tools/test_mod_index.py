@@ -188,3 +188,50 @@ def test_metadata_resolve_ambiguous_mod_id_returns_none(mini_game):
         )
     md = read_dds_metadata(mini_game)
     assert md.resolve("mod_dup", "renamed", "graphics/dup.png") is None
+
+
+def test_metadata_resolve_disambiguates_by_mod_id(mini_game):
+    from conftest import _write
+    for folder, mid, size in (
+        ("other_folder", "other_mod", 1),
+        ("old_c", "mod_c", 2),
+    ):
+        _write(
+            mini_game / "mods" / "DDSCache" / folder / "dds_metadata.json",
+            json.dumps([{
+                "ModID": mid,
+                "ModFolderName": folder,
+                "RelativeImagePath": "graphics\\shared.png",
+                "DDSFilePath": "\\mods\\DDSCache\\{}\\graphics\\shared.dds".format(folder),
+                "Width": size, "Height": size,
+            }]),
+        )
+    md = read_dds_metadata(mini_game)
+    hit = md.resolve("mod_c", "renamed_c", "graphics/shared.png")
+    assert hit is not None and hit.mod_folder == "old_c" and hit.width == 2
+    hit2 = md.resolve("other_mod", "renamed_o", "graphics/shared.png")
+    assert hit2 is not None and hit2.mod_folder == "other_folder"
+
+
+def test_metadata_resolve_core_normalizes_real_modid_input(mini_game):
+    from conftest import _write
+    for folder, mid in (
+        ("old_core", "starsector-core"),
+        ("colliding_mod", "mod_collide"),
+    ):
+        _write(
+            mini_game / "mods" / "DDSCache" / folder / "dds_metadata.json",
+            json.dumps([{
+                "ModID": mid,
+                "ModFolderName": folder,
+                "RelativeImagePath": "graphics\\shared_core.png",
+                "DDSFilePath": "\\mods\\DDSCache\\{}\\graphics\\shared_core.dds".format(folder),
+                "Width": 5,
+                "Height": 6,
+            }]),
+        )
+    md = read_dds_metadata(mini_game)
+    hit = md.resolve("core", "renamed-core", "graphics/shared_core.png")
+    assert hit is not None
+    assert hit.mod_folder == "old_core"
+    assert hit.mod_id == "core"
