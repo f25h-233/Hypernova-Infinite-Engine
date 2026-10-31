@@ -15,9 +15,9 @@
 - **REQ-R1-05 通过（数据层 + 单元测试）**：L1/L2/L3 三层稳定；L1 **6,624 ≤ 8,000**；
   per-mod `mods[]` 汇总与三层逐项相等；启动自检候选只取 L1（`StartupSelfCheckTest`）。
   运行时冒烟门禁见 §5，本任务按控制器指令未启动游戏。
-- **validator**：260mods 与 Base 均 **exit 0、0 Critical**。260mods 有 **44 条既有
-  `cross_layer_duplicate` Important**（同一引擎 key 跨层，L1 优先），按 R8 记录，不是失败；
-  本文不声称 “OK: no findings”。
+- **validator**：260mods 与 Base 均 **exit 0、0 Critical**。260mods 有 **1 条聚合既有
+  `cross_layer_duplicate` Important（覆盖 44 个 key）**（同一引擎 key 跨层，L1 优先），
+  按 R8 记录，不是失败；本文不声称 “OK: no findings”。
 - **每 mod 分级可用**：`mods[]` 每行带 `tier`（`auto|L1|L2|L3`）；tier override 是生成期参数，
   移动该 mod 的全部条目，L1 上限由 validator 兜底。本次验收未传 override，故实际
   `stats.tiers={}`。
@@ -175,22 +175,32 @@ python -I tools/install_manifest.py --game-root Starsector-098-260mods
 - 安装耗时 333.7 s（含完整生成、校验、裁剪与写盘）。
 - 安装前旧 manifest 已备份到 `build/m2/260mods/manifest-v1.json.pre-install.bak`（md5
   `9938023b…`）；新文件 md5 `f5734622…`。
-- **写入不是原子操作**：`install()` 直接 `open(target, "w")` + `json.dump`，中途失败可能留下
-  半截文件并覆盖旧 manifest；回滚/重装前请保留备份。本文不声称原子写。
+- **写入是原子的**：`install()` 先写同目录 sibling `.tmp`，`flush` 后用 `os.replace` 替换目标；
+  中途失败会删除临时文件并保留旧 manifest。回滚/重装前仍建议保留备份。
 
 ### 5.2 冒烟（未由本代理执行，待控制器）
 
-按控制器指令，本任务**没有**运行 `tools/smoke_run.py`，也没有启动游戏。控制器执行时使用：
+按控制器指令，本任务**没有**运行 `tools/smoke_run.py`，也没有启动游戏。控制器执行时必须先
+构建并安装**新 jar**，再恢复 M2 运行时 manifest（`smoke-prepare.sh` 会先装 M0 manifest），最后冒烟：
 
 ```bash
+bash tools/java/build-mod.sh
+bash tools/java/smoke-prepare.sh Starsector-098-260mods
+python -I tools/install_manifest.py --game-root Starsector-098-260mods
 python -I tools/smoke_run.py --profile miko-lite --rounds 1 \
   --wait-menu 300 --json-out build/m2/smoke.json
 ```
 
+本次冒烟**启用** `startup_probe_paths=8`（由 `smoke-prepare.sh` 临时设置），跑完用
+`bash tools/java/smoke-restore.sh Starsector-098-260mods` 还原为 0；restore 在装完 M0 后
+也会重跑 `install_manifest.py` 把 M2 manifest 写回。
+
 验收锚点（尚未实测，不得预先记为通过）：
 
 - 到主菜单；
-- agent log 含 `Hypernova active: ... manifest=80593 paths`（安装产物合计 80,593）；
+- `starsector-core/starsector.log` 含
+  `Hypernova active: ... manifest=80084 paths, discarded=509, crossLayer=44`
+  （`manifest` 是唯一 path 数，不是三层合计 80,593）；
 - 无 `Hypernova disabled`、无 `selfcheck: FAILED`、无 `Failed to load texture`。
 
 ## 6. 测试与构建
@@ -219,7 +229,7 @@ python -I tools/smoke_run.py --profile miko-lite --rounds 1 \
   备份：`build/m2/260mods/manifest-v1.json.pre-install.bak`。
 - tier override 是**生成期**参数（`gen_manifest.py --tiers` / `install_manifest.py --tiers`），
   不改变已安装的运行时 manifest；回滚 tier 只需重新生成/安装，不改运行时 schema。
-- 由于写入非原子，回滚/重装前必须先保留旧文件；不要在写盘中断后假设旧 manifest 仍完整。
+- 安装器使用 `tmp + os.replace` 原子写，写盘失败时旧 manifest 保持不变；回滚前仍建议保留备份。
 
 ### 7.2 明确未做
 

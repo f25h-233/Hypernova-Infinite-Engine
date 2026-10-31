@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,8 +59,17 @@ def install(
     if not critical:
         runtime = trim(built.manifest)
         target.parent.mkdir(parents=True, exist_ok=True)
-        with open(target, "w", encoding="utf-8", newline="\n") as fh:
-            json.dump(runtime, fh, ensure_ascii=False, separators=(",", ":"))
+        # 原子写：先写同目录 sibling 临时文件，成功后再替换目标；任何异常都
+        # 删除临时文件并保留旧 manifest（这是运行时唯一的 manifest 写点）。
+        tmp = target.with_name(target.name + ".tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+                json.dump(runtime, fh, ensure_ascii=False, separators=(",", ":"))
+                fh.flush()
+            os.replace(tmp, target)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
     return InstallResult(built.manifest, runtime, target, findings)
 
 

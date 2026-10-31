@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -190,21 +191,46 @@ def validate(
             )
         )
 
-    baked_cov = coverage.get("baked")
-    if baked_cov is not None and float(baked_cov) < 1.0:
-        findings.append(
-            Finding("Critical", "coverage_baked", f"baked={baked_cov} < 1.0")
-        )
-    unresolved_count = stats.get("unresolved_baked_count")
-    # 容错：手改/外来 manifest 可能给出字符串、布尔值或 ±Infinity；无法解释为
-    # 整数时跳过（不设计数门禁），避免 "0"（真值）误报或 Infinity 崩溃。
-    if isinstance(unresolved_count, bool) or unresolved_count is None:
-        unresolved_count = None
-    else:
+    if "baked" in coverage:
+        baked_cov = coverage.get("baked")
+        # 新字段存在时必须是可解释为有限浮点数的值；只有整体缺失才兼容旧 manifest。
         try:
-            unresolved_count = int(unresolved_count)
+            baked_value = float(baked_cov)
         except (TypeError, ValueError, OverflowError):
-            unresolved_count = None
+            findings.append(
+                Finding(
+                    "Critical",
+                    "coverage_baked",
+                    f"baked={baked_cov!r} is not numeric",
+                )
+            )
+        else:
+            if not math.isfinite(baked_value):
+                findings.append(
+                    Finding(
+                        "Critical",
+                        "coverage_baked",
+                        f"baked={baked_cov!r} is not finite",
+                    )
+                )
+            elif baked_value < 1.0:
+                findings.append(
+                    Finding("Critical", "coverage_baked", f"baked={baked_cov} < 1.0")
+                )
+    unresolved_count = None
+    if "unresolved_baked_count" in stats:
+        raw_unresolved = stats.get("unresolved_baked_count")
+        # 新字段存在时必须能解释为整数；形状不对要报 Critical，不能静默跳过门禁。
+        try:
+            unresolved_count = int(raw_unresolved)
+        except (TypeError, ValueError, OverflowError):
+            findings.append(
+                Finding(
+                    "Critical",
+                    "baked_unresolved_shape",
+                    f"unresolved_baked_count={raw_unresolved!r} is not an integer",
+                )
+            )
     if unresolved_count is not None and unresolved_count > 0:
         sample = stats.get("unresolved_baked") or []
         findings.append(
@@ -217,7 +243,7 @@ def validate(
         )
 
     mods_summary = manifest.get("mods")
-    if mods_summary is not None:
+    if "mods" in manifest:
         if not isinstance(mods_summary, list):
             findings.append(
                 Finding("Critical", "mods_summary", "mods must be a list")

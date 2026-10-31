@@ -17,4 +17,6 @@ PY
 
 bash "$ROOT/tools/java/build-mod.sh" | tail -1
 bash "$ROOT/tools/java/install-manifest.sh" "$GAME_ROOT" --env base | tail -2
-echo "restored: released config has startup_probe_paths=0"
+# install-manifest.sh 装的是 M0 manifest；立即重跑 M2 安装器把运行时 manifest 写回。
+python -I "$ROOT/tools/install_manifest.py" --game-root "$GAME_ROOT" | tail -3
+echo "restored: released config has startup_probe_paths=0; M2 runtime manifest reinstalled"

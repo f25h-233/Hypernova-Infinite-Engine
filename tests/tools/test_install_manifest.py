@@ -1,5 +1,8 @@
 import json
 
+import pytest
+
+import install_manifest as install_module
 from install_manifest import DEFAULT_REL, install
 from test_manifest_builder import _seed_core
 
@@ -30,6 +33,22 @@ def test_install_is_idempotent(mini_game):
     first = out.read_bytes()
     install(mini_game, out=out)
     assert out.read_bytes() == first
+
+
+def test_install_failure_keeps_old_manifest_and_no_tmp(mini_game, monkeypatch):
+    _seed_core(mini_game)
+    out = mini_game / "runtime.json"
+    install(mini_game, out=out)
+    before = out.read_bytes()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated json.dump failure")
+
+    monkeypatch.setattr(install_module.json, "dump", boom)
+    with pytest.raises(RuntimeError):
+        install(mini_game, out=out)
+    assert out.read_bytes() == before
+    assert not out.with_name(out.name + ".tmp").exists()
 
 
 def test_install_applies_tiers(mini_game):

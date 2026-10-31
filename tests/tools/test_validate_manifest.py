@@ -257,6 +257,27 @@ def test_baked_coverage_below_one_is_critical(mini_game):
     assert "coverage_baked" in codes
 
 
+def test_non_finite_baked_coverage_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+
+    def codes():
+        return {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+
+    for bad in (
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "not-a-number",
+    ):
+        m["stats"]["coverage"]["baked"] = bad
+        assert "coverage_baked" in codes(), bad
+
+
 def test_baked_unresolved_is_critical(mini_game):
     from test_manifest_builder import _seed_core, build_manifest
     _seed_core(mini_game)
@@ -357,28 +378,30 @@ def test_string_zero_unresolved_count_is_not_flagged(mini_game):
         return {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
 
     m["stats"]["unresolved_baked_count"] = "0"
-    assert "baked_unresolved" not in codes()
+    assert codes() == set()
 
     # 数字字符串仍按数量处理
     m["stats"]["unresolved_baked"] = ["mod_a/graphics/x.png", "mod_a/graphics/y.png"]
     m["stats"]["unresolved_baked_count"] = "2"
     assert "baked_unresolved" in codes()
 
-    # 无法解释为整数时跳过，不误报也不崩溃
+    # 无法解释为整数时必须报形状 Critical，不能静默跳过门禁
     m["stats"]["unresolved_baked_count"] = "many"
+    assert "baked_unresolved_shape" in codes()
     assert "baked_unresolved" not in codes()
 
 
 def test_infinite_unresolved_count_does_not_crash(mini_game):
-    """json.loads 默认接受 Infinity；非有限值不得让 validate() 崩溃或误报。"""
+    """json.loads 默认接受 Infinity；非有限值必须报形状 Critical 且不崩溃。"""
     from test_manifest_builder import _seed_core, build_manifest
     _seed_core(mini_game)
     m = build_manifest(mini_game, include_l2=False).manifest
     for bad in (float("inf"), float("-inf")):
         m["stats"]["unresolved_baked_count"] = bad
         findings = validate(m, mini_game)
-        assert isinstance(findings, list)
-        assert "baked_unresolved" not in {f.code for f in findings}
+        codes = {f.code for f in findings if f.severity == "Critical"}
+        assert "baked_unresolved_shape" in codes
+        assert "baked_unresolved" not in codes
 
 
 def test_malformed_mods_shape_is_critical(mini_game):
@@ -391,6 +414,10 @@ def test_malformed_mods_shape_is_critical(mini_game):
 
     m = copy.deepcopy(base)
     m["mods"] = "oops"
+    assert "mods_summary" in codes(m)
+
+    m = copy.deepcopy(base)
+    m["mods"] = None
     assert "mods_summary" in codes(m)
 
     m = copy.deepcopy(base)

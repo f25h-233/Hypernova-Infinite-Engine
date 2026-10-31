@@ -23,6 +23,9 @@ PY
 echo "== 3. 安装到游戏目录 =="
 bash "$ROOT/tools/java/install-manifest.sh" "$GAME_ROOT" --env base | tail -3
 
+echo "== 3b. 恢复 M2 运行时 manifest（install-manifest.sh 装的是 M0） =="
+python -I "$ROOT/tools/install_manifest.py" --game-root "$GAME_ROOT" | tail -3
+
 echo "== 4. 清上一轮证据 =="
 mv "$GAME_ROOT/starsector-core/starsector.log" \
    "$GAME_ROOT/starsector-core/starsector.log.prev-$(date +%s)" 2>/dev/null || true
