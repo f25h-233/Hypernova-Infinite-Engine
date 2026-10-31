@@ -3,7 +3,7 @@
 > 日期：2026-10-31
 > 环境：Starsector 0.98a + 260mods（256 mods，agent-only）、Miko Lite（JDK 28）
 > 宿主：Fast Rendering 0.9.7rc2（fr.jar SHA-256 5f811d32…）
-> 基线：M-1f warm 中位 60.6 s；G-01' ≤48.5 s
+> 基线：M-1f warm 中位 60.6 s；旧 G-01' ≤48.5 s；**最终 G-01'' = ≤50 s（2026-10-31 修订）**
 
 ## 1. 相位证据
 
@@ -23,7 +23,7 @@
 > `com.fs.starfarer.loading.ResourceLoaderState`，donor 类本身从不加载
 > （C1，final-review 已核实）。所以当时只能用 `crawl.ms` 代理 `initFileLoaders`。
 
-### 1.2 C1 修复后的真实相位（miko-lite，2026-10-31 17:43）
+### 1.2 C1 修复后的真实相位（pre-reboot，miko-lite，2026-10-31 17:43）
 
 - 证据：`build/m3-timeline-run.json`（menu 66.6 s，`file index: loaded ...`）；
   `build/m3-timeline-proof.json`（`tools/m3_phase.py` 输出）。
@@ -71,12 +71,12 @@
   与 `initMods`，不是独立相位。
 - 结论：修复后的真实相位表明 0–50 s 主要由 `initSpecStore` + `initMods` 占据；
   file index 只削减 `initFileLoaders` 的 crawl 部分（同日 `miko-lite` A/B −6.5 s）。
-  “0–50 s 内是否还有安全杠杆”的停止条件裁决见 §4（需用户裁决，不由本次修复代替）。
+  “0–50 s 内是否还有安全杠杆”的停止条件裁决见 §4（2026-10-31 已裁决：G-01'' = ≤50 s）。
 
 
 ## 3. 杠杆与 A/B
 
-### 3.1 索引构建（两轮 warm 构建，不计入 A/B）
+### 3.1 索引构建（pre-reboot，两轮 warm 构建，不计入 A/B）
 
 - 原始构建：`python -I tools/smoke_run.py --profile miko-lite --rounds 1 --json-out build/m3-index-build.json`
 - v2 格式戳重建：同一命令，`--json-out build/m3-timeline-rebuild.json`
@@ -106,7 +106,7 @@
 - 后续方向（不在 M3 范围）：异步/惰性 save，或更快的 key 生成路径，可削减这项
   一次性成本。
 
-### 3.2 同日 A/B（`miko-lite`，warm，control → treatment 各 3 轮）
+### 3.2 同日 A/B（pre-reboot，`miko-lite`，warm，control → treatment 各 3 轮）
 
 | 轮 | control menu_s<br>（`-Dhypernova.fileIndex=false`） | treatment menu_s<br>（默认开启） |
 |---|---:|---:|
@@ -137,36 +137,72 @@
 回滚开关：`-Dhypernova.fileIndex=false`（系统属性优先）或
 `data/config/hypernova/hypernova.json` 的 `"fileIndex": { "enabled": false }`。
 
+### 3.4 干净重跑（post-reboot）与无 Hypernova 基线
+
+> §3.1–§3.3 是 pre-reboot 结果；以下是重启后干净环境的 A/B 与“移除 agent、保留 FR/VOpt”
+> 基线。干净轮仍为 `miko-lite` warm。
+
+#### 3.4.1 干净 A/B
+
+| 轮次 | control menu_s | treatment menu_s | delta |
+|---|---:|---:|---:|
+| 首轮 3+3 | 53.6 / 51.6 / 49.1，中位 **51.6** | 47.6 / 47.6 / 46.6，中位 **47.6** | 4.0 s / 7.75% |
+| 确认 3+3（control warm-up） | 50.1 / 50.1 / 48.1，中位 **50.1** | 47.6 / 48.1 / 48.1，中位 **48.1** | 2.0 s / 3.99% |
+
+- 首轮 treatment 中位 47.6 ≤ 48.5；确认轮 48.1 ≤ 48.5，**余量 0.4 s**。
+- 干净 file-index 收益区间 **2.0–4.0 s**；pre-reboot 的 6.5 s（§3.2）保留为历史口径，
+  不与干净轮混用。
+
+#### 3.4.2 无 Hypernova 基线（移除 agent，保留 FR/VOpt）
+
+- 3 轮 **83.1 / 75.6 / 75.6 s**，warm 中位 **75.6 s**。
+- `loading_normal_before_menu=30378`：证明无 Hypernova 时法线图在启动期全量加载；
+  `m1b_measure` 报出的 `patched=true` 是旧 agent 日志的残留行，**不属于本轮**。
+- **整体 Hypernova 贡献**：无 Hypernova **75.6 s** → 有 Hypernova control **50.1 s**，
+  约 **25.5 s**（textures + scripts + file index 合计；不是 file-index 单独收益）。
+  file-index 单独：50.1 → 48.1 = **2.0 s**（干净区间 2.0–4.0 s）。
+
 ## 4. 停止条件 / 目标修订
 
-- **真实相位（C1 修复后，menu 65,868 ms）**：`initFileLoaders` **4,983 ms**、
-  `initSpecStore` **25,950 ms**、`initMods` **32,581 ms**；闭合校验
+- **最终裁决（用户，2026-10-31）：修订 G-01'' = ≤50 s。** 两个干净 post-reboot
+  treatment（47.6 s / 48.1 s）均 ≤50 s（余量 2.4 / 1.9 s）；file index 默认开启。
+- **干净 A/B 证据（post-reboot，`miko-lite` warm，见 §3.4.1）**：
+  - 首轮 3+3：control 中位 **51.6 s** → treatment 中位 **47.6 s**，
+    delta **4.0 s / 7.75%**；treatment ≤48.5。
+  - 确认 3+3（control warm-up）：control 中位 **50.1 s** → treatment 中位 **48.1 s**，
+    delta **2.0 s / 3.99%**；treatment ≤48.5，余量 0.4 s。
+- **口径与边界**：
+  - 旧 G-01'（≤48.5 s）在两个干净轮上数值达成（47.6 / 48.1），但余量只有
+    0.4–0.9 s，且干净环境 control 50.1 s 比 M-1f 基线 60.6 s 快约 10 s；
+    pre-reboot 的 61.6 s 未达标。因此不把“≤48.5 s”作为稳定目标，修订为 ≤50 s。
+  - 干净 file-index 收益：确认轮 **2.0 s**、首轮 **4.0 s**，区间 **2.0–4.0 s**；
+    §3.2 的 pre-reboot **6.5 s** 只作历史口径，不与干净轮混用。
+  - 整体 Hypernova 贡献：无 Hypernova warm 中位 **75.6 s**（§3.4.2）→ 有 Hypernova
+    control **50.1 s**，约 **25.5 s**（textures + scripts + file index 合计，
+    不是 file-index 单独收益）。无 Hypernova 臂保留 FR/VOpt，仅移除 agent；
+    `loading_normal_before_menu=30378` 证明法线图仍在启动期全量加载。
+- **真实相位（C1 修复后，pre-reboot，menu 65,868 ms）**：`initFileLoaders`
+  **4,983 ms**、`initSpecStore` **25,950 ms**、`initMods` **32,581 ms**；闭合校验
   2,354 + 4,983 + 25,950 + 32,581 = **65,868 ms** = `menu_ms`；
-  `phases_approximate=[]`（三个相位都来自真实锚点，见 §1.2）。
-- **同日 A/B（`miko-lite`，warm）**：control 中位 **68.1 s** → treatment 中位
-  **61.6 s**，**delta 6.5 s（9.54%）**；treatment 3/3 命中
-  `loaded mod_entries=223536, total_entries=229499, dirs=17067`，无 `full crawl`。
-- **相对 M-1f 60.6 s**：同日 control +7.5 s（环境漂移），treatment +1.0 s；
-  A/B 只与同日 control 比，不与 60.6 s 混用。
-- **G-01'（≤48.5 s）：未达标。**
-- **停止条件（规格 §7 M3）已触发**：`initSpecStore` + `initMods` = 58,531 ms，
-  占 menu 的 **88.9%**；要达到 G-01' 还需再削约 **12.1 s**（相对 60.6 s 基线；
-  相对 treatment 61.6 s 为 13.1 s）。这部分落在 vanilla spec/JSON 解析
+  `phases_approximate=[]`（三个相位都来自真实锚点，见 §1.2）。该轮用于相位归因，
+  不是干净 A/B 的轮次。
+- **pre-reboot 历史结果（保留，不覆盖）**：§3.2 control 中位 **68.1 s** →
+  treatment **61.6 s**（**6.5 s / 9.54%**）；旧 G-01'（≤48.5 s）**未达标**，
+  当时按规格 §7 M3 触发停止条件：`initSpecStore` + `initMods` = 58,531 ms
+  （占 menu 的 **88.9%**），再削约 **12.1 s** 只能动 vanilla spec/JSON
   （107,526 次 `Loading JSON`）与 256 个 mod 的 `onApplicationLoad`
-  （约 28 s，已含在 `initMods` 内）；在不裁 mod、不改 FR/VOpt、不改启动档、
-  不并行任意第三方代码的前提下，没有安全杠杆能再拿 12 s。
-- **若按 M-1f 条件外推**：60.6 − 6.5 ≈ **54.1 s**，仍未达标；该数字
-  **未实测**，不作为结果（要做需在同条件机器上重跑交错 A/B）。
-- **处置（待用户裁决，不单方面改目标）**：
-  - **A. 修订 G-01'' = ≤55 s（约 −9–10%）**，保留 file index；
-  - **B. 接受当前值，关闭 M3**，把 0–50 s 桶留给 M2（manifest 驱动）/ FR 上游。
+  （约 28 s，含在 `initMods` 内）；没有安全杠杆能在不裁 mod、不改 FR/VOpt、
+  不改启动档的前提下再拿 12 s。pre-reboot 外推 60.6 − 6.5 ≈ 54.1 s **未实测**，
+  已被干净重跑取代，不再作为结论。该停止条件与“处置待用户”是历史记录，
+  已由本节 ≤50 s 裁决取代。
 - **一次性成本**：两轮独立的 warm 构建（原始索引 + v2 格式戳重建）均为 **83.2 s**
-  （各较同日 control +15.1 s），均完整 crawl 并写入 223,536 entries / 17,067 dirs；
-  两轮 `preload=hit`、`read_bytes_menu≈804–805 MB` 与 control 一致，**最可能**是
-  同步 `save` 路径（223,536 条 + 17,067 目录 + key 归一化 + gzip）；两轮同价
-  加强了该推断，但仍未单独隔离 save。首次安装/更换 mod 列表/修改 mod 目录内容会
-  再次重建，各慢约 15 s；若某个 mod 在会话中往自己目录写文件，下一次启动会
-  `directory changed` → 全量 crawl + 重建，对该 mod 集合杠杆变成每次净亏。
+  （各较 pre-reboot 同日 control 中位 68.1 s 慢 +15.1 s），均完整 crawl 并写入
+  223,536 entries / 17,067 dirs；两轮 `preload=hit`、`read_bytes_menu≈804–805 MB`
+  与 control 一致，**最可能**是同步 `save` 路径（223,536 条 + 17,067 目录 +
+  key 归一化 + gzip）；两轮同价加强了该推断，但仍未单独隔离 save。首次安装/
+  更换 mod 列表/修改 mod 目录内容会再次重建，各慢约 15 s；若某个 mod 在会话中
+  往自己目录写文件，下一次启动会 `directory changed` → 全量 crawl + 重建，
+  对该 mod 集合杠杆变成每次净亏。
 - **回滚**：`-Dhypernova.fileIndex=false`（系统属性优先）或
   `data/config/hypernova/hypernova.json` 的 `"fileIndex": { "enabled": false }`。
-- **不做**：裁 mod、改 FR/VOpt、改启动档、为凑 G-01' 做不安全裁剪。
+- **不做**：裁 mod、改 FR/VOpt、改启动档、为凑目标做不安全裁剪。
