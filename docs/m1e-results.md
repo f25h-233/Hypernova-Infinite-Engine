@@ -9,10 +9,10 @@
 | 门禁 | 结果 | 证据 |
 |---|---|---|
 | no-FR 臂 | 通过 | §2；`build/m1e-nofr-on-measure.json` |
-| OS 缓存测量 | 观察（`cache_control=none`） | §3；`build/m1e-rounds-warm.json` |
+| OS 缓存测量 | **受控（post-purge 3 轮）** | §3；`build/m1e-rounds-warm.json` + `build/m1e-rounds-cold.json` |
 | Java 17 审计 | 通过 | §4；`build/m1e-java-audit.json` |
 
-- 菜单时间：3 轮 warm 中位数 **70.1 s**（**68.6–83.1**），其中 2 轮低于历史 76.9–98.2 s 的下沿；**不宣称收益**——OS 缓存未受控（`cache_control=none`，§3.3），这只是观察，不是净收益结论。
+- 菜单时间：warm 3 轮中位 **70.1 s**（68.6–83.1）；post-purge 3 轮 **87.1 / 70.6 / 69.1 s**（中位 **70.6**）。两组第 1 轮分别 83.1 / 87.1 s，后两轮接近；**仍不宣称收益**——post-purge 只清一次 standby，且 `ReadTransferCount` 两组都 ~802–806 MB，不能把冷/热差异归因于缓存。
 - no-FR 法线：`normal_before_menu` **0**（臂 B 基线 **30,378**），下降 **100%**；`textures patched` = 是；`FR missing` = 是；`Failed to load texture` = **0**。
 - JRE17：agent **64 found / 63 successful / 1 aborted / 0 failed**；mod **95/95**；runtime 首行 = `openjdk version "17.0.10" 2024-01-16 LTS`。
 - **收益的宿主依赖**：no-FR 臂证明 **textures 补丁本身不依赖 FR**（真无 FR 下仍 `patched`、法线 30,378→0、无失败纹理），但**整体启动速度依赖 FR**：同一 no-FR 环境到主菜单 1,239.5–1,305.8 s，而 FR-on 本轮 68.6–83.1 s。no-FR 下主线程仍在做 vanilla 文件枚举/spec 加载（Task 1 jstack），以及 vanilla `com.fs.graphics.L` 的 `LinkedList.contains` 轮询（按纹理累计 O(n²)）与每纹理 `Thread.sleep(10)`（`.research/decomp/src/com/fs/graphics/L.java:30-77`）；这些主线程成本在 FR 缺席时不再被并行化。
@@ -87,7 +87,7 @@
 
 - warm：连续 3 轮，不 purge；每轮记录 `ReadTransferCount`（进程累计从磁盘读的字节，Windows `GetProcessIoCounters`）。
 - post-purge（若可用）：`tools/clear_standby.ps1` 清 standby list 后跑 3 轮；`cache_control=standby-purged`。
-- 本机默认非管理员；`clear_standby.ps1` 返回 `NOT_ELEVATED`、exit 3，因此 **不跑** post-purge 臂，结论降级为“观察”。`build/m1e-rounds-cold.json` 不存在（未生成）。
+- post-purge 臂已在**提权 PowerShell** 中跑过：`cache_control=standby-purged`，`purge_log=["round 1: PURGED"]`；见 §3.3。普通 shell 下 `clear_standby.ps1 -CheckOnly` 仍返回 `NOT_ELEVATED`/exit 3，这是检查路径，不影响已完成的提权轮次。
 - 3 轮 `stop` 均为 `forced`：`smoke_run` 对 Windows `java.exe` 无窗口消息循环，先非强制再升级 `/F`；shutdown hook 不执行，测量使用 8 s linger 稳定窗口。
 
 ### 3.2 warm 3 轮
@@ -109,16 +109,28 @@
 - 每轮 key breakdown total：702 / 455 / 541 ms（scan 496 / 274 / 337 ms）；preload 均命中（2,119 entries / 8,814,944 B / 6–13 ms），不是冷缓存。
 - 每轮 `agent.textures_patched` 均出现；`miss breakdown: total=11264, sourceless=3, sourced=11261` 稳定。
 
-### 3.3 post-purge（未跑）
+### 3.3 post-purge（已跑，提权）
 
-- 提权检查 `clear_standby.ps1 -CheckOnly` 在本机非提权 shell 返回 `NOT_ELEVATED`（exit 3，无清缓存副作用），按规格停止条件未运行 post-purge 臂。
-- 因此没有“清缓存后第 1 轮 read bytes 显著高于后两轮”的数据；结论只用 warm 分布，不用单轮差值。
+`cache_control=standby-purged`，`purge_log=["round 1: PURGED"]`。第 1 轮前清一次 standby list，后两轮不再清。
+
+| 轮 | `menu_s` | `read_bytes_menu` | key `took` (ms) | 备注 |
+|---:|---:|---:|---:|---|
+| 1 | 87.1 | 804,624,545 | 1299 | post-purge |
+| 2 | 70.6 | 806,444,989 | 471 | warm-after-purge |
+| 3 | 69.1 | 803,524,731 | 502 | warm-after-purge |
+| 中位数 | **70.6** | **804,624,545** | **502** | — |
+| min–max | 69.1–87.1 | 803,524,731–806,444,989 | 471–1299 | — |
+
+- 第 1 轮菜单 **87.1 s**、key **1299 ms**（scan 1068 ms）明显高于后两轮；这与 standby 清空后首轮重新读盘一致。
+- 但 `read_bytes_menu` 三轮都在 **~803–806 MB**，与 warm 组的 ~802 MB 几乎相同——`ReadTransferCount` 统计的是请求字节，不能区分命中/未命中，**不能**用它判断 purge 是否生效；时间与 key 的首轮尾部才是主要信号。
+- 中位 **70.6 s** 与 warm 的 **70.1 s** 接近：这一轮没有把分布整体推高，只带来一个首轮尾部。**不宣称净收益**，也不把 87.1 当作“冷缓存惩罚”的完整测量（只清一次 standby，没有每轮 purge 的对照）。
 
 ### 3.4 与历史同口径对照
 
 - key：旧 15 次中位 **7,606 ms**（3,336–14,402） vs 新 3 次中位 **545 ms**（**457–706**）。
-- 菜单：本轮 3 次 **68.6–83.1 s**（中位 70.1） vs 历史 **76.9–98.2 s**；2 轮低于历史下沿、1 轮 83.1 仍在区间内。由于 `cache_control=none`、单会话 3 轮、无 purge 对照，**不把低于历史区间解读为收益**；Task 1 的长时 no-FR 运行可能使 OS 缓存偏热，无法归因。
-- `read_bytes_menu` 约 802.0–802.5 MB，极差约 0.47 MB（<0.06%）。这与“热 OS 缓存 + 稳定资源足迹”一致，但 `ReadTransferCount` 统计的是请求的传输字节，可由缓存满足，不是物理盘读取的完整证明；且无冷臂对照，只能作为启发式证据。
+- 菜单：warm **68.6–83.1 s**（中位 70.1），post-purge **69.1–87.1 s**（中位 70.6） vs 历史 **76.9–98.2 s**。两组中位都低于历史下沿，但 post-purge 只带来首轮尾部（87.1 s / key 1299 ms），中位几乎不变；**不把低于历史区间解读为收益**，也不归因于任何改动。
+- key：post-purge 首轮 **1299 ms**（scan 1068 ms） vs 后两轮 471/502 ms；这是清理 standby 后首轮文件扫描重新读盘的信号，支持“purge 生效”，但不改变中位结论。
+- warm 组 `read_bytes_menu` 约 802.0–802.5 MB（极差 0.47 MB）；post-purge 组约 803.5–806.4 MB。两组接近，说明 `ReadTransferCount` 统计的是请求字节、可由缓存满足，不是物理盘读取的完整证明；缓存状态的主要信号是 post-purge 首轮的 87.1 s / key 1299 ms。
 
 ## 4. Java 17 审计
 
@@ -211,8 +223,9 @@ JAVA_RUNTIME="D:/github/Hypernova-Infinite-Engine/Starsector-098-Base/jre/bin/ja
 
 ## 6. 已知限制
 
-- OS 缓存未受控时，warm 数字只能作观察；`read_bytes_menu` 是启发式证据（`ReadTransferCount` 为请求字节），不是物理盘读取或内存映射的完整证明。
-- 菜单时间只有单会话 3 轮、`stop=forced`、无 purge 对照；不宣称净收益，也不把低于历史区间归因于任何改动。
+- post-purge 只清了一次 standby（round 1 前）；round 2–3 是 warm-after-purge。首轮 87.1 s / key 1299 ms 显示冷缓存尾部，但中位 70.6 与 warm 70.1 接近；没有“每轮都 purge”的对照。
+- `read_bytes_menu` 是启发式证据（`ReadTransferCount` 为请求字节），不是物理盘读取或内存映射的完整证明；两组 ~802–806 MB 也说明它不能区分缓存命中。
+- 菜单时间仍是单会话 3+3 轮、`stop=forced`；不宣称净收益，也不把低于历史区间归因于任何改动。
 - arm B 的测量日志跨 `starsector.log.3` + `starsector.log` 轮转，且拼接片段含更早 FR-on 会话的 7 条 `Fast Rendering` 行；FR 判定依赖 `_select_session` 选中的最后一个会话（`fr_anchor=0`）。arm A 未轮转，只用 current log。
 - 两个 agent 日志均为跨会话追加；引用 `FR missing` / `textures: patched` 时必须取最后一次 premain 会话（smoke JSON 已记录正确时间戳），不能直接用 `grep -m1`。
 - no-FR 臂没有覆盖“FR 0.9.7rc2 + Hypernova”组合（那是后续独立任务）。
