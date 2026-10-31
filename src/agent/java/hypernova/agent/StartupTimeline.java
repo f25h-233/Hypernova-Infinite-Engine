@@ -3,6 +3,8 @@ package hypernova.agent;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -10,6 +12,10 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>Log line format is stable because tools/m3_phase.py parses it:
  * {@code timeline: <name> rel_ms=<n> epoch_ms=<n>}.
+ *
+ * <p>Marks are first-wins per name: some anchors (notably
+ * {@code MarkovNames.loadIfNeeded}) are called again after the menu, and a later
+ * call must not overwrite the startup measurement.
  *
  * <p>This class must never throw into the game. Marks are used for measurement
  * only; losing one must not change startup behavior.
@@ -19,6 +25,7 @@ public final class StartupTimeline {
     private static final AtomicLong START_EPOCH = new AtomicLong();
     private static final List<String> MARKS =
             Collections.synchronizedList(new ArrayList<>());
+    private static final Set<String> SEEN = ConcurrentHashMap.newKeySet();
 
     private StartupTimeline() {
     }
@@ -33,6 +40,7 @@ public final class StartupTimeline {
         try {
             long startN = START_NANOS.get();
             if (startN == 0) return;
+            if (!SEEN.add(name)) return;
             long relMs = (System.nanoTime() - startN) / 1_000_000;
             MARKS.add(name);
             AgentLog.info("timeline: " + name + " rel_ms=" + relMs
@@ -50,6 +58,7 @@ public final class StartupTimeline {
 
     static void resetForTest() {
         MARKS.clear();
+        SEEN.clear();
         START_NANOS.set(0);
         START_EPOCH.set(0);
     }

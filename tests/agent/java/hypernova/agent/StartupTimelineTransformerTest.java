@@ -68,6 +68,20 @@ class StartupTimelineTransformerTest {
     }
 
     @Test
+    void marksAreFirstWinsPerName() {
+        // MarkovNames.loadIfNeeded is called again after the menu by market/intel
+        // code; only the first mark may be recorded and parsed.
+        StartupTimeline.mark("mods.start");
+        StartupTimeline.mark("mods.start");
+        StartupTimeline.mark("mods.start");
+        StartupTimeline.mark("script.first");
+
+        List<String> marks = StartupTimeline.marksForTest();
+        assertEquals(1, marks.stream().filter("mods.start"::equals).count(), marks.toString());
+        assertEquals(1, marks.stream().filter("script.first"::equals).count(), marks.toString());
+    }
+
+    @Test
     void ignoresNonTargetClass() {
         byte[] transformed = new StartupTimelineTransformer().transform(
                 getClass().getClassLoader(), "java/lang/String", null, null, new byte[]{0});
