@@ -5,7 +5,7 @@ from pathlib import Path
 # a package and tests/conftest.py only inserts tools/ itself.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.m3_phase import parse_session, parse_agent, phases
+from tools.m3_phase import _read, parse_session, parse_agent, phases
 
 
 def _line(ms, logger, msg, thread="main"):
@@ -44,3 +44,21 @@ def test_missing_anchor_raises():
     import pytest
     with pytest.raises(SystemExit):
         parse_session("no session here\n")
+
+
+def test_read_decodes_concatenated_log_bytes(tmp_path):
+    # Regression: _read() used str.join on bytes, which raises TypeError.
+    first = tmp_path / "starsector.log.1"
+    second = tmp_path / "starsector.log"
+    first.write_bytes(
+        _line(100, "com.genir.renderer.agent.Agent",
+              "Fast Rendering: v0.9.7rc2").encode("utf-8"))
+    second.write_bytes(
+        _line(5000, "sound.H",
+              "Playing music with id [miscallenous_main_menu.ogg]").encode("utf-8"))
+    text = _read([str(first), str(second)])
+    assert "Fast Rendering: v0.9.7rc2" in text
+    assert "miscallenous_main_menu.ogg" in text
+    _, start_ms, menu_ms, _ = parse_session(text)
+    assert start_ms == 100
+    assert menu_ms == 4900

@@ -25,7 +25,7 @@ PRELOAD_RE = __import__("re").compile(
 
 
 def _read(paths: list[str]) -> str:
-    return "".join(Path(p).read_bytes() for p in paths).decode("utf-8", "replace")
+    return b"".join(Path(p).read_bytes() for p in paths).decode("utf-8", "replace")
 
 
 def parse_session(text: str):
