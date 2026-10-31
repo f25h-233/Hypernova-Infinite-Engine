@@ -7,7 +7,7 @@
 
 ## 1. 相位证据
 
-### 1.1 历史 control 轮（timeline 修复前）
+### 1.1 历史 control 轮（`phase` 档，timeline 修复前）
 
 | 轮 | menu_s | crawl files | crawl ms | initFileLoaders ms | initSpecStore ms | initMods ms | preload |
 |---|---:|---:|---:|---:|---:|---:|---|
@@ -70,7 +70,7 @@
   span 的 last≈50,264 ms（相对 agent 起点），即脚本查找活动横跨 `initSpecStore`
   与 `initMods`，不是独立相位。
 - 结论：修复后的真实相位表明 0–50 s 主要由 `initSpecStore` + `initMods` 占据；
-  file index 只削减 `initFileLoaders` 的 crawl 部分（同日 A/B −6.5 s）。
+  file index 只削减 `initFileLoaders` 的 crawl 部分（同日 `miko-lite` A/B −6.5 s）。
   “0–50 s 内是否还有安全杠杆”的停止条件裁决见 §4（需用户裁决，不由本次修复代替）。
 
 
@@ -86,10 +86,16 @@
   按约定排除，不参与 A/B 中位数。
 - 排除冷缓存解释：本轮 `preload=hit`（2,113 条，8 ms），
   `read_bytes_menu=805,074,400`，与 control 三轮的 802,191,527 / 803,356,488 /
-  804,566,658 基本一致。因此 +15.1 s 不是 scripts 冷启动或 OS 缓存差异，而是
-  索引 `save` 路径本身（223,536 entries + 17,067 dirs + key 归一化 + gzip）。
+  804,566,658 基本一致。因此 +15.1 s 不是 scripts 冷启动或 OS 缓存差异的大头；
+  **最可能**是同步 `save` 路径（223,536 entries + 17,067 dirs + key 归一化 + gzip），
+  但只有这一轮构建、没有第二次 warm 构建、也没有“关闭 save”的对照，所以这是
+  **高概率推断，不是已隔离的结论**。
 - 诚实修正：计划预期首次构建只慢 1–2 s，实测 +15.1 s，该预期是错的；更细的拆分
-  （例如在同一 warm 机器上做第二次构建）留给 Task 6 / 下一里程碑。
+  （例如在同一 warm 机器上做第二次构建）留给下一里程碑。
+- 产品含义：首次安装、更换 mod 列表、修改 mod 目录内容都会触发重建，各慢约 15 s。
+  最坏情况是某个 mod 在会话中往自己的目录写文件（日志/缓存/生成配置）→ 下一次启动
+  `directory changed [...]` → 全量 crawl + 再写索引；对这类 mod 集合，杠杆从
+  “净赚 6.5 s”变成“每次启动净亏约 15 s”。回滚开关见 §3.3。
 - 后续方向（不在 M3 范围）：异步/惰性 save，或更快的 key 生成路径，可削减这项
   一次性成本。
 
@@ -115,7 +121,7 @@
 
 | 门禁 | 结果 |
 |---|---|
-| Java 17 测试 | 90 found / 89 successful / 1 aborted（既有 symlink 环境限制）/ 0 failed |
+| Java 17 测试 | **97 found / 96 successful / 1 aborted**（既有 Windows symlink 权限限制）/ **0 failed**（Task 7 first-wins 修复后的完整 agent 套件） |
 | Java ABI audit | `ok=true`，自有 class 40 个全为 major 61，`java21_api_hits=[]` |
 | textures | `normal_before_menu=0`、`patched=true`、`mismatch_line=null`、`fr_present=true`、`failed_texture_lines=0`、`gate_ok=true` |
 | base | `ok=true`，menu 8.6 s；`file index: written entries=15243, dirs=474`（首次构建，机制可用） |
@@ -126,4 +132,33 @@
 
 ## 4. 停止条件 / 目标修订
 
-（Task 6 填充）
+- **真实相位（C1 修复后，menu 65,868 ms）**：`initFileLoaders` **4,983 ms**、
+  `initSpecStore` **25,950 ms**、`initMods` **32,581 ms**；闭合校验
+  2,354 + 4,983 + 25,950 + 32,581 = **65,868 ms** = `menu_ms`；
+  `phases_approximate=[]`（三个相位都来自真实锚点，见 §1.2）。
+- **同日 A/B（`miko-lite`，warm）**：control 中位 **68.1 s** → treatment 中位
+  **61.6 s**，**delta 6.5 s（9.54%）**；treatment 3/3 命中
+  `loaded mod_entries=223536, total_entries=229499, dirs=17067`，无 `full crawl`。
+- **相对 M-1f 60.6 s**：同日 control +7.5 s（环境漂移），treatment +1.0 s；
+  A/B 只与同日 control 比，不与 60.6 s 混用。
+- **G-01'（≤48.5 s）：未达标。**
+- **停止条件（规格 §7 M3）已触发**：`initSpecStore` + `initMods` = 58,531 ms，
+  占 menu 的 **88.9%**；要达到 G-01' 还需再削约 **12.1 s**（相对 60.6 s 基线；
+  相对 treatment 61.6 s 为 13.1 s）。这部分落在 vanilla spec/JSON 解析
+  （107,526 次 `Loading JSON`）与 256 个 mod 的 `onApplicationLoad`
+  （约 28 s，已含在 `initMods` 内）；在不裁 mod、不改 FR/VOpt、不改启动档、
+  不并行任意第三方代码的前提下，没有安全杠杆能再拿 12 s。
+- **若按 M-1f 条件外推**：60.6 − 6.5 ≈ **54.1 s**，仍未达标；该数字
+  **未实测**，不作为结果（要做需在同条件机器上重跑交错 A/B）。
+- **处置（待用户裁决，不单方面改目标）**：
+  - **A. 修订 G-01'' = ≤55 s（约 −9–10%）**，保留 file index；
+  - **B. 接受当前值，关闭 M3**，把 0–50 s 桶留给 M2（manifest 驱动）/ FR 上游。
+- **一次性成本**：首次索引构建 **83.2 s**（较同日 control +15.1 s）；该轮
+  `preload=hit`、`read_bytes_menu≈805 MB` 与 control 一致，**最可能**是同步
+  `save` 路径（223,536 条 + 17,067 目录 + key 归一化 + gzip），但只有一轮、
+  未单独隔离 save，属高概率推断。首次安装/更换 mod 列表/修改 mod 目录内容会
+  再次重建，各慢约 15 s；若某个 mod 在会话中往自己目录写文件，下一次启动会
+  `directory changed` → 全量 crawl + 重建，对该 mod 集合杠杆变成每次净亏。
+- **回滚**：`-Dhypernova.fileIndex=false`（系统属性优先）或
+  `data/config/hypernova/hypernova.json` 的 `"fileIndex": { "enabled": false }`。
+- **不做**：裁 mod、改 FR/VOpt、改启动档、为凑 G-01' 做不安全裁剪。
