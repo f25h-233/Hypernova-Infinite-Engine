@@ -246,3 +246,61 @@ def test_cross_layer_duplicate_is_important(mini_game):
     sev = {(f.code, f.severity) for f in validate(m, mini_game)}
     assert ("cross_layer_duplicate", "Important") in sev
     assert isinstance(m["stats"]["path_conflicts"], list)
+
+
+def test_baked_coverage_below_one_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["stats"]["coverage"]["baked"] = 0.5
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "coverage_baked" in codes
+
+
+def test_baked_unresolved_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["stats"]["unresolved_baked"] = ["mod_a/graphics/x.png"]
+    m["stats"]["unresolved_baked_count"] = 1
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "baked_unresolved" in codes
+
+
+def test_mods_layer_mismatch_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["mods"][0]["layers"]["L1"] += 1
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "mods_layer_mismatch" in codes
+
+
+def test_duplicate_mod_summary_is_important(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["mods"].append(copy.deepcopy(m["mods"][0]))
+    sev = {(f.code, f.severity) for f in validate(m, mini_game)}
+    assert ("duplicate_mod_summary", "Important") in sev
+
+
+def test_bad_mods_tier_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m["mods"][0]["tier"] = "L9"
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "mods_tier" in codes
+
+
+def test_old_manifest_without_new_fields_passes(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    m.pop("mods", None)
+    for key in ("baked_expected", "baked_resolved", "baked"):
+        m["stats"]["coverage"].pop(key, None)
+    m["stats"].pop("unresolved_baked", None)
+    m["stats"].pop("unresolved_baked_count", None)
+    assert _good(m, mini_game) == []

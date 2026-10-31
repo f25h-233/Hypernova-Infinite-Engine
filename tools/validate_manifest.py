@@ -189,6 +189,76 @@ def validate(
                 + ", ".join(sorted(core_errors)[:5]),
             )
         )
+
+    baked_cov = coverage.get("baked")
+    if baked_cov is not None and float(baked_cov) < 1.0:
+        findings.append(
+            Finding("Critical", "coverage_baked", f"baked={baked_cov} < 1.0")
+        )
+    unresolved_count = stats.get("unresolved_baked_count")
+    if unresolved_count:
+        sample = stats.get("unresolved_baked") or []
+        findings.append(
+            Finding(
+                "Critical",
+                "baked_unresolved",
+                f"{unresolved_count} enabled baked texture(s) unresolved: "
+                + ", ".join(str(x) for x in sample[:5]),
+            )
+        )
+
+    mods_summary = manifest.get("mods")
+    if mods_summary is not None:
+        if not isinstance(mods_summary, list):
+            findings.append(
+                Finding("Critical", "mods_summary", "mods must be a list")
+            )
+        else:
+            seen_mods: set[str] = set()
+            sums = {"L1": 0, "L2": 0, "L3": 0}
+            for item in mods_summary:
+                if not isinstance(item, dict):
+                    findings.append(
+                        Finding("Critical", "mods_summary", "mods entry is not an object")
+                    )
+                    continue
+                mid = item.get("modId")
+                item_layers = item.get("layers")
+                if not isinstance(mid, str) or not mid:
+                    findings.append(
+                        Finding("Critical", "mods_summary", f"bad modId {mid!r}")
+                    )
+                    continue
+                if mid.casefold() in seen_mods:
+                    findings.append(
+                        Finding("Important", "duplicate_mod_summary", mid)
+                    )
+                seen_mods.add(mid.casefold())
+                tier = item.get("tier")
+                if tier not in (None, "auto", "L1", "L2", "L3"):
+                    findings.append(
+                        Finding("Critical", "mods_tier", f"{mid}: bad tier {tier!r}")
+                    )
+                if (
+                    not isinstance(item_layers, dict)
+                    or any(not isinstance(item_layers.get(k), int) for k in sums)
+                ):
+                    findings.append(
+                        Finding("Critical", "mods_summary", f"{mid}: bad layers")
+                    )
+                    continue
+                for k in sums:
+                    sums[k] += item_layers[k]
+            for k, total in sums.items():
+                expected = len(layers[k]) if isinstance(layers[k], list) else 0
+                if total != expected:
+                    findings.append(
+                        Finding(
+                            "Critical",
+                            "mods_layer_mismatch",
+                            f"{k}: summary={total} != entries={expected}",
+                        )
+                    )
     return findings
 
 
