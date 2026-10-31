@@ -17,26 +17,45 @@ public final class TextureServiceImpl implements TextureService {
     private final TextureManifest manifest;
     private final TextureBackend backend;
     private final Telemetry telemetry;
-    private final Thread mainThread;
     private final BooleanSupplier loadingSave;
     private final Set<String> pending = new LinkedHashSet<>();
     private final ConcurrentHashMap<String, Integer> refCounts = new ConcurrentHashMap<>();
+    /**
+     * Set once by {@link #bindMainThread(Thread)}; never reset. FR 0.9.7 moved
+     * {@code onApplicationLoad} to a worker thread, so capturing the
+     * construction thread would make every later main-thread call fail.
+     */
+    private volatile Thread mainThread;
 
     public TextureServiceImpl(TextureManifest manifest,
                               TextureBackend backend,
                               Telemetry telemetry,
-                              Thread mainThread,
                               BooleanSupplier loadingSave) {
         this.manifest = manifest;
         this.backend = backend;
         this.telemetry = telemetry;
-        this.mainThread = mainThread;
         this.loadingSave = loadingSave;
     }
 
     @Override
+    public synchronized boolean bindMainThread(Thread thread) {
+        if (thread == null || mainThread != null) {
+            return false;
+        }
+        mainThread = thread;
+        return true;
+    }
+
+    @Override
     public TextureLoadResult ensureLoaded(String path) {
-        if (Thread.currentThread() != mainThread) {
+        Thread main = mainThread;
+        if (main == null) {
+            String detail = "main-thread-unbound:" + Thread.currentThread().getName();
+            telemetry.event("rejected", path, 0L, detail);
+            throw new IllegalStateException(
+                    "ensureLoaded requires bindMainThread() first (" + detail + ")");
+        }
+        if (Thread.currentThread() != main) {
             String detail = "non-main-thread:" + Thread.currentThread().getName();
             telemetry.event("rejected", path, 0L, detail);
             throw new IllegalStateException("ensureLoaded must run on the display thread (" + detail + ")");

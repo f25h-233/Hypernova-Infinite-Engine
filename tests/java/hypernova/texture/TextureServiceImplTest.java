@@ -92,7 +92,13 @@ class TextureServiceImplTest {
 
     private static TextureServiceImpl service(TextureManifest m, TextureBackend b, Telemetry t,
                                              AtomicBoolean loadingSave) {
-        return new TextureServiceImpl(m, b, t, Thread.currentThread(), loadingSave::get);
+        TextureServiceImpl s = new TextureServiceImpl(m, b, t, loadingSave::get);
+        s.bindMainThread(Thread.currentThread());
+        return s;
+    }
+
+    private static TextureServiceImpl unbound(TextureManifest m, TextureBackend b, Telemetry t) {
+        return new TextureServiceImpl(m, b, t, () -> false);
     }
 
     @Test
@@ -296,5 +302,44 @@ class TextureServiceImplTest {
         assertEquals(2, s.pendingCount());
         assertEquals(List.of(), s.drainPending(-1));
         assertEquals(2, s.pendingCount());
+    }
+
+    @Test
+    void unboundServiceRejectsLoads() throws JSONException {
+        FakeBackend b = new FakeBackend();
+        RecordingTelemetry t = new RecordingTelemetry();
+        TextureServiceImpl s = unbound(manifestWith("a.png"), b, t);
+        assertThrows(IllegalStateException.class, () -> s.ensureLoaded("a.png"));
+        assertTrue(b.calls.isEmpty());
+        assertTrue(t.events.stream().anyMatch(e -> e.startsWith("rejected|a.png|main-thread-unbound:")));
+    }
+
+    @Test
+    void bindMainThreadReturnsTrueOnceAndIsFirstWins() throws JSONException {
+        FakeBackend b = new FakeBackend();
+        RecordingTelemetry t = new RecordingTelemetry();
+        TextureServiceImpl s = unbound(manifestWith("a.png"), b, t);
+        Thread other = new Thread(() -> { });
+        assertTrue(s.bindMainThread(other));
+        assertFalse(s.bindMainThread(Thread.currentThread()));
+        assertThrows(IllegalStateException.class, () -> s.ensureLoaded("a.png"));
+        assertTrue(b.calls.isEmpty());
+    }
+
+    @Test
+    void bindNullIsIgnored() throws JSONException {
+        TextureServiceImpl s = unbound(manifestWith("a.png"), new FakeBackend(), new RecordingTelemetry());
+        assertFalse(s.bindMainThread(null));
+        assertThrows(IllegalStateException.class, () -> s.ensureLoaded("a.png"));
+    }
+
+    @Test
+    void loadsOnBoundThread() throws JSONException {
+        FakeBackend b = new FakeBackend();
+        RecordingTelemetry t = new RecordingTelemetry();
+        TextureServiceImpl s = unbound(manifestWith("a.png"), b, t);
+        assertTrue(s.bindMainThread(Thread.currentThread()));
+        assertTrue(s.ensureLoaded("a.png").ok());
+        assertEquals(List.of("a.png"), b.calls);
     }
 }

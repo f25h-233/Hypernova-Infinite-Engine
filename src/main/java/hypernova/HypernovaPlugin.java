@@ -71,7 +71,7 @@ public class HypernovaPlugin extends BaseModPlugin {
             }
             telemetry = new JsonlTelemetry(new GameTelemetrySink(settings), config.telemetryBufferLines());
             service = new TextureServiceImpl(manifest, new GameBackend(settings), telemetry,
-                    Thread.currentThread(), () -> Global.LOADING_SAVE);
+                    () -> Global.LOADING_SAVE);
             scheduler = new FrameBudgetScheduler(service, config.frameBudgetMicros(), PER_TICK_CAP,
                     System::nanoTime, manifest::contains);
             GameSpriteSource spriteSource = new GameSpriteSource(variantId -> {

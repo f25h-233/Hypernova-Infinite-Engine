@@ -52,6 +52,11 @@ class RemainingHooksTest {
         }
 
         @Override
+        public boolean bindMainThread(Thread thread) {
+            return false;
+        }
+
+        @Override
         public TextureLoadResult ensureLoaded(String path) {
             if (loading.get()) {
                 pending.add(path);

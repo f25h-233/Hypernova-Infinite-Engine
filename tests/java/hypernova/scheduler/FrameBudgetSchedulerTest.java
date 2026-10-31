@@ -55,6 +55,11 @@ class FrameBudgetSchedulerTest {
         }
 
         @Override
+        public boolean bindMainThread(Thread thread) {
+            return false;
+        }
+
+        @Override
         public TextureLoadResult ensureLoaded(String path) {
             loaded.add(path);
             if (sleepMillis > 0) {
