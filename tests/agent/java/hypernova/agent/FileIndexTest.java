@@ -3,6 +3,7 @@ package hypernova.agent;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -85,5 +86,97 @@ class FileIndexTest {
         Path root = tmp.resolve("gone");
         FileIndex idx = sample(root);
         assertNotNull(idx.firstMismatchedDir());
+    }
+
+    @FunctionalInterface
+    private interface GzipBody {
+        void write(DataOutputStream out) throws IOException;
+    }
+
+    private Path gzipFile(String name, GzipBody body) throws IOException {
+        Path file = tmp.resolve(name);
+        try (DataOutputStream out = new DataOutputStream(
+                new java.io.BufferedOutputStream(
+                        new java.util.zip.GZIPOutputStream(Files.newOutputStream(file))))) {
+            body.write(out);
+        }
+        return file;
+    }
+
+    @Test
+    void wrongVersionIsNull() throws IOException {
+        Path file = gzipFile("version.gz", out -> {
+            out.writeInt(FileIndex.MAGIC);
+            out.writeInt(FileIndex.VERSION + 1);
+            // A reader without the version guard would consume the version word
+            // as the location count. Encoding exactly that many empty locations
+            // makes guard removal decode successfully (non-null) instead of
+            // returning null.
+            for (int i = 0; i < FileIndex.VERSION + 1; i++) {
+                out.writeInt(0); // type length
+                out.writeInt(0); // path length
+                out.writeBoolean(false); // isMod
+            }
+            out.writeInt(0); // dirs
+            out.writeInt(0); // entries
+        });
+        assertNull(FileIndex.read(file));
+    }
+
+    @Test
+    void negativeCountIsNull() throws IOException {
+        Path file = gzipFile("count-negative.gz", out -> {
+            out.writeInt(FileIndex.MAGIC);
+            out.writeInt(FileIndex.VERSION);
+            out.writeInt(-1); // location count
+        });
+        assertNull(FileIndex.read(file));
+    }
+
+    @Test
+    void oversizedCountIsNull() throws IOException {
+        Path file = gzipFile("count-huge.gz", out -> {
+            out.writeInt(FileIndex.MAGIC);
+            out.writeInt(FileIndex.VERSION);
+            int count = 2_000_001; // MAX_RECORDS + 1
+            out.writeInt(count);
+            // The body is complete, so removing the upper-bound guard would
+            // decode successfully (non-null) instead of returning null.
+            for (int i = 0; i < count; i++) {
+                out.writeInt(0); // type length
+                out.writeInt(0); // path length
+                out.writeBoolean(false); // isMod
+            }
+            out.writeInt(0); // dirs
+            out.writeInt(0); // entries
+        });
+        assertNull(FileIndex.read(file));
+    }
+
+    @Test
+    void negativeStringLengthIsNull() throws IOException {
+        Path file = gzipFile("string-negative.gz", out -> {
+            out.writeInt(FileIndex.MAGIC);
+            out.writeInt(FileIndex.VERSION);
+            out.writeInt(1); // location count
+            out.writeInt(-1); // type length
+        });
+        assertNull(FileIndex.read(file));
+    }
+
+    @Test
+    void oversizedStringLengthIsNull() throws IOException {
+        Path file = gzipFile("string-huge.gz", out -> {
+            out.writeInt(FileIndex.MAGIC);
+            out.writeInt(FileIndex.VERSION);
+            out.writeInt(1); // location count
+            out.writeInt((1 << 20) + 1); // MAX_STRING + 1
+            out.write(new byte[(1 << 20) + 1]); // full bytes for a successful decode
+            out.writeInt(0); // path length
+            out.writeBoolean(false); // isMod
+            out.writeInt(0); // dirs
+            out.writeInt(0); // entries
+        });
+        assertNull(FileIndex.read(file));
     }
 }
