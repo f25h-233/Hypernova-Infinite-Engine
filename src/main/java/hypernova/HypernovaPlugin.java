@@ -2,7 +2,9 @@ package hypernova;
 
 import com.fs.starfarer.api.BaseModPlugin;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.SettingsAPI;
 import com.fs.starfarer.api.campaign.SectorAPI;
@@ -171,24 +173,34 @@ public class HypernovaPlugin extends BaseModPlugin {
      * FR 0.9.7 的 {@code onApplicationLoad} 在 {@code Thread-N-FR-Main-Loader} 上执行，
      * 在那里调用 {@code ensureLoaded} 必然触发主线程断言。
      */
-    private void runFallbackSelfCheck(int limit) {
-        var log = Global.getLogger(HypernovaPlugin.class);
-        List<String> candidates = new java.util.ArrayList<>();
-        for (hypernova.manifest.Layer layer : hypernova.manifest.Layer.values()) {
-            for (String path : manifest.pathsInLayer(layer)) {
-                if (service.isLoaded(path)) {
-                    continue; // 已注册 → 走不到兜底路径
-                }
-                candidates.add(path);
-                if (candidates.size() >= limit) {
-                    break;
-                }
+    /**
+     * 启动期只允许 L1 进入本组件队列（REQ-R1-05）。自检是唯一会在
+     * 主线程早期取路径的入口，因此这里把候选集硬限制在 L1；L2/L3
+     * 只能由运行期触发点按各自层入队。
+     */
+    static List<String> selfCheckCandidates(TextureManifest manifest,
+                                            Predicate<String> loaded,
+                                            int limit) {
+        List<String> out = new ArrayList<>();
+        if (limit <= 0) {
+            return out;
+        }
+        for (String path : manifest.pathsInLayer(hypernova.manifest.Layer.L1)) {
+            if (loaded.test(path)) {
+                continue;
             }
-            if (candidates.size() >= limit) {
+            out.add(path);
+            if (out.size() >= limit) {
                 break;
             }
         }
-        log.info("selfcheck: candidates(not-yet-registered)=" + candidates.size());
+        return out;
+    }
+
+    private void runFallbackSelfCheck(int limit) {
+        var log = Global.getLogger(HypernovaPlugin.class);
+        List<String> candidates = selfCheckCandidates(manifest, service::isLoaded, limit);
+        log.info("selfcheck: layer=L1 candidates(not-yet-registered)=" + candidates.size());
         if (candidates.isEmpty()) {
             log.info("selfcheck: INCONCLUSIVE — every manifest path is already registered in this session");
             return;
