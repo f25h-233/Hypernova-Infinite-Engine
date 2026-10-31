@@ -112,3 +112,21 @@ def test_missing_sprite_is_recorded(mini_game):
     )
     result = build_closure(["va_bad_sprite"], _lookup(mini_game))
     assert result.stats.missing["sprite"] == ["graphics/ships/nope.png"]
+
+
+def test_title_wing_id_resolves_via_wing_map(mini_game):
+    from mod_index import load_enabled_ids, scan_mods
+    scan = scan_mods(mini_game, load_enabled_ids(mini_game))
+    lookup = build_lookup(scan.mods)
+    result = build_closure(["wing_one"], lookup)
+    assert "graphics/ships/h_fighter.png" in result.sprites
+    assert "wing_one" not in result.stats.missing.get("variant", [])
+    assert result.stats.wings_resolved == 1
+
+
+def test_unknown_root_id_still_records_variant_miss(mini_game):
+    from mod_index import load_enabled_ids, scan_mods
+    scan = scan_mods(mini_game, load_enabled_ids(mini_game))
+    lookup = build_lookup(scan.mods)
+    result = build_closure(["no_such_variant"], lookup)
+    assert "no_such_variant" in result.stats.missing.get("variant", [])

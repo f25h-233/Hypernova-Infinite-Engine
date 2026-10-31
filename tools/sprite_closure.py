@@ -278,7 +278,14 @@ class _Walker:
 def build_closure(variant_ids: list[str], lookup: AssetLookup) -> ClosureResult:
     walker = _Walker(lookup)
     for vid in variant_ids:
-        walker.add_variant(vid)
+        # 标题 CSV 偶尔直接写 wing id / hull id（valk_*、hii_* 等 17 条）。
+        # 先按真实 variant 解析；解析不到再尝试 wing/hull 身份，最后才记 miss。
+        if pick(lookup.variants.get(vid) or []) is not None:
+            walker.add_variant(vid)
+        elif vid in lookup.wings or vid in lookup.ships or vid in lookup.skins:
+            walker.add_wing(vid)
+        else:
+            walker.add_variant(vid)
     if lookup.skin_errors:
         walker.result.stats.parse_errors.setdefault("skin", []).extend(
             sorted(lookup.skin_errors)

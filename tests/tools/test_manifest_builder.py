@@ -372,3 +372,15 @@ def test_cli_writes_manifest(mini_game):
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["schema"] == 1
     assert data["layers"]["L1"]
+
+
+def test_title_csv_wing_id_adds_its_sprites(mini_game):
+    from conftest import _write
+    _write(
+        mini_game / "mods" / "mod_a" / "data" / "config" / "title_screen_variants.csv",
+        "variant id\nva_one\nwing_one\n",
+    )
+    m = _build(mini_game, include_l2=False)
+    paths = {e["path"] for e in m["layers"]["L1"]}
+    assert "graphics/ships/h_fighter.png" in paths
+    assert "wing_one" not in m["stats"]["missing"].get("variant", [])
