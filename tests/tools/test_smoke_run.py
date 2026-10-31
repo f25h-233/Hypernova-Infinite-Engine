@@ -70,8 +70,59 @@ def test_clear_index_removes_only_the_index(tmp_path):
     index.parent.mkdir(parents=True)
     index.write_bytes(b"x")
     keep = index.parent / "scripts-cache"
-    keep.write_bytes(b"keep")
+    keep.mkdir()
+    (keep / "x").write_bytes(b"keep")
     assert smoke.clear_index(tmp_path) is True
     assert not index.exists()
     assert keep.exists()
     assert smoke.clear_index(tmp_path) is False
+
+
+def _fake_profile(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    (game / "jre").mkdir(parents=True)
+    (game / "jre" / "java").write_text("")
+    (game / "starsector-core").mkdir()
+    (game / "starsector-core" / "vm.txt").write_text("")
+    monkeypatch.setattr(smoke, "ROOT", tmp_path)
+    monkeypatch.setattr(smoke, "PROFILES", {"fake": {
+        "game": "game", "java": "jre/java",
+        "vmparams": "vm.txt", "cwd": "starsector-core"}})
+    monkeypatch.setattr(smoke.time, "sleep", lambda seconds: None)
+    return game
+
+
+def _install_loop_spies(monkeypatch, events, real_clear):
+    def spy_clear(game):
+        events.append("clear")
+        return real_clear(game)
+
+    def fake_round(cfg, game, args):
+        events.append("round")
+        index = smoke.index_path_for(game)
+        index.parent.mkdir(parents=True, exist_ok=True)
+        index.write_bytes(b"x")  # simulate the build writing a fresh index
+        return {"ok": True, "menu_s": 1.0, "wall_s": 1.0, "stop": "forced"}
+
+    monkeypatch.setattr(smoke, "clear_index", spy_clear)
+    monkeypatch.setattr(smoke, "one_round", fake_round)
+
+
+def test_main_clears_the_index_before_every_round(tmp_path, monkeypatch):
+    game = _fake_profile(tmp_path, monkeypatch)
+    events = []
+    _install_loop_spies(monkeypatch, events, smoke.clear_index)
+    monkeypatch.setattr(sys, "argv", ["smoke_run.py", "--profile", "fake",
+                                      "--rounds", "3", "--clear-index-each-round"])
+    assert smoke.main() == 0
+    assert events == ["clear", "round", "clear", "round", "clear", "round"], events
+
+
+def test_main_leaves_the_index_alone_without_the_flag(tmp_path, monkeypatch):
+    game = _fake_profile(tmp_path, monkeypatch)
+    events = []
+    _install_loop_spies(monkeypatch, events, smoke.clear_index)
+    monkeypatch.setattr(sys, "argv", ["smoke_run.py", "--profile", "fake",
+                                      "--rounds", "2"])
+    assert smoke.main() == 0
+    assert events == ["round", "round"], events
