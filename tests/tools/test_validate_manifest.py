@@ -304,3 +304,100 @@ def test_old_manifest_without_new_fields_passes(mini_game):
     m["stats"].pop("unresolved_baked", None)
     m["stats"].pop("unresolved_baked_count", None)
     assert _good(m, mini_game) == []
+
+
+def test_disk_scan_manifest_passes_without_metadata(mini_game):
+    import shutil
+    from test_manifest_builder import _seed_core, build_manifest
+    shutil.rmtree(mini_game / "mods" / "DDSCache")
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    assert m["stats"]["source_mode"] == "disk_scan"
+    assert m["stats"]["coverage"]["metadata"] is None
+    assert m["stats"]["coverage"]["baked"] == 1.0
+    assert m["stats"]["unresolved_baked_count"] == 0
+    assert _good(m, mini_game) == []
+
+
+def test_baked_coverage_threshold_is_one(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+
+    def codes():
+        return {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+
+    m["stats"]["coverage"]["baked"] = 0.95
+    assert "coverage_baked" in codes()
+    m["stats"]["coverage"]["baked"] = 0.999
+    assert "coverage_baked" in codes()
+    m["stats"]["coverage"]["baked"] = 1.0
+    assert "coverage_baked" not in codes()
+
+
+def test_valid_mods_tier_has_no_mods_tier(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(
+        mini_game, include_l2=False, tier_overrides={"mod_a": "L2"}
+    ).manifest
+    row = next(r for r in m["mods"] if r["modId"] == "mod_a")
+    assert row["tier"] == "L2"
+    codes = {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+    assert "mods_tier" not in codes
+    assert _good(m, mini_game) == []
+
+
+def test_string_zero_unresolved_count_is_not_flagged(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+
+    def codes():
+        return {f.code for f in validate(m, mini_game) if f.severity == "Critical"}
+
+    m["stats"]["unresolved_baked_count"] = "0"
+    assert "baked_unresolved" not in codes()
+
+    # 数字字符串仍按数量处理
+    m["stats"]["unresolved_baked"] = ["mod_a/graphics/x.png", "mod_a/graphics/y.png"]
+    m["stats"]["unresolved_baked_count"] = "2"
+    assert "baked_unresolved" in codes()
+
+    # 无法解释为整数时跳过，不误报也不崩溃
+    m["stats"]["unresolved_baked_count"] = "many"
+    assert "baked_unresolved" not in codes()
+
+
+def test_malformed_mods_shape_is_critical(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    base = build_manifest(mini_game, include_l2=False).manifest
+
+    def codes(manifest):
+        return {f.code for f in validate(manifest, mini_game) if f.severity == "Critical"}
+
+    m = copy.deepcopy(base)
+    m["mods"] = "oops"
+    assert "mods_summary" in codes(m)
+
+    m = copy.deepcopy(base)
+    m["mods"] = [42]
+    assert "mods_summary" in codes(m)
+
+    m = copy.deepcopy(base)
+    m["mods"][0]["layers"] = "bad"
+    assert "mods_summary" in codes(m)
+
+
+def test_duplicate_mod_summary_is_case_insensitive(mini_game):
+    from test_manifest_builder import _seed_core, build_manifest
+    _seed_core(mini_game)
+    m = build_manifest(mini_game, include_l2=False).manifest
+    zero_entry = next(
+        copy.deepcopy(r) for r in m["mods"] if sum(r["layers"].values()) == 0
+    )
+    zero_entry["modId"] = zero_entry["modId"].upper()
+    m["mods"].append(zero_entry)
+    sev = {(f.code, f.severity) for f in validate(m, mini_game)}
+    assert ("duplicate_mod_summary", "Important") in sev
