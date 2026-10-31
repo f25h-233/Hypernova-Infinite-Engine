@@ -14,6 +14,15 @@ public final class HypernovaAgent {
             RuntimeContext ctx = RuntimeContext.fromEnvironment();
             AgentLog.init(ctx.logFile());
             StartupTimeline.start();
+            FileIndexHook.setContext(ctx);
+            if (frPresent()) {
+                if (FileIndexHook.enabled()) {
+                    instrumentation.addTransformer(new FileIndexTransformer(), false);
+                    AgentLog.info("file index transformer registered");
+                } else {
+                    AgentLog.info("file index disabled by config");
+                }
+            }
             AgentLog.info("hypernova agent premain; config=" + ctx.config()
                     + ", cacheRoot=" + ctx.cacheRoot());
             instrumentation.addTransformer(new StartupTimelineTransformer(), false);

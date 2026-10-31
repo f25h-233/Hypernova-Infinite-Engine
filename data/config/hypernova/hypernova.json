@@ -4,6 +4,9 @@
   "frame_budget_micros": 2000,
   "telemetry_buffer_lines": 4096,
   "heartbeat_frames": 3000,
+  "fileIndex": {
+    "enabled": true
+  },
   "startup_probe_paths": 0,
   "scripts": {
     "enabled": true,
