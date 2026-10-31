@@ -1,0 +1,56 @@
+把 M3（0–50 s 桶）的实测数整理一下，先把口径写清楚：260 mods、FR 0.9.7rc2、
+Miko Lite/JDK 28、warm OS 缓存；同日同档 A/B；所有时间都是到主菜单。
+不是冷启动首跑，也不是跨环境混算。
+
+一、干净重跑（post-reboot）
+
+- 无 Hypernova（移除 agent，保留 FR/VOpt）：83.1 / 75.6 / 75.6 s，warm 中位 75.6 s；
+  loading_normal_before_menu=30378，说明没有我们的补丁时法线图仍在启动期全量加载。
+- 有 Hypernova、file index 关闭（textures + scripts 臂）：50.1 / 50.1 / 48.1 s，中位 50.1 s。
+- 有 Hypernova、file index 开启（默认产品）：47.6 / 48.1 / 48.1 s，中位 48.1 s。
+- 同批首轮另测：control 51.6 s → treatment 47.6 s（4.0 s / 7.75%）；排除的
+  warm-up 为 65.1 / 53.1 s，不计入中位数。
+- 目标：G-01'' = 绝对 ≤50 s（≈ −17.5% vs M-1f 基线 60.6 s）；两个干净 treatment
+  47.6 / 48.1 均达标，余量 2.4 / 1.9 s。旧的 −20% / ≤48.5 s 只在 0.4–0.9 s 余量下
+  达成，已作为更严格的历史线保留，不再作为现行门禁。
+
+二、拆账（避免把整体收益算成单个杠杆）
+
+- textures + scripts：75.6 → 50.1 ≈ 25.5 s。注意 50.1 s 这组 control 是
+  fileIndex=false，所以 25.5 s 不含 file index。
+- file index：50.1 → 48.1 = 2.0 s；两轮批次中位区间 2.0–4.0 s，逐对 delta 里有一对
+  0.0 s，所以这是批次级区间，不是每次启动都能拿 2–4 s。
+- 默认全产品：75.6 → 48.1 ≈ 27.5 s（= 25.5 + 2.0；首轮 treatment 47.6 则约 28.0 s）。
+- 无 Hypernova 是顺序消融（无 agent 一轮 vs 有 agent 的 control 另一轮），不是交错
+  A/B；25.5 / 27.5 都按“约”看，不是单轮净收益。
+
+三、0–50 s 相位（C1 修复后的一次真实运行）
+
+- menu 65,868 ms：initFileLoaders 4,983 ms、initSpecStore 25,950 ms、
+  initMods 32,581 ms；2,354 + 4,983 + 25,950 + 32,581 = 65,868，闭合。
+- 这三个相位来自 pre-reboot 的一轮真实运行，用于归因；不是上面干净 A/B 的轮次。
+- 旧 G-01' 在这轮 pre-reboot 环境里没达标（treatment 61.6 s，6.5 s / 9.54%），
+  当时按停止条件记录；干净重跑后目标改为 G-01'' ≤50 s。
+
+四、边界与坑
+
+- 干净环境的 control 50.1 s 比 M-1f 记录的 60.6 s 快约 10 s；不要把 47.6/48.1
+  直接跟 60.6 的旧目标横比。
+- pre-reboot 曾测到 file-index 6.5 s，干净轮是 2.0 / 4.0；两套口径不要混用。
+- 首次索引构建 / 格式戳变更重建：两轮 warm 构建都是 83.2 s（同日 control 68.1 s，
+  +15.1 s）；preload 命中、read_bytes 与 control 一致，最可能是同步 save 写
+  223,536 entries + 17,067 dirs（未单独隔离 save）。
+- 回滚：-Dhypernova.fileIndex=false 或 hypernova.json 的 fileIndex.enabled=false。
+- 260mods 冻结集上 index 3/3 命中；mod 自写目录会导致下次重建。
+- 本组数只覆盖 260mods + FR 0.9.7rc2；跨 FR 版本有版本/形状门，未知版本不接受。
+
+五、下一步
+
+- M3.1：索引 save 异步化，把首次构建的 +15.1 s 移出启动路径；目标首次构建
+  menu delta ≤2 s、3/3 命中、写盘前退出 fail-open。这是 UX 一次性成本，
+  不改 G-01'' ≤50 s 的稳态目标。
+- M2：manifest 驱动；OD-02 已裁决为 A 全预载（L1 6,614 ≤8,000），先做
+  key 稳定性/覆盖预工作，再完整 M2。
+
+以上都是可复现的 warm 中位数；有愿意复跑的同学，最好按同日同档 3+3、标明
+冷/热缓存、FR 版本和 mod 集合。数字不大，但口径尽量干净。
