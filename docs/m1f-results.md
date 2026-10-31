@@ -32,7 +32,7 @@
 - 0.9.7 的 `onApplicationLoad` 线程：`Hypernova init thread: Thread-7-FR-Main-Loader`（`build/m1f-binding.log`）。
 - 绑定：`Hypernova main thread bound at advance: Thread-3`（首次 advance 在主菜单；`onGameLoad` 时已 first-wins no-op）。
 - 自检：`selfcheck: LOADED graphics/fonts/orbitron20aa_0.png`、`selfcheck: RESULT 1/1 PASS`；自检在主菜单首次 advance，早于读档。
-- 读档后 telemetry：80 条事件全部在 `Thread-3`（1 条 `loaded` + **79 条 `hit`（`ensureLoaded` 路径）**；`Starsector-098-Base/saves/common/hypernova/telemetry.jsonl.data`）；`attachCampaign: done` 在 29,224 ms，调度器最终 `loaded=79, failed=0`。
+- telemetry：80 条事件全部在 `Thread-3` —— 1 条自检 `loaded`（主菜单首次 advance）+ **79 条读档后 `hit`（`ensureLoaded` 路径）**（`Starsector-098-Base/saves/common/hypernova/telemetry.jsonl.data`）；`attachCampaign: done` 在 29,224 ms，调度器最终 `loaded=79, failed=0`。
 - 无 `IllegalStateException` / `ensureLoaded requires bindMainThread`。手动验收后 `startup_probe_paths` 已恢复为 `0`。
 
 ## 4. 260mods warm 基线
@@ -64,9 +64,7 @@
 ### 5.3 VOpt
 
 - `VOpt Loaded`；`Suitable FR Version found, skipping DDS file handling`；`Failed to initialize VRAM Optimizer` = 0。VOpt 仍为 **v1.0.45**。
-- FR 的 `Initialized VramOptimizer UploadDDSTexture method.` 是 INFO，被 `mikohime.properties` 的
-  `com.genir.renderer.overrides.loading=WARN` 过滤，所以日志里看不到；反射失败会抛 RuntimeException 崩启动，
-  游戏正常到菜单即为集成成功。该行**不作为**证据。
+- FR 的 `Initialized VramOptimizer UploadDDSTexture method.` 是 INFO，在 260mods 的 `mikohime.properties` 下被 `com.genir.renderer.overrides.loading=WARN` 过滤；Base 默认 log4j 可见（`build/m1f-binding.log`）。该行不作为 260mods 的证据。反射失败会抛 RuntimeException 崩启动，游戏正常到菜单即为集成成功。
 
 ### 5.4 no-FR 臂
 
@@ -83,7 +81,7 @@
 ## 7. 已知限制
 
 - 0.9.7rc2 是 prerelease；回滚档为 0.9.5。
-- 工具锚点前缀是 `Fast Rendering: v0.9.`；FR 升到 v0.10 时需要同步改 `tools/smoke_run.py` 与 `tools/m1b_measure.py`，否则 `session_offset` 返回 0、`fr_present=False`（门禁会 fail-closed，不会误报通过）。
+- 工具锚点前缀是 `Fast Rendering: v0.9.`；FR 升到 v0.10 时需要同步改 `tools/smoke_run.py` 与 `tools/m1b_measure.py`，否则 `session_offset` 返回 0、`fr_present=false`。FR-on 门禁不强制 `fr_present=true`；锚点失配时 `fr_present=false` 仍可能 `gate_ok=true`（`tools/m1b_measure.py` 只在 `--expect-no-fr` 下检查 `fr_present`）；no-FR 门禁会 fail-closed。工具硬化列为 next milestone/deferred。
 - 菜单冒烟不调用 `ensureLoaded`；线程绑定的真实证据来自 Base 手动读档。
 - 260mods 为 agent-only；运行期 mod 的验证在 Base。
 - 不宣称菜单时间收益；数字只作为新基线。
