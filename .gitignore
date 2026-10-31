@@ -9,6 +9,9 @@ out/
 *.class
 *.tmp
 
+# ---- 本地第三方工件缓存（FR 0.9.7rc2 等；哈希记录在 docs/m1f-results.md）----
+.cache/
+
 # ---- 操作系统 / 编辑器 ----
 Thumbs.db
 desktop.ini
