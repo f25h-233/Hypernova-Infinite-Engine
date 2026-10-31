@@ -56,6 +56,8 @@ public class HypernovaPlugin extends BaseModPlugin {
     @Override
     public void onApplicationLoad() throws Exception {
         try {
+            Global.getLogger(HypernovaPlugin.class).info(
+                    "Hypernova init thread: " + Thread.currentThread().getName());
             SettingsAPI settings = Global.getSettings();
             HypernovaConfig config = HypernovaConfig.fromJson(settings.loadJSON(CONFIG_PATH));
             Capability cap = VersionProbe.probe(settings.getVersionString(), frPresent());
@@ -96,21 +98,21 @@ public class HypernovaPlugin extends BaseModPlugin {
                     fleetDiscoveryHook, contactDialogHook, systemEnterHook, deploymentHook);
             this.poller = poller;
 
-            // 自检：直接在装配点验证兜底能力（REQ-R1-01 的原文判据是
+            // 自检：验证兜底能力（REQ-R1-01 的原文判据是
             // 「预取后 getSprite(TextureId) > 0」，不是「日志里没有路径」）。
-            // 这里在 onApplicationLoad 里跑一次，结果写日志，外部无需任何测试 mod。
-            // 必须放在 install() 之前：install() 之后的任何 Throwable 都会走 catch，
-            // 而 catch 会把静态槽位清空（I2 / INV-05），自检也就失去意义。
-            if (config.startupProbePaths() > 0) {
-                runFallbackSelfCheck(Math.max(1, config.startupProbePaths()));
-            }
+            // 构造 one-shot，由首次主线程 advance 执行：FR 0.9.7 的
+            // onApplicationLoad 在 Thread-N-FR-Main-Loader 上，不能在这里调用 ensureLoaded。
+            final int probePaths = config.startupProbePaths();
+            Runnable startupSelfCheck = probePaths > 0
+                    ? () -> runFallbackSelfCheck(Math.max(1, probePaths))
+                    : null;
 
             active = true;
             // 注入给无参的战斗插件实例（settings.json 的 plugins 由 ScriptStore 反射构造）。
             // install() 放在 active=true 之后：它之前的初始化失败不会留下「已禁用但仍运行」
             // 的静态槽位；install() 之后的失败由 catch 里的 install(null,...) 统一回滚（I2 / INV-05）。
             HypernovaCombatPlugin.install(poller, warmupHook, saveLoadGuard, scheduler, telemetry,
-                    config.heartbeatFrames());
+                    service, startupSelfCheck, config.heartbeatFrames());
             Global.getLogger(HypernovaPlugin.class).info("Hypernova active: " + cap.reason()
                     + ", manifest=" + manifest.size() + " paths, discarded=" + manifest.discardedCount()
                     + ", crossLayer=" + manifest.crossLayerConflictCount());
@@ -118,7 +120,7 @@ public class HypernovaPlugin extends BaseModPlugin {
             active = false;
             // 回滚静态槽位：否则 transient script / combat plugin 仍能从 static 拿到依赖，
             // 出现「日志说已禁用、管线照常运行」的自相矛盾状态（I2 / INV-05）。
-            HypernovaCombatPlugin.install(null, null, null, null, null, 0);
+            HypernovaCombatPlugin.install(null, null, null, null, null, null, null, 0);
             Global.getLogger(HypernovaPlugin.class).error("Hypernova disabled: init failure", t);
         }
     }
@@ -164,6 +166,10 @@ public class HypernovaPlugin extends BaseModPlugin {
      *
      * <p>这是唯一不依赖外部测试 mod 的验证方式：本方法运行在主线程 + GL 上下文中，
      * 能用引擎自己的 {@code getTextureId()} 作为判据。
+     *
+     * <p>调用点已从 {@code onApplicationLoad} 移到首次主线程 {@code advance}：
+     * FR 0.9.7 的 {@code onApplicationLoad} 在 {@code Thread-N-FR-Main-Loader} 上执行，
+     * 在那里调用 {@code ensureLoaded} 必然触发主线程断言。
      */
     private void runFallbackSelfCheck(int limit) {
         var log = Global.getLogger(HypernovaPlugin.class);
@@ -211,8 +217,20 @@ public class HypernovaPlugin extends BaseModPlugin {
         }
     }
 
+    private void bindMainThread(String where) {
+        if (!active || service == null) {
+            return;
+        }
+        Thread thread = Thread.currentThread();
+        if (service.bindMainThread(thread)) {
+            Global.getLogger(HypernovaPlugin.class).info(
+                    "Hypernova main thread bound at " + where + ": " + thread.getName());
+        }
+    }
+
     @Override
     public void onGameLoad(boolean newGame) {
+        bindMainThread("onGameLoad");
         if (active && warmupHook != null) {
             warmupHook.onGameLoaded();
         }
@@ -221,6 +239,7 @@ public class HypernovaPlugin extends BaseModPlugin {
 
     @Override
     public void onNewGame() {
+        bindMainThread("onNewGame");
         if (active && warmupHook != null) {
             warmupHook.onGameLoaded();
         }

@@ -7,6 +7,7 @@ import hypernova.hooks.PostLoadWarmupHook;
 import hypernova.hooks.SaveLoadGuard;
 import hypernova.scheduler.PrefetchScheduler;
 import hypernova.telemetry.Telemetry;
+import hypernova.texture.TextureService;
 
 import java.util.List;
 
@@ -33,6 +34,9 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
     private static volatile SaveLoadGuard sharedSaveLoadGuard;
     private static volatile PrefetchScheduler sharedScheduler;
     private static volatile Telemetry sharedTelemetry;
+    private static volatile TextureService sharedService;
+    /** One-shot diagnostic, run on the first main-thread advance (may be null). */
+    private static volatile Runnable sharedStartupSelfCheck;
     /** 心跳频率（帧）：0 关闭，1 每帧，N>1 每 N 帧。原 verbose 死开关的替代（Minor）。 */
     private static volatile int sharedHeartbeatFrames = 3000;
     /** 双入口共享的门闩：同帧第二次 advance（另一个实例/另一个入口）直接 return（I1）。 */
@@ -43,6 +47,7 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
     private SaveLoadGuard saveLoadGuard;
     private PrefetchScheduler scheduler;
     private Telemetry telemetry;
+    private TextureService service;
 
     private int framesSinceFlush;
     private long tickCount;
@@ -54,12 +59,15 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
      */
     public static void install(TriggerPoller poller, PostLoadWarmupHook warmupHook,
                                SaveLoadGuard saveLoadGuard, PrefetchScheduler scheduler,
-                               Telemetry telemetry, int heartbeatFrames) {
+                               Telemetry telemetry, TextureService service,
+                               Runnable startupSelfCheck, int heartbeatFrames) {
         sharedPoller = poller;
         sharedWarmupHook = warmupHook;
         sharedSaveLoadGuard = saveLoadGuard;
         sharedScheduler = scheduler;
         sharedTelemetry = telemetry;
+        sharedService = service;
+        sharedStartupSelfCheck = startupSelfCheck;
         sharedHeartbeatFrames = heartbeatFrames;
     }
 
@@ -67,22 +75,26 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
     public HypernovaCombatPlugin() {
     }
 
-    public HypernovaCombatPlugin(TriggerPoller poller, PostLoadWarmupHook warmupHook,
-                                 SaveLoadGuard saveLoadGuard, PrefetchScheduler scheduler,
-                                 Telemetry telemetry) {
-        this.poller = poller;
-        this.warmupHook = warmupHook;
-        this.saveLoadGuard = saveLoadGuard;
-        this.scheduler = scheduler;
-        this.telemetry = telemetry;
-        this.heartbeatFrames = sharedHeartbeatFrames;
-    }
-
     /** 战斗态入口。 */
     @Override
     public void advance(float amount, List<InputEventAPI> events) {
         if (!resolve()) {
             return;
+        }
+        TextureService svc = service;
+        if (svc != null && svc.bindMainThread(Thread.currentThread())) {
+            com.fs.starfarer.api.Global.getLogger(HypernovaCombatPlugin.class).info(
+                    "Hypernova main thread bound at advance: " + Thread.currentThread().getName());
+        }
+        Runnable selfCheck = sharedStartupSelfCheck;
+        if (selfCheck != null && !com.fs.starfarer.api.Global.LOADING_SAVE) {
+            sharedStartupSelfCheck = null;
+            try {
+                selfCheck.run();
+            } catch (Throwable t) {
+                com.fs.starfarer.api.Global.getLogger(HypernovaCombatPlugin.class).error(
+                        "startup self-check failed", t);
+            }
         }
         // I1：战役态 transient script 与战斗态插件是两个实例、共享同一调度器。
         // 同帧第二个入口不推进管线，否则预算、perTickCap 与 flush 节流全部按 2 倍速消耗。
@@ -95,7 +107,6 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
         scheduler.tick();
         GATE.completed(scheduler, scheduler.stats().ticks(), System.nanoTime());
         tickCount++;
-        // 心跳降噪：默认每 heartbeat_frames 帧（3000 帧 ≈ 50 s）一条，只用于冒烟核对管线存活。
         int hb = heartbeatFrames;
         if (hb > 0 && tickCount % hb == 1) {
             com.fs.starfarer.api.Global.getLogger(HypernovaCombatPlugin.class).info(
@@ -132,7 +143,8 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
         SaveLoadGuard g = sharedSaveLoadGuard;
         PrefetchScheduler s = sharedScheduler;
         Telemetry t = sharedTelemetry;
-        if (p == null || w == null || g == null || s == null || t == null) {
+        TextureService svc = sharedService;
+        if (p == null || w == null || g == null || s == null || t == null || svc == null) {
             return false;
         }
         poller = p;
@@ -140,6 +152,7 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
         saveLoadGuard = g;
         scheduler = s;
         telemetry = t;
+        service = svc;
         heartbeatFrames = sharedHeartbeatFrames;
         return true;
     }

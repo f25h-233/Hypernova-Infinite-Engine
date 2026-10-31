@@ -78,4 +78,21 @@ class AssemblyWiringTest {
         String listener = Files.readString(Path.of("src/main/java/hypernova/adapter/HypernovaCampaignListener.java"));
         assertTrue(listener.contains("onBattleEnded()"), "第二场战斗不再触发 L1 预取");
     }
+
+    @Test
+    void mainThreadIsBoundFromGameEntrypointsNotApplicationLoad() throws Exception {
+        String plugin = read(PLUGIN);
+        // FR 0.9.7 moved onApplicationLoad to Thread-N-FR-Main-Loader.
+        assertFalse(plugin.contains("Thread.currentThread(), () -> Global.LOADING_SAVE"),
+                "TextureServiceImpl must not capture onApplicationLoad's thread");
+        assertTrue(plugin.contains("bindMainThread(\"onGameLoad\")"),
+                "onGameLoad must bind the main thread");
+        assertTrue(plugin.contains("bindMainThread(\"onNewGame\")"),
+                "onNewGame must bind the main thread");
+        String combat = read(COMBAT);
+        assertTrue(combat.contains("bindMainThread(Thread.currentThread())"),
+                "first advance must bind the main thread");
+        assertTrue(combat.contains("sharedStartupSelfCheck"),
+                "the one-shot self-check must run on the main thread");
+    }
 }
