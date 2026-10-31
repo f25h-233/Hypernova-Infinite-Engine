@@ -11,7 +11,14 @@ from hn_json import load
 
 SHADER_LIBS = frozenset({"graphicslib", "shaderlib"})
 CORE_FOLDER = "starsector-core"
+CORE_MOD_ID = "core"
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
+
+
+def normalize_mod_id(value: str) -> str:
+    """DDSCache 给 core 写的 ModID 是 starsector-core；清单/运行时统一用 core。"""
+    text = str(value or "")
+    return CORE_MOD_ID if text.casefold() == CORE_FOLDER else text
 
 
 @dataclass(frozen=True)
@@ -52,6 +59,7 @@ class MetadataEntry:
     dds_rel: str
     width: int
     height: int
+    mod_id: str = ""
 
 
 @dataclass
@@ -59,6 +67,7 @@ class MetadataIndex:
     entries: list[MetadataEntry] = field(default_factory=list)
     by_key: dict[tuple[str, str], MetadataEntry] = field(default_factory=dict)
     by_rel: dict[str, list[MetadataEntry]] = field(default_factory=dict)
+    by_modid_rel: dict[tuple[str, str], list[MetadataEntry]] = field(default_factory=dict)
     fallback_hits: int = 0
     parse_errors: dict[str, str] = field(default_factory=dict)
 
@@ -80,6 +89,31 @@ class MetadataIndex:
             self.fallback_hits += 1
             return candidates[0]
         return None
+
+    def resolve(self, mod_id: str, mod_folder: str, rel: str,
+                exclude_core: bool = False) -> MetadataEntry | None:
+        """按稳定身份 (ModID, 相对路径) 解析；文件夹名只作回退。
+
+        顺序：当前文件夹精确命中 → (ModID, 路径) 唯一命中 → 旧版唯一路径回退。
+        文件夹改名后 metadata 的 ModFolderName 仍是旧名，但 ModID 不变，
+        第二步能把条目重新绑到当前 mod。
+        """
+        key = (mod_folder.casefold(), rel.casefold())
+        hit = self.by_key.get(key)
+        if hit is not None:
+            if exclude_core and hit.mod_folder.casefold() == CORE_FOLDER:
+                return None
+            return hit
+        candidates = [
+            me
+            for me in (self.by_modid_rel.get(
+                (normalize_mod_id(mod_id).casefold(), rel.casefold())
+            ) or [])
+            if not (exclude_core and me.mod_folder.casefold() == CORE_FOLDER)
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+        return self.get(mod_folder, rel, exclude_core=exclude_core)
 
 
 def _norm_rel(rel: str) -> str:
@@ -271,24 +305,29 @@ def read_dds_metadata(game_root: Path) -> MetadataIndex:
             try:
                 if not isinstance(record, dict):
                     raise ValueError("record is not an object")
-                folder = str(record.get("ModFolderName") or entry.name)
+                mod_folder = str(record.get("ModFolderName") or entry.name)
                 rel = _norm_rel(str(record.get("RelativeImagePath") or ""))
                 if not rel:
                     raise ValueError("empty RelativeImagePath")
                 dds_rel = _norm_rel(str(record.get("DDSFilePath") or ""))
+                mod_id = normalize_mod_id(str(record.get("ModID") or mod_folder))
                 me = MetadataEntry(
-                    folder,
+                    mod_folder,
                     rel,
                     dds_rel,
                     int(record.get("Width") or 0),
                     int(record.get("Height") or 0),
+                    mod_id,
                 )
             except Exception as exc:
                 index.parse_errors[entry.name] = f"{path.name} record {lineno}: {exc}"
                 continue
             index.entries.append(me)
-            index.by_key[(folder.casefold(), rel.casefold())] = me
+            index.by_key[(mod_folder.casefold(), rel.casefold())] = me
             index.by_rel.setdefault(rel.casefold(), []).append(me)
+            index.by_modid_rel.setdefault(
+                (me.mod_id.casefold(), rel.casefold()), []
+            ).append(me)
     return index
 
 

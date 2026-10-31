@@ -138,3 +138,53 @@ def test_metadata_bad_record_does_not_abort(mini_game):
     assert [me.rel for me in md.entries if me.mod_folder == "partly"] == [
         "graphics/ok.png", "graphics/ok2.png",
     ]
+
+
+def test_metadata_resolve_uses_mod_id_after_folder_rename(mini_game):
+    from conftest import _write
+    _write(
+        mini_game / "mods" / "DDSCache" / "old_c_folder" / "dds_metadata.json",
+        json.dumps([{
+            "ModID": "mod_c",
+            "ModFolderName": "old_c_folder",
+            "RelativeImagePath": "graphics\\c.png",
+            "DDSFilePath": "\\mods\\DDSCache\\old_c_folder\\graphics\\c.dds",
+            "Width": 3,
+            "Height": 4,
+        }]),
+    )
+    md = read_dds_metadata(mini_game)
+    hit = md.resolve("mod_c", "new_c_folder", "graphics/c.png")
+    assert hit is not None
+    assert hit.mod_folder == "old_c_folder"
+    assert hit.mod_id == "mod_c"
+
+
+def test_metadata_resolve_prefers_exact_folder(mini_game):
+    md = read_dds_metadata(mini_game)
+    hit = md.resolve("mod_a", "mod_a", "graphics/ships/h_alpha.png")
+    assert hit is not None and hit.mod_folder == "mod_a"
+
+
+def test_metadata_core_mod_id_is_normalized(mini_game):
+    md = read_dds_metadata(mini_game)
+    hit = md.resolve("core", "renamed-core", "graphics/ships/h_core.png")
+    assert hit is not None and hit.mod_id == "core"
+
+
+def test_metadata_resolve_ambiguous_mod_id_returns_none(mini_game):
+    from conftest import _write
+    for folder, rel in (("dup_a", "graphics/dup.png"), ("dup_b", "graphics/dup.png")):
+        _write(
+            mini_game / "mods" / "DDSCache" / folder / "dds_metadata.json",
+            json.dumps([{
+                "ModID": "mod_dup",
+                "ModFolderName": folder,
+                "RelativeImagePath": rel.replace("/", "\\"),
+                "DDSFilePath": "\\mods\\DDSCache\\{}\\graphics\\dup.dds".format(folder),
+                "Width": 1,
+                "Height": 1,
+            }]),
+        )
+    md = read_dds_metadata(mini_game)
+    assert md.resolve("mod_dup", "renamed", "graphics/dup.png") is None
