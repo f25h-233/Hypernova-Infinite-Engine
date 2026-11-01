@@ -13,6 +13,17 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # Git Bash/MSYS 下 javac/jar/javap 是原生 Windows 程序，不认 /d/... 路径，统一转成 D:/...
 winpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s\n' "$1"; fi; }
 ROOT_W="$(winpath "$ROOT")"
+# M2.7 W6：发行前强制重建 agent jar，避免把旧代理打进包里；随后校验新鲜度。
+AGENT_JAR="$ROOT_W/build/agent/hypernova.agent.jar"
+bash "$ROOT_W/tools/java/build-agent.sh" >/dev/null
+if [ ! -s "$AGENT_JAR" ]; then
+  echo "FATAL: agent jar missing after build-agent.sh" >&2
+  exit 1
+fi
+if find "$ROOT_W/src/agent/java" -name '*.java' ! -path '*/tools/*' -newer "$AGENT_JAR" | grep -q .; then
+  echo "FATAL: agent jar is older than agent sources (stale build)" >&2
+  exit 1
+fi
 GAME="$ROOT_W/Starsector-098-Base/starsector-core"
 OUT="$ROOT_W/build/java"
 CP="$GAME/starfarer.api.jar;$GAME/json.jar;$GAME/lwjgl.jar;$GAME/log4j-1.2.9.jar"
@@ -46,10 +57,9 @@ MODDIR="$OUT/hypernova-mod"
 rm -rf "$MODDIR"; mkdir -p "$MODDIR/jars" "$MODDIR/data/config/hypernova"
 cp "$OUT/hypernova.jar" "$MODDIR/jars/hypernova.jar"
 cp "$ROOT_W/mod_info.json" "$MODDIR/mod_info.json"
-# 可选 agent：构建过就放进 mod 包；是否启用由 install_agent.py 决定。
-if [ -f "$ROOT_W/build/agent/hypernova.agent.jar" ]; then
-  cp "$ROOT_W/build/agent/hypernova.agent.jar" "$MODDIR/jars/hypernova.agent.jar"
-fi
+# M2.7 W6：agent jar 已在上方强制构建，无条件打包；README 说明目标机安装步骤（W5）。
+cp "$AGENT_JAR" "$MODDIR/jars/hypernova.agent.jar"
+cp "$ROOT_W/tools/java/README-install.txt" "$MODDIR/README-install.txt"
 # 注意 `cp -r data/. <dst>` 而不是 `cp -r data <dst>`：后者在 dst 存在时会嵌套成 data/data/。
 mkdir -p "$MODDIR/data"
 cp -r "$ROOT_W/data/." "$MODDIR/data/"
@@ -84,6 +94,9 @@ if [ -f "$MODDIR/jars/hypernova.agent.jar" ]; then
     | grep -qx 'jars/hypernova.agent.jar' \
     || { echo "FATAL: zip 缺少 jars/hypernova.agent.jar" >&2; exit 1; }
 fi
+# M2.7 W5/W6：发行包门禁（README/manifest/skip generation/宿主 v2 路径/agent 一致性/新鲜度）。
+python -I "$ROOT_W/tools/release_check.py" --zip "$OUT/hypernova-0.1.0.zip" \
+  --agent-jar "$AGENT_JAR" --sources "$ROOT_W/src/agent/java"
 echo "OK: $MANIFEST_DIST (dist artifact, not tracked)"
 echo "OK: $ROOT/build/java/hypernova-mod"
 echo "OK: $ROOT/build/java/hypernova-0.1.0.zip"
