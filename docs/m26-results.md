@@ -13,25 +13,32 @@
 
 1. **Task 0 门禁全部落地**：generation 运行期校验、I2 尺寸、I3 drained、m4 `loadTextureAsync`、null lookup。
    修复后 Lazy 41/41；全量 agent 146 found / 145 pass / 1 known symlink abort / 0 fail；pytest 279 passed。
-2. **DDS 路径真实生效**：260mods 菜单 treatment `ddsHit=18–32`（中位 21）、`ddsFallback=2`、`ddsDisabled=0`、
-   `ddsDimMismatch=0`；`failed=0`、`disabled=0`。Base `ddsHit=21`，`ddsDisabled/ddsDimMismatch` 同为 0。10 个归档会话 0
-   `Failed to load texture` / 0 `VerifyError` / 0 `ClassFormatError` / 0 `AsyncException` / 0 `isStateCorrupted`。
-3. **菜单 A/B（n=3，miko-lite，warm）没有明确时间收益**：control 中位 **52.6 s** vs treatment **54.6 s**，
-   delta **+2.0 s**，成对差 **−3.0 / +7.0 / +2.0 s**。+2.0 s 正好落在计划 ≤2 s 的边界上；成对差跨 10 s、
-   同主机跨 run 中位漂移约 4–7 s，因此**既不能确认 +2.0 s 是真实回退，也不能宣称菜单时间不受影响或受益**。
-   v2 索引加载 147–178 ms 是 treatment-only（后台线程），但 pre-fix A/B（同一 25 MB v2 索引）为 −0.5 s；
-   噪声主导。本文件只把它记为边界值，不据此下任何方向性结论。
-4. **逐进程 GPU（新指标，`57b9b0b`）方向一致**：菜单时 dedicated control **804.8–927.0 MB** vs treatment
-   **368.9–496.6 MB**；三对差 **−558.1 / −308.2 / −430.4 MB**（3/3 更低）。系统级 `gpu_menu_mb` 也 3/3 同向
-   （−253 / −203 / −512 MB），仅作旁证。该指标是 OS 逐进程快照，不是逐纹理/VRAM 精确账；`ddsBytes` 不含
-   mip 链，`liveBytes` 是估算值。
-5. **Selftest 走通 materialize → evict → re-materialize**：`selftest=1`、`evicted=1`、`rematerialized=1`、
-   `placeholder=15165`、ids **15166→15164**、`dds=1`；只淘汰 1 条不可见纹理，**不等价于战斗/A→B 验收**。
-6. **LRU 默认 off，自动化淘汰证据只有 selftest**：菜单 A/B `evicted=0` 是预期的（启动期物化被 startup
-   闩锁永久保护）；`evictPasses=0`，自动 `evictPass` 未在真实会话中触发过；按当前 state 结构，换名切换点
-   结构上不触发（机制与 default-on 门槛见 §7.7）。
-7. **Base gate 通过**：all gates true；`skipped=proxies=2,330`、`ddsHit=21`、`failed=0`、`disabled=0`；
-   进程 GPU dedicated 451.6 vs 274.4 MB；菜单 8.5 vs 6.5 s；0 错误。
+2. **DDS 路径真实生效**：修后 260mods 菜单 A/B treatment `ddsHit=18–29`（中位 26）、`ddsFallback=2`、
+   `ddsDisabled=0`、`ddsDimMismatch=0`；`failed=0`、`disabled=0`（`build/m26/ab-fix.json`）。修前 Task 4
+   为 `ddsHit=18–32`（中位 21）；Base `ddsHit=21`（Task 4，本次未重跑）。修后 6 个 A/B 会话 0
+   `Failed to load texture` / 0 `VerifyError` / 0 `ClassFormatError` / 0 `AsyncException` / 0
+   `isStateCorrupted`。
+3. **修后菜单 A/B（n=3，miko-lite，warm，eviction off）没有明确时间收益**：control 中位 **52.6 s** vs
+   treatment **54.6 s**，delta **+2.0 s**，成对差 **+2.5 / +2.0 / −0.5 s**（成对中位 +2.0 s）。+2.0 s
+   仍正好落在计划 ≤2 s 的边界上；成对差收窄到 3 s 以内，但同主机跨 run 中位漂移约 4–7 s，且第 1 对
+   是明显 warm-up（67.6/70.1 s），因此**既不能确认 +2.0 s 是真实回退，也不能宣称菜单时间不受影响或
+   受益**。v2 索引加载（`index=73,447`，后台线程，treatment-only）仍是真实成本；本文件只把 +2.0 s
+   记为边界值，不据此下方向性结论。修前表见 §3，修后表见 §3.2。
+4. **逐进程 GPU（`gpu_process_dedicated_mb`）方向一致**：修后菜单时 dedicated control **927.0 MB** vs
+   treatment **496.6 MB**（3/3 对均为该值），三对差 **−430.4 MB**；系统级 `gpu_menu_mb` 也 3/3 同向
+   （−625 / −427 / −439 MB），仅作旁证。修前 Task 4 为 control 804.8–927.0 vs treatment 368.9–496.6 MB。
+   该指标是 OS 逐进程快照，不是逐纹理/VRAM 精确账；`ddsBytes` 不含 mip 链，`liveBytes` 是估算值。
+5. **Selftest 走通 materialize → evict → re-materialize**：修后默认预算（`build/m26/selftest-fix.json`）
+   `selftest=1`、`evicted=1`、`rematerialized=1`、`placeholder=15165`、`evictPasses=0`（默认 256 MB
+   预算无压力，符合预期）、`ddsHit=24`、`ddsFallback=2`、0 错误；budget=1 smoke（`fix-auto.json`）另见
+   §5：`evictPasses=69`、`evicted=455`、`rematerialized=447`。selftest 只淘汰 1 条不可见纹理，
+   **不等价于战斗/A→B 验收**。
+6. **LRU 默认 off；自动 trigger 已在真实进程证明**：`fix-auto.json`（budget=1、grace=0、
+   sceneDelay=100 ms、selftest=1）得到 `evictPasses=69`、`evicted=455`、`rematerialized=447`、
+   `selftest=1`、`placeholder=15165`、0 错误；菜单 A/B（eviction off）`evicted=0/evictPasses=0` 仍是
+   预期。自动 `evictPass` 调度（I-1）已证明；**真实自动 victim（战斗/长会话）仍需用户验收**。
+7. **Base gate 通过（Task 4；Task 2 未重跑）**：all gates true；`skipped=proxies=2,330`、`ddsHit=21`、
+   `failed=0`、`disabled=0`；进程 GPU dedicated 451.6 vs 274.4 MB；菜单 8.5 vs 6.5 s；0 错误。
 8. **默认 off / 回滚不变**：`textures.lazy.enabled=false`、`textures.lazy.eviction.enabled=false`；
    DDS 仅在 lazy 开启时默认 true；未改任何游戏配置/存档。
 
@@ -68,10 +75,20 @@
   1 known symlink abort / 0 fail、pytest 287 passed。
 - **Task 5（本条 docs commit）**：本文件 + `技术笔记-纹理按需加载.md` §6.1/§7 状态 +
   `大饼-DDS按需物化与LRU.md` 状态行。未改代码/测试/工具，未启动游戏。
+- **Task 2 fix（`35fc768` + `01cf3e1`）I-1/I-2**：`maybeRunEviction` 从
+  `lookup`/`onProxyUse`/`noteGameState` 确定性触发；真实 `Global.getCurrentState()==COMBAT`
+  门禁；部分 pass 重 arm + 空 pass 30 s backoff；`selectVictims`/`evictOne` 只淘汰 `owned=true`
+  （DDS/PNG 物化 owned=true，engine-owned 排除）。测试：`LazyEviction` 14/14；full agent 172
+  found / 171 pass / 1 known symlink abort / 0 fail；pytest 287 passed。
+- **Task 2（本 docs commit）**：修后 budget=1 auto smoke（`build/m26/fix-auto.json`）、默认预算
+  selftest（`selftest-fix.json`）、A/B n=3（`ab-fix.json`）；更新本文件 §1/§3/§5/§7/§8、
+  `技术笔记` M2.6 状态与 `大饼` 状态行。未启动 manual visual，未改默认值。
 
 ---
 
-## 3. 菜单 A/B 原始表
+## 3. 菜单 A/B 原始表（修前 Task 4）
+
+> 修后 A/B（Task 2，`build/m26/ab-fix.json`）见 §3.2；下表为修前 Task 4 原始表，保留用于对比。
 
 协议：260mods（miko-lite）、warm、DDS on、eviction/selftest off、`--linger 20`、3 轮，每轮固定先 C 后 T
 （未做 counterbalance），`build/m26/ab-result.json`。Control 只传 `-Dhypernova.textures.lazy=false`；
@@ -126,6 +143,29 @@ treatment 传 `-Dhypernova.textures.lazy=true -Dhypernova.textures.lazy.dds=true
 - Base 单对是反面例子：逐进程 dedicated 451.6 → 274.4 MB（−177.2），但系统级 `gpu_menu_mb` 2669 → 2951
   （**+282**，方向相反）。这正说明系统级只能作旁证，不能单独引用。
 
+### 3.2 修后 A/B（Task 2，`build/m26/ab-fix.json`）
+
+协议与 §3 相同（miko-lite、warm、DDS on、eviction/selftest off、`--linger 20`、3 轮、每轮先 C 后 T、
+未做 counterbalance）；`free_mb_start=15,227.6 MB`；6 个会话全部 `ok=true`、`stop=forced`。
+
+| # | C menu | T menu | C WS | T WS | C GPU proc | T GPU proc | C GPU sys | T GPU sys | ddsHit | ddsFallback | materialized |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 67.6 | 70.1 | 11,233.2 | 10,962.3 | 927.0 | 496.6 | 2,693.0 | 2,068.0 | 18 | 2 | 85 |
+| 2 | 52.6 | 54.6 | 10,977.4 | 11,455.9 | 927.0 | 496.6 | 2,518.0 | 2,091.0 | 26 | 2 | 93 |
+| 3 | 52.1 | 51.6 | 11,006.0 | 10,972.0 | 927.0 | 496.6 | 2,517.0 | 2,078.0 | 29 | 2 | 96 |
+
+- **control_median = 52.6 s，treatment_median = 54.6 s，delta_s = +2.0 s；成对差
+  `[+2.5, +2.0, −0.5]`，成对中位 +2.0 s**（JSON 原值）。第 1 对为 warm-up（67.6/70.1 s）。
+- 成对 WS 差 = −270.9 / +478.5 / −34.0 MB，方向不一致，不作为收益/回退口径。
+- 逐进程 GPU 成对差 = **−430.4 MB ×3**（3/3 treatment 更低）；系统级成对差 = −625 / −427 / −439 MB
+  （3/3 更低，仅旁证）。退出时逐进程 dedicated 也全部更低（control 959.5 / 964.7 / 964.6 vs
+  treatment 526.3 / 533.4 / 531.6 MB）。
+- 所有 gates true（`all_rounds_ok`、`no_texture_errors`、`failed/disabled/dimMismatch/ddsDisabled=0`、
+  `ddsHit>0`）；6 会话 0 Failed/Verify/Class/Async/Corrupted。
+- `lazy_median`：`ddsHit=26`（18–29）、`ddsFallback=2`、`materialized=93`（85–96）、
+  `skipped=proxies=drained=45,784`、`index=73,447`、`eviction=evicted=evictPasses=0`、
+  `failed=disabled=dimMismatch=0`。
+
 ---
 
 ## 4. Lazy / DDS / 淘汰计数
@@ -156,13 +196,33 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
   PNG 路径（M-1b 已核实 normal 不在 DDSCache）。`ddsFallback=2` 在 260mods 与 Base 的**每个**会话都恒定；
   这些是设计上静默的回退分支（缺 DDS 元数据/桥接 miss），不逐条记日志，也不是失败（PNG 回退），但没有
   被诊断到具体路径。
-- `evicted=0` 是菜单 A/B 的预期值：A/B 本身 `eviction=false`；即使开启，85–99 次物化主要发生在 FR
-  loading 线程、被 `markStartup` 一次性闩锁永久排除，菜单期也没有预算压力，且自动 `evictPass` 未触发
-  （`evictPasses=0`）。
+- `evicted=0` 是菜单 A/B（eviction off）的预期值：85–96 次物化（修前 85–99）主要发生在 FR loading
+  线程、被 `markStartup` 一次性闩锁永久排除，菜单期也没有预算压力；`evictPasses=0` 是配置关闭的结果。
+- Task 2 修后 A/B（`ab-fix.json`）的 `lazy_median`：`index=73,447`（安装器本次生成 73,447 行；
+  `skipped=proxies=45,784` 不变）、`ddsHit=26`、`ddsFallback=2`、`materialized=93`、
+  `failed=disabled=dimMismatch=0`、`evicted=evictPasses=0`。
 
 ---
 
 ## 5. Selftest
+
+**修后（Task 2，2026-11-02）**：
+
+- `build/m26/selftest-fix.json`（`--eviction --selftest`，默认预算 256 MB，1 对 C/T）：treatment
+  `selftest=1`、`evicted=1`、`rematerialized=1`、`evictPasses=0`（无预算压力，符合预期）、
+  `placeholder=15165`、`ddsHit=24`、`ddsFallback=2`、`failed=disabled=dimMismatch=0`；C/T 菜单
+  66.1/68.1 s；两侧 0 Failed/Verify/Class/Async/Corrupted；gates 全 true。
+- `build/m26/fix-auto.json`（budget=1、grace=0、sceneDelay=100 ms、selftest=1，单轮 smoke）：
+  `evictPasses=69`、`evicted=455`、`evictedBytes=25,666,296`、`rematerialized=447`、
+  `materialized=545`、`ddsHit=342`、`ddsFallback=138`、`placeholder=15165`、`selftest=1`、
+  `failed=disabled=dimMismatch=0`，0 Failed/Verify/Class/Async/Corrupted。菜单 73.6 s 是低 free
+  内存（2,962 MB）下的单次 smoke，不作时间口径。**自动 `evictPass` 触发已证明**（agent log：
+  `lazy: eviction pass evicted=14 ... budget=1048576` 等 69 次）。
+- 观察项：budget=1 时 `ddsFallback=138`（平时为 2），说明淘汰后的重新物化有一部分走了 PNG 回退；
+  不影响失败门禁，但会削弱淘汰后的 DDS 内存收益；具体原因未诊断（可能为 FR DDS TextureData
+  不可重取），留给 default-on 验收。
+
+修前（Task 4）：
 
 `build/m26/selftest.json`（1 control + 1 treatment，`--eviction --selftest --linger 20`，DDS on）；
 菜单 control 51.1 s / treatment 51.6 s；两侧 0 Failed/Verify/Class/Async/Corrupted。Treatment：
@@ -204,6 +264,9 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
   `Failed to load texture` / 0 `VerifyError` / 0 `ClassFormatError` / 0 `AsyncException` /
   0 `isStateCorrupted`。错误计数来自聚合 JSON（`ab-result.json` / `selftest.json` / `base-ab.json`）与
   live agent log；selftest 的归档日志被后续 run 覆盖（§7.10），不能作为独立切片复核。
+- Task 2 修后另有 **9 个会话**（fix-auto 1 + selftest-fix 2 + ab-fix 6），同样每会话 0
+  `Failed to load texture` / 0 `VerifyError` / 0 `ClassFormatError` / 0 `AsyncException` /
+  0 `isStateCorrupted`（`fix-auto.json` / `selftest-fix.json` / `ab-fix.json` 归档切片）。
 - agent：260mods `failed=0`、`disabled=0`、`pending=0`、`drained=45,784`；Base `failed=0`、`disabled=0`、
   `drained=2,330`；两侧 `dimMismatch=0`、`lateRegistered=lateLoaded=0`、`deferredDeletes=0`。
 - Live 日志确认 bridge 形状：`lazy: GL delete bridge resolved on com.genir.renderer.bridge.opengl.GL11`；
@@ -215,8 +278,8 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
 
 ## 7. 限制 / 偏差
 
-1. **菜单 only、n=3**（另有一次 pre-fix 3 轮采样和 Base 1 对）：只回答自动化菜单锚点下的计数/正确性；
-   无随机化、无 CI、无显著性检验。**战斗/读档/分辨率/手动目检未做，pending user。**
+1. **菜单 only、修前/修后各 3 轮**（另有 pre-fix A/B 3 轮和 Base 1 对）：只回答自动化菜单锚点下的
+   计数/正确性；无随机化、无 CI、无显著性检验。**战斗/读档/分辨率/手动目检未做，pending user。**
 2. **A→B 长会话净 VRAM 未测**：逐进程 GPU 是菜单时/退出时快照（n=3），不是战斗/长会话 trace；不得据此
    宣称长会话净收益。
 3. **>200 ms 卡顿未测**：没有 frame-time/P99/stutter 数据；selftest 只在菜单做一次
@@ -224,28 +287,28 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
 4. **GL context 重建后的占位**（alt-tab/分辨率/显示模式/FR 重启）：未测。`PLACEHOLDER_FAILED` 是会话级
    一次性闩锁；context 重建会一次性作废所有 GL id，占位 id 可能悬空（预期表现为不可见/未定义，不崩溃），
    但没有检测/重解析逻辑。
-5. **第三方按 id 缓存 + 引擎真实对象（I-2）**：mod 若把 `ô00000` 的 GL id 拷进自有结构，淘汰后可能持有
-   已删 id；selftest 选中的纹理在淘汰前从未 ready（没有外部持有者），所以本轮不能覆盖该风险。**引擎侧
-   变体**：F3/cache-clear 场景下 `onRegister`/`noteEngineHit` 把引擎新建的真实对象字段（含 GL id）拷进
-   代理并置 `owned=false`；而 `selectVictims`/`evictOne` 目前不检查 `owned`，只按
-   `ready/bytes/glId/startup/basic/grace` 选受害者，因此可能删掉一个仍被引擎 map 或 mod 持有的真实对象
-   的 GL id（下一次 bind 得到空纹理/白块），且没有 REQ-R1-10 要求的引用计数/“仍被引用则拒绝并记录”。
-   selftest 只覆盖 `owned=true` 的 DDS 代理。**这是 default-on gate，不是 push blocker（eviction 默认
-   off）。**
+5. **第三方按 id 缓存 + 引擎真实对象（I-2，已修）**：`selectVictims`/`evictOne` 现在只接受
+   `owned=true`；DDS 与 PNG 物化均置 `owned=true`，`onRegister`/`noteEngineHit`/`refreshReady`
+   保持 `owned=false`。因此 F3/cache-clear 场景下由引擎真实对象刷进来的代理（含 GL id）不会再被
+   淘汰。**仍余**：mod 若把 GL id 拷进自有结构，淘汰后仍可能持有已删 id；REQ-R1-10 要求的引用计数/
+   “仍被引用则拒绝并记录”没有全局注册表，无法实现；owned PNG 来自 `TextureLoader` syncLoad，若该
+   id 被引擎/mod 共享，删除仍可能影响其它引用。selftest 只覆盖无外部持有者的单条代理。
+   **default-on gate 缩小但未消失（eviction 默认 off）。**
 6. **pick→evict 的 TOCTOU**：picker 过滤 `ready/failed/startup/basic`，但 `evictOne(pick, true)` 用
    `force=true` 绕过 startup/basic 的二次检查；pick 与 evict 之间若有并发 off-main 物化，可能淘汰刚被标记
    startup 的代理。菜单期未观察到（`pending=0`、`drained=45,784`、loading 线程空闲）；战斗/加载并发未测。
-7. **自动 `evictPass` 调度不成立（I-1；default-on gate）**：`evictPass()` 唯一调用点是 `noteGameState`，
-   `noteGameState` 唯一调用点是 `captureMainThread`，钩子只加在 `BaseGameState.traverse` 头部；而
-   `BaseGameState.traverse` 是**每个 state 入口执行一次**的帧循环，不是每帧被外部调用。每个**换名**入口
-   都先重置 `evictDueNanos = now + delay` 再立刻检查 `now >= due`——`delay > 0` 时当次必不执行，下一次
-   换名入口又重置 due，所以**任何换名切换点都不会触发**；唯一能执行的是之后某次 `noteGameState` 与
-   `lastStateName` **同名**且 due 已过的情况。`CombatState`/`ResourceLoaderState` 实现 `AppState` 且
-   **不继承 `BaseGameState`**，根本不进 hook，`isCombatState` 保护是**空转**。菜单-only 会话只有一次
-   BaseGameState 入口，`evictPasses=0` 是**结构性**的，不是“这次没赶上”。`evictPass` 一次最多淘汰 64
-   条，之后即使仍超预算也**不重新 arm**；`drainPendingDeletes` 共用同一稀疏触发。A/B 与 selftest 均
-   `evictPasses=0`，且 selftest 直接调 `evictOne`、绕过 `evictPass`。**结论：自动有界 LRU 调度未被
-   证明**（“每次状态切换触发”不成立），这是 default-on gate，不是 push blocker（eviction 默认 off）。
+7. **自动 `evictPass` 调度（I-1，已修）**：旧实现在本 build 结构性不触发（`evictPass` 唯一调用点
+   `noteGameState` 只在 state 入口执行一次，换名入口先重置 due 再检查，`delay>0` 当次必不执行；
+   `isCombatState` 空转）。现实现：`maybeRunEviction` 由每帧主线程路径 `lookup`/`onProxyUse` 与
+   `noteGameState` 确定性调用；`noteGameState` 只在换名时 arm，实际执行在后续主线程热路径到达 due
+   时；战斗门禁改为真实 `Global.getCurrentState()==COMBAT`（反射，探测失败保守按战斗处理）；删除
+   `isCombatState`；`evictPass` 结束按 `nextDueAfterPass` 重 arm（部分 pass 继续，空 pass 30 s
+   backoff）；`noteMaterialized` 在 due==0 且 live>budget 时预算 arm。**真实进程证据**
+   （`build/m26/fix-auto.json` + agent log，budget=1/grace=0/sceneDelay=100 ms）：
+   `evictPasses=69`、`evicted=455`、`rematerialized=447`、`selftest=1`、`placeholder=15165`、
+   `failed=disabled=dimMismatch=0`、0 Failed/Verify/Class/Async/Corrupted。自动 trigger 已证明；
+   战斗/长会话中的真实自动 victim 选择、stutter、长会话净 VRAM 仍需用户验收（selftest 仍直接调
+   `evictOne`、不增加 `evictPasses`）。
 8. **逐进程 GPU 是快照，不是 VRAM 账**：OS 逐进程计数，不能逐纹理归因；`ddsBytes` 不含 mip；
    `liveBytes`/`evictedBytes` 是估算值；系统级 `gpu_menu_mb` 只作旁证（Base 单对甚至方向相反：逐进程
    451.6→274.4 MB，系统级 2669→2951 MB）。
@@ -268,13 +331,14 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
 14. **Selftest 触发偏差**：见 §5；"noteGameState 计时器"在本 build 的菜单-only 会话不成立，实际是
     `maybeRunSelfTest()` 的主线程一次性门。该偏差已由 Task 4 review 复核（runtimeMain/CAS/≥5 s/无 worker
     触发），但战斗/读档下的触发时机未测。
-15. **default-on gates（默认开启 / 对外“可选显存优化”声明前必须修）**：I-1（自动 `evictPass` 触发语义 +
-    部分 pass 重 arm + 单测 + 文档）、I-2（`owned`/引用计数，或显式只淘汰本组件创建的 id；引擎/mod
-    持有者风险文档化）、M-4（安装可复现，见 §8.3）、M2.5 W5/W6（发行包 manifest/skip 与 agent jar
-    新鲜度）、W-2/W-3/W-5/W-10（GL context 重建后的占位、第三方 id 持有者、pick→evict TOCTOU、失败
-    物化 id=0），以及用户完成战斗/读档/分辨率/手动目检、A→B 长会话净 VRAM、>200 ms 卡顿；并明确
-    REQ-R1-10 的引用计数/进出星系 100 次 id 不增长/working set 漂移 ≤200 MB/“仍被引用则拒绝并记录”
-    **未验收**。在这些项关闭前，不得声称 bounded LRU 已在真实会话自动工作，也不得对外称“可选显存
+15. **default-on gates（默认开启 / 对外“可选显存优化”声明前必须修）**：**I-1（自动 `evictPass`
+    调度）与 I-2（owned-only）已在 `35fc768` + `01cf3e1` 修复**，budget=1 真实进程 smoke 已见
+    `evictPasses=69`（§5/§7.7）。仍余：refcount/REQ-R1-10（“仍被引用则拒绝并记录”）、第三方按 id
+    缓存、M2.5 W5/W6（发行包 manifest/skip 与 agent jar 新鲜度）、W-2/W-3/W-5/W-10（GL context
+    重建后的占位、第三方 id 持有者、pick→evict TOCTOU、失败物化 id=0），以及用户完成战斗/读档/
+    分辨率/手动目检、A→B 长会话净 VRAM、>200 ms 卡顿（M-4 安装可复现已由 `install-manifest.sh`
+    的 blank 断言 + §8.3 命令记录覆盖）。在这些项关闭前，不得声称 bounded LRU 已在
+    真实会话自动工作（自动 trigger 已证明，真实自动 victim/长会话未验收），也不得对外称“可选显存
     优化”。
 
 ---
@@ -308,6 +372,12 @@ skip v1/v2 可以保留；关闭后不读取、不跳过、不注册代理，行
 - Task 4 是**手工**把 `blank.png` 复制到 `starsector-core/graphics/hypernova/` 才使 `placeholder=15165`
   成立；`tools/java/install-manifest.sh` 现在会在拷贝 mod `graphics/` 之后自动复制该文件并断言非空，
   失败时报 `ERROR`。
+- **Task 2（修后重装，2026-11-02）**：`run-agent-tests.sh` → `build-mod.sh` → 两侧
+  `install_manifest.py --game-root <game>` → 两侧 `install_agent.py --game <game> --env <260mods-lite|base>`
+  → `cp -r graphics/. <mod>/graphics/` 与 `cp graphics/hypernova/blank.png
+  <game>/starsector-core/graphics/hypernova/`。随后校验：两侧 `hypernova.agent.jar` 与
+  `build/agent/hypernova.agent.jar` `cmp` 一致；manifest/skip 非空；两侧 core `blank.png` 非空；
+  两次 `install_agent.py` 均报 `no vmparams change`（仅刷新 jar）。
 
 ### 8.4 文件与证据
 
@@ -315,16 +385,19 @@ skip v1/v2 可以保留；关闭后不读取、不跳过、不注册代理，行
   `graphics/hypernova/blank.png`；`tools/{gen_lazy_skip.py,install_manifest.py,m26_ab.py}`；
   `tools/java/{build-mod.sh,install-manifest.sh}`。
 - 测试：`tests/agent/java/hypernova/agent/textures/{LazyGateTest,LazyEvictionTest,DdsCheckTest,DdsBridgeTest,GlBridgeTest}.java`、
-  `tests/tools/test_m26_ab.py` 等（全量 agent 165 found / 164 pass / 1 known symlink abort / 0 fail；
-  pytest 287 passed，Task 4 最终 jar 时点）。
+  `tests/tools/test_m26_ab.py` 等（Task 4 时点全量 agent 165 found / 164 pass / 1 known symlink abort /
+  0 fail；Task 2 fix 后 172 found / 171 pass / 1 known symlink abort / 0 fail；pytest 287 passed）。
 - 运行证据（`build/` 不入库）：`build/m26/ab-result.json`、`ab-result-prefix.json`、`selftest.json`、
-  `base-ab.json`、`logs/`、`logs-base/`、`probe/`、`ab-run2.log`、`selftest-run.log`、`base-run.log`。
+  `base-ab.json`、`logs/`、`logs-base/`、`probe/`、`ab-run2.log`、`selftest-run.log`、`base-run.log`；
+  修后证据：`build/m26/fix-auto.json`、`selftest-fix.json`、`ab-fix.json`、`ab-fix-run.log`。
 
 ### 8.5 commits
 
 - 计划/addenda：`0a88714`、`68bb9fb`、`c2fe8ed`、`a2135b8`、`e2b66ae`、`2b66373`
 - 实现：`7fbb9e6`（Task 0）、`f2f3625`（Task 1）、`e5c7fcf`（Task 0 F1/F2）、`5d982e4`（Task 2）、
   `8d01fe1`（Task 3）、`d2e1cb9`（Task 2 C1/I1/I2）、`b716f74`（Task 3 I2）、`ad16a4d`（Task 4）
+- 修后 gates：`35fc768`（I-1 确定性触发 + I-2 owned-only）、`01cf3e1`（bind recency + 测试强化）
 - 工具：`57b9b0b`（逐进程 GPU 采样）
 - 文档：`e02bff6`（本文件 + `技术笔记` §6.1 的 M2.5 W1 → 逐进程 GPU 口径行 + §7 M2.6 状态 +
-  `大饼` 状态行）；本条 review-fix docs commit（4 个文字更正，见 `.superpowers/sdd/2026-11-01-m26-dds-lru/task-5-fix-report.md`）。
+  `大饼` 状态行）；本条 review-fix docs commit（4 个文字更正，见 `.superpowers/sdd/2026-11-01-m26-dds-lru/task-5-fix-report.md`）；
+  Task 2 docs commit（本提交，修后 A/B/selftest/auto 证据 + gates 更新）。
