@@ -187,3 +187,15 @@ def test_counterbalance_reverses_even_rounds(tmp_path, monkeypatch):
     assert ab.main(["--rounds", "2", "--counterbalance", "--agent-log", str(agent),
                     "--out", str(out)]) == 0
     assert calls == [False, True, True, False]
+
+
+def test_archive_round_missing_log_returns_zero_row(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    monkeypatch.setattr(ab, "ROOT", tmp_path)
+    monkeypatch.setattr(ab, "PROFILES", {"fake": {"game": "game"}})
+    row = ab.archive_round("fake", "c", 1, tmp_path / "out")
+    assert row["log"] is None
+    assert row["log_present"] is False
+    assert row["failed"] == row["verify"] == row["class_errors"] == 0
+    assert row["async_errors"] == row["corrupted"] == 0
