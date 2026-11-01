@@ -1,5 +1,7 @@
 package hypernova.agent;
 
+import hypernova.agent.textures.LazyDrainTransformer;
+import hypernova.agent.textures.LazyGameThreadTransformer;
 import hypernova.agent.textures.LazyTextureConfig;
 import hypernova.agent.textures.LazyTextureTransformer;
 import hypernova.agent.textures.LazyTextures;
@@ -37,17 +39,19 @@ public final class HypernovaAgent {
             instrumentation.addTransformer(new StartupTimelineTransformer(), false);
             try {
                 LazyTextureConfig lazy = LazyTextureConfig.load();
-                if (lazy.probe()) {
+                if (lazy.enabled() || lazy.probe()) {
                     if (!frPresent()) {
-                        AgentLog.info("lazy probe: FR missing; probe disabled");
+                        AgentLog.info("lazy: FR missing; lazy textures disabled");
                     } else {
                         instrumentation.addTransformer(new LazyTextureTransformer(), false);
+                        instrumentation.addTransformer(new LazyGameThreadTransformer(), false);
+                        instrumentation.addTransformer(new LazyDrainTransformer(), false);
                         LazyTextures.start(lazy);
-                        AgentLog.info("lazy probe transformer registered");
+                        AgentLog.info("lazy: transformers registered");
                     }
                 }
             } catch (Throwable t) {
-                AgentLog.fail("lazy probe init failed; continuing", t);
+                AgentLog.fail("lazy init failed; continuing", t);
             }
             try {
                 TexturePatchConfig textures = TexturePatchConfig.load();

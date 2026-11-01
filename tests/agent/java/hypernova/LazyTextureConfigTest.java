@@ -11,27 +11,45 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class LazyTextureConfigTest {
     @Test
-    void probeOffByDefault() {
-        LazyTextureConfig c = LazyTextureConfig.load(null, null, null);
+    void defaultsOff() {
+        LazyTextureConfig c = LazyTextureConfig.load(null, null, null, null);
+        assertFalse(c.enabled());
         assertFalse(c.probe());
         assertNull(c.skipFile());
     }
 
     @Test
-    void probeAndSkipFileFromProperties() {
-        LazyTextureConfig c = LazyTextureConfig.load("true", "C:/x/skip.txt", null);
-        assertTrue(c.probe());
+    void enabledFromProperty() {
+        LazyTextureConfig c = LazyTextureConfig.load("true", null, "C:/x/skip.txt", null);
+        assertTrue(c.enabled());
+        assertFalse(c.probe());
         assertEquals(Path.of("C:/x/skip.txt"), c.skipFile());
     }
 
     @Test
-    void skipFileDerivedFromModRoot(@TempDir Path dir) throws Exception {
-        Path mod = dir.resolve("mods/hypernova_infinite_engine");
-        Path cfg = mod.resolve("data/config/hypernova/hypernova.json");
+    void probeFromProperty() {
+        LazyTextureConfig c = LazyTextureConfig.load(null, "true", "C:/x/skip.txt", null);
+        assertFalse(c.enabled());
+        assertTrue(c.probe());
+    }
+
+    @Test
+    void configFileEnablesLazy(@TempDir Path dir) throws Exception {
+        Path cfg = dir.resolve("mods/hypernova_infinite_engine/data/config/hypernova/hypernova.json");
         Files.createDirectories(cfg.getParent());
-        Files.writeString(cfg, "{}");
-        LazyTextureConfig c = LazyTextureConfig.load(null, null, cfg);
-        assertFalse(c.probe());
-        assertEquals(mod.resolve("data/config/hypernova/lazy-skip-v1.txt"), c.skipFile());
+        Files.writeString(cfg, "{\"textures\":{\"lazy\":{\"enabled\":true}}}");
+        LazyTextureConfig c = LazyTextureConfig.load(null, null, null, cfg);
+        assertTrue(c.enabled());
+        assertEquals(dir.resolve("mods/hypernova_infinite_engine/data/config/hypernova/lazy-skip-v1.txt"),
+                c.skipFile());
+    }
+
+    @Test
+    void badConfigDefaultsOff(@TempDir Path dir) throws Exception {
+        Path cfg = dir.resolve("mods/hypernova_infinite_engine/data/config/hypernova/hypernova.json");
+        Files.createDirectories(cfg.getParent());
+        Files.writeString(cfg, "{not json");
+        LazyTextureConfig c = LazyTextureConfig.load(null, null, null, cfg);
+        assertFalse(c.enabled());
     }
 }

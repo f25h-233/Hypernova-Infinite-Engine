@@ -22,7 +22,9 @@ import java.security.ProtectionDomain;
  *
  * <p>Hook 2: com/fs/graphics/oOoO.get is the only global texture lookup. It is
  * renamed to hypernova$getOriginal and wrapped; the wrapper records demand and
- * returns exactly the same value.
+ * returns exactly the same value. The same class's static register method
+ * super(String,Object) gets an onRegister probe at its head so real objects that
+ * someone loads for a skipped path are absorbed into the proxy.
  */
 public final class LazyTextureTransformer implements ClassFileTransformer {
     public static final String TEXTURE_LOADER = "com/fs/graphics/TextureLoader";
@@ -32,6 +34,8 @@ public final class LazyTextureTransformer implements ClassFileTransformer {
     private static final String LAMBDA_DESC = "(Ljava/lang/String;Ljava/lang/String;Z)V";
     private static final String LOOKUP_DESC = "(Ljava/lang/String;)Lcom/fs/graphics/Object;";
     private static final String RENAMED_LOOKUP = "hypernova$getOriginal";
+    private static final String REGISTER_NAME = "super";
+    private static final String REGISTER_DESC = "(Ljava/lang/String;Lcom/fs/graphics/Object;)V";
 
     @Override
     public byte[] transform(ClassLoader loader, String className, Class<?> redefined,
@@ -120,6 +124,7 @@ public final class LazyTextureTransformer implements ClassFileTransformer {
         ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
         String[] found = {null};
         int[] count = {0};
+        boolean[] registerPatched = {false};
         ClassVisitor visitor = new ClassVisitor(Opcodes.ASM9, writer) {
             @Override
             public MethodVisitor visitMethod(int access, String name, String desc,
@@ -129,7 +134,22 @@ public final class LazyTextureTransformer implements ClassFileTransformer {
                     found[0] = name;
                     return super.visitMethod(access, RENAMED_LOOKUP, desc, signature, exceptions);
                 }
-                return super.visitMethod(access, name, desc, signature, exceptions);
+                MethodVisitor mv = super.visitMethod(access, name, desc, signature, exceptions);
+                if (REGISTER_NAME.equals(name) && REGISTER_DESC.equals(desc)
+                        && (access & Opcodes.ACC_STATIC) != 0) {
+                    registerPatched[0] = true;
+                    return new MethodVisitor(Opcodes.ASM9, mv) {
+                        @Override
+                        public void visitCode() {
+                            super.visitCode();
+                            super.visitVarInsn(Opcodes.ALOAD, 0);
+                            super.visitVarInsn(Opcodes.ALOAD, 1);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, HOOK, "onRegister",
+                                    "(Ljava/lang/String;Ljava/lang/Object;)V", false);
+                        }
+                    };
+                }
+                return mv;
             }
 
             @Override
@@ -150,6 +170,13 @@ public final class LazyTextureTransformer implements ClassFileTransformer {
         }
         AgentLog.info("lazy probe: repository lookup hook added to " + REPOSITORY
                 + " (method=" + found[0] + ")");
+        if (registerPatched[0]) {
+            AgentLog.info("lazy probe: engine map register hook added to " + REPOSITORY
+                    + " (method=" + REGISTER_NAME + ")");
+        } else {
+            AgentLog.info("lazy probe: engine map register hook missing in " + REPOSITORY
+                    + "; onRegister disabled");
+        }
         return writer.toByteArray();
     }
 

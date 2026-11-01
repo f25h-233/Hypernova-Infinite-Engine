@@ -1,21 +1,31 @@
 package hypernova.agent.textures;
 
+import org.json.JSONObject;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Task 1 probe configuration. Production skip mode is added by the M2.5
- * addendum (textures.lazy.enabled, default false); the probe is debug-only.
+ * Lazy-texture configuration.
+ *
+ * <p>enabled: textures.lazy.enabled in hypernova.json (default false) or
+ * -Dhypernova.textures.lazy=true. probe: -Dhypernova.textures.lazy.probe=true
+ * (debug only; never skips). skipFile: -Dhypernova.textures.lazy.skipFile, or
+ * <mod>/data/config/hypernova/lazy-skip-v1.txt.
  */
-public record LazyTextureConfig(boolean probe, Path skipFile) {
+public record LazyTextureConfig(boolean enabled, boolean probe, Path skipFile) {
 
     public static LazyTextureConfig load() {
-        return load(System.getProperty("hypernova.textures.lazy.probe"),
+        return load(System.getProperty("hypernova.textures.lazy"),
+                System.getProperty("hypernova.textures.lazy.probe"),
                 System.getProperty("hypernova.textures.lazy.skipFile"),
                 locateConfig());
     }
 
-    public static LazyTextureConfig load(String probeProp, String skipProp, Path configFile) {
+    public static LazyTextureConfig load(String enabledProp, String probeProp,
+                                         String skipProp, Path configFile) {
+        boolean enabled = enabledProp != null && !enabledProp.isBlank()
+                ? Boolean.parseBoolean(enabledProp) : configEnabled(configFile);
         boolean probe = probeProp != null && Boolean.parseBoolean(probeProp);
         Path skip = skipProp == null || skipProp.isBlank() ? null : Path.of(skipProp);
         if (skip == null) {
@@ -24,7 +34,19 @@ public record LazyTextureConfig(boolean probe, Path skipFile) {
                 skip = modRoot.resolve("data/config/hypernova/lazy-skip-v1.txt");
             }
         }
-        return new LazyTextureConfig(probe, skip);
+        return new LazyTextureConfig(enabled, probe, skip);
+    }
+
+    private static boolean configEnabled(Path file) {
+        if (file == null || !Files.isRegularFile(file)) return false;
+        try {
+            JSONObject root = new JSONObject(Files.readString(file));
+            JSONObject textures = root.optJSONObject("textures");
+            JSONObject lazy = textures == null ? null : textures.optJSONObject("lazy");
+            return lazy != null && lazy.optBoolean("enabled", false);
+        } catch (Throwable t) {
+            return false; // bad config must not enable lazy loading
+        }
     }
 
     private static Path locateConfig() {

@@ -36,12 +36,14 @@ javac --release 17 -encoding UTF-8 \
 bad=$(javap -verbose -cp "$OUT/classes" hypernova.agent.HypernovaAgent 2>/dev/null \
   | grep -c "major version: 61" || true)
 if [ "$bad" -ne 1 ]; then echo "FATAL: agent class major version != 61" >&2; exit 1; fi
+# 游戏面向的代理子类单独编译（需要 fs.common_obf.jar 的 com.fs.graphics.Object）。
+bash "$ROOT_W/tools/java/build-proxy.sh"
 printf '%s\n' \
   'Manifest-Version: 1.0' \
   'Premain-Class: hypernova.agent.HypernovaAgent' \
   'Can-Retransform-Classes: false' > "$OUT/MANIFEST.MF"
 jar --create --file "$OUT/hypernova.agent.jar" --manifest "$OUT/MANIFEST.MF" \
-  -C "$OUT/classes" . -C "$OUT/asm" . -C "$OUT/textures" .
+  -C "$OUT/classes" . -C "$OUT/asm" . -C "$OUT/textures" . -C "$OUT/proxy" .
 # 产物后断言（不是解压前守卫）：unzip 可能“静默零条目成功”，
 # 只有检查最终 jar 内容才能挡住“目录存在但 ASM 没进去”的坏包。
 jar_listing=$(jar --list --file "$OUT/hypernova.agent.jar")
@@ -51,6 +53,10 @@ if ! printf '%s\n' "$jar_listing" | grep -q 'org/objectweb/asm/ClassReader.class
 fi
 if ! printf '%s\n' "$jar_listing" | grep -q 'hypernova/agent/textures/TextureData.class.bin'; then
   echo "FATAL: agent jar 不含 textures patch resource" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$jar_listing" | grep -q 'hypernova/agent/textures/LazyProxyObject.class'; then
+  echo "FATAL: agent jar 不含 LazyProxyObject.class" >&2
   exit 1
 fi
 if printf '%s\n' "$jar_listing" | grep -q '^org/dark/shaders/util/TextureData.class$'; then

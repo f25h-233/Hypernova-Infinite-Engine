@@ -78,6 +78,31 @@ class LazyTransformTest {
     }
 
     @Test
+    void injectsRegisterHookIntoRepositorySuper() {
+        byte[] in = classBytes(REPO, cv -> {
+            MethodVisitor lookup = cv.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                    "lookup", LOOKUP_DESC, null, null);
+            lookup.visitCode();
+            lookup.visitInsn(Opcodes.ACONST_NULL);
+            lookup.visitInsn(Opcodes.ARETURN);
+            lookup.visitMaxs(0, 0);
+            lookup.visitEnd();
+            MethodVisitor register = cv.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                    "super", "(Ljava/lang/String;Lcom/fs/graphics/Object;)V", null, null);
+            register.visitCode();
+            register.visitInsn(Opcodes.RETURN);
+            register.visitMaxs(0, 0);
+            register.visitEnd();
+        });
+        byte[] out = new LazyTextureTransformer().transform(null, REPO, null, null, in);
+        assertNotNull(out);
+        Map<String, List<String>> shape = readShape(out);
+        List<String> register = shape.get("super(Ljava/lang/String;Lcom/fs/graphics/Object;)V");
+        assertNotNull(register);
+        assertTrue(register.contains("hypernova/agent/textures/LazyTextures#onRegister"));
+    }
+
+    @Test
     void repositoryWithoutUniqueShapeIsUntouched() {
         byte[] in = classBytes(REPO, cv -> {
             for (int i = 0; i < 2; i++) {
