@@ -181,6 +181,7 @@ def test_one_round_records_memory_samples(tmp_path, monkeypatch):
     monkeypatch.setattr(smoke, "process_memory_mb", lambda pid: 1234.56)
     monkeypatch.setattr(smoke, "process_private_mb", lambda pid: 2345.67)
     monkeypatch.setattr(smoke, "gpu_memory_mb", lambda: 4096.0)
+    monkeypatch.setattr(smoke, "process_gpu_memory_mb", lambda pid: (3500.0, 100.0))
     monkeypatch.setattr(smoke, "free_physical_mb", lambda: 15000.0)
     monkeypatch.setattr(smoke, "graceful_stop", lambda proc: "forced")
     monkeypatch.setattr(smoke.time, "sleep", lambda seconds: None)
@@ -194,5 +195,36 @@ def test_one_round_records_memory_samples(tmp_path, monkeypatch):
     assert row["private_menu_mb"] == 2345.7
     assert row["private_exit_mb"] == 2345.7
     assert row["gpu_menu_mb"] == 4096.0
+    assert row["gpu_process_dedicated_mb"] == 3500.0
+    assert row["gpu_process_shared_mb"] == 100.0
+    assert row["gpu_process_dedicated_exit_mb"] == 3500.0
+    assert row["gpu_process_shared_exit_mb"] == 100.0
     assert row["free_mb_menu"] == 15000.0
     assert row["free_mb_exit"] == 15000.0
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only GPU counters")
+def test_process_gpu_memory_parses_wmi_output(monkeypatch):
+    class R:
+        returncode = 0
+        stdout = "1048576 524288\n"
+
+    monkeypatch.setattr(smoke.subprocess, "run", lambda *a, **k: R())
+    assert smoke.process_gpu_memory_mb(1234) == (1.0, 0.5)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only GPU counters")
+def test_process_gpu_memory_empty_or_error(monkeypatch):
+    class Empty:
+        returncode = 0
+        stdout = ""
+
+    monkeypatch.setattr(smoke.subprocess, "run", lambda *a, **k: Empty())
+    assert smoke.process_gpu_memory_mb(1234) == (None, None)
+
+    class Bad:
+        returncode = 1
+        stdout = "1 2"
+
+    monkeypatch.setattr(smoke.subprocess, "run", lambda *a, **k: Bad())
+    assert smoke.process_gpu_memory_mb(1234) == (None, None)

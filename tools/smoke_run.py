@@ -427,6 +427,46 @@ def gpu_memory_mb() -> float | None:
     return sum(values) if values else None
 
 
+def process_gpu_memory_mb(pid: int) -> tuple[float | None, float | None]:
+    """Per-process dedicated/shared GPU memory in MiB (Windows only).
+
+    nvidia-smi memory.used is whole-GPU and does not expose OpenGL graphics
+    processes per PID. Windows' GPU Process Memory counters do: one instance
+    per LUID/adapter, named pid_<pid>_luid_...; sum the instances of this PID.
+    DedicatedUsage is VRAM, SharedUsage is system memory. Returns
+    (dedicated, shared), either None when the counters/process are unavailable.
+    """
+    if sys.platform != "win32" or pid <= 0:
+        return None, None
+    pattern = "^pid_" + str(pid) + "(_|$)"
+    script = (
+        "$rows = Get-CimInstance "
+        "Win32_PerfRawData_GPUPerformanceCounters_GPUProcessMemory "
+        "| Where-Object { $_.Name -match '" + pattern + "' }; "
+        "if ($rows) { "
+        "$d = ($rows | Measure-Object -Property DedicatedUsage -Sum).Sum; "
+        "$s = ($rows | Measure-Object -Property SharedUsage -Sum).Sum; "
+        "Write-Output ('{0} {1}' -f $d, $s) }"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+    if result.returncode != 0:
+        return None, None
+    parts = result.stdout.strip().split()
+    if len(parts) != 2:
+        return None, None
+    try:
+        dedicated = int(parts[0]) / (1024 * 1024)
+        shared = int(parts[1]) / (1024 * 1024)
+    except ValueError:
+        return None, None
+    return round(dedicated, 1), round(shared, 1)
+
+
 def _round_mb(value: float | None) -> float | None:
     return None if value is None else round(value, 1)
 
@@ -474,9 +514,12 @@ def one_round(cfg: dict, game: Path, args) -> dict:
     ws_menu = process_memory_mb(proc.pid)
     private_menu = process_private_mb(proc.pid)
     gpu_menu = gpu_memory_mb()
+    gpu_proc_dedicated_menu, gpu_proc_shared_menu = process_gpu_memory_mb(proc.pid)
     free_menu = free_physical_mb()
     print(f">>> 内存：ws={_round_mb(ws_menu)}MB private={_round_mb(private_menu)}MB "
-          f"gpu={_round_mb(gpu_menu)}MB free={_round_mb(free_menu)}MB")
+          f"gpu_sys={_round_mb(gpu_menu)}MB "
+          f"gpu_proc={gpu_proc_dedicated_menu}/{gpu_proc_shared_menu}MB "
+          f"free={_round_mb(free_menu)}MB")
 
     if args.linger > 0:
         print(f">>> 停留 {args.linger:.0f}s（给 CacheWriter 稳定窗口）")
@@ -485,6 +528,7 @@ def one_round(cfg: dict, game: Path, args) -> dict:
     read_exit = io_read_bytes(proc.pid)
     ws_exit = process_memory_mb(proc.pid)
     private_exit = process_private_mb(proc.pid)
+    gpu_proc_dedicated_exit, gpu_proc_shared_exit = process_gpu_memory_mb(proc.pid)
     free_exit = free_physical_mb()
     how = graceful_stop(proc)
     wall = time.time() - t0
@@ -503,6 +547,10 @@ def one_round(cfg: dict, game: Path, args) -> dict:
         "private_menu_mb": _round_mb(private_menu),
         "private_exit_mb": _round_mb(private_exit),
         "gpu_menu_mb": _round_mb(gpu_menu),
+        "gpu_process_dedicated_mb": gpu_proc_dedicated_menu,
+        "gpu_process_shared_mb": gpu_proc_shared_menu,
+        "gpu_process_dedicated_exit_mb": gpu_proc_dedicated_exit,
+        "gpu_process_shared_exit_mb": gpu_proc_shared_exit,
         "free_mb_menu": _round_mb(free_menu),
         "free_mb_exit": _round_mb(free_exit),
         "agent": agent_results(game, agent_off),
@@ -542,10 +590,14 @@ def summarize(rows: list[dict]) -> None:
         print(f"#{i}: menu={r['menu_s']}s wall={r['wall_s']}s preload={pre}({pre_ms}) "
               f"stop={r['stop']} {' '.join(flags)}")
         if any(r.get(k) is not None for k in
-               ("ws_menu_mb", "gpu_menu_mb", "free_mb_menu")):
+               ("ws_menu_mb", "gpu_menu_mb", "gpu_process_dedicated_mb",
+                "free_mb_menu")):
             print(f"     mem: ws={r.get('ws_menu_mb')}MB "
                   f"private={r.get('private_menu_mb')}MB "
-                  f"gpu={r.get('gpu_menu_mb')}MB free={r.get('free_mb_menu')}MB "
+                  f"gpu_sys={r.get('gpu_menu_mb')}MB "
+                  f"gpu_proc_ded={r.get('gpu_process_dedicated_mb')}MB "
+                  f"gpu_proc_shr={r.get('gpu_process_shared_mb')}MB "
+                  f"free={r.get('free_mb_menu')}MB "
                   f"(exit ws={r.get('ws_exit_mb')}MB free={r.get('free_mb_exit')}MB)")
         if a.get("file_index"):
             print(f"     {a['file_index'][-1].split('INFO ')[-1]}")
