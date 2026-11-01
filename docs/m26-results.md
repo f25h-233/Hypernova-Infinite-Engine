@@ -272,7 +272,7 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
   0 `isStateCorrupted`。错误计数来自聚合 JSON（`ab-result.json` / `selftest.json` / `base-ab.json`）与
   live agent log；selftest 的归档日志被后续 run 覆盖（§7.10），不能作为独立切片复核。
 - Task 2 修后另有 **9 个会话**（fix-auto 1 + selftest-fix 2 + ab-fix 6）。fix-auto 的
-  `starsector.log` 会话切片已补扫并落盘：`build/m26/fix-auto-session.log`（第 16 个
+  `starsector.log` 会话切片已补扫并落盘：`build/m26/fix-auto-session.log`（第 17 个
   `Fast Rendering` anchor，menu anchor 73,100 ms，2,128,915 B，sha256
   `31a170dc7b4acb32aca3bc2576ebaff4228a1e8d94aef8e7a4553c46b184eff6`），0
   `Failed to load texture` / 0 `VerifyError` / 0 `ClassFormatError` / 0 `AsyncException` /
