@@ -1189,7 +1189,7 @@ Commit message append `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthr
 - Consumes: 现有 `run_round`/`archive_round`/`stats_from_text`/`main`。
 - Produces:
   - `run_round` 超时返回 `{"ok": False, "reason": "timeout"}`，不中止整轮
-  - `archive_round` 增加 `log_present: bool`；缺日志时 `no_texture_errors=false`
+  - `archive_round` 增加 `log_present: bool`；缺日志**或缺 session anchor** 时 `no_texture_errors=false`
   - `main` 新增 `--counterbalance`
   - 每轮 JSON 写到 `--out` 同目录的 `<stem>-c{i}.json` / `<stem>-t{i}.json`
 
@@ -1213,6 +1213,19 @@ def test_run_round_timeout_is_a_row(monkeypatch, tmp_path):
                        tmp_path / "x.json", 1, 1)
     assert row["ok"] is False
     assert row["reason"] == "timeout"
+
+
+def test_missing_anchor_fails_closed(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    core = game / "starsector-core"
+    core.mkdir(parents=True)
+    (core / "starsector.log").write_bytes(b"no anchor here
+")
+    monkeypatch.setattr(ab, "ROOT", tmp_path)
+    monkeypatch.setattr(ab, "PROFILES", {"fake": {"game": "game"}})
+    row = ab.archive_round("fake", "c", 1, tmp_path / "out")
+    assert row["log_present"] is False
+    assert row["log"] is None
 
 
 def test_missing_log_fails_closed(tmp_path, monkeypatch):
@@ -1304,7 +1317,9 @@ Expected: 新测试失败（`log_present`/`--counterbalance` 未实现；timeout
         return result
     data = log.read_bytes()
     idx = data.rfind(SESSION_ANCHOR)
-    session = data[idx:] if idx >= 0 else data
+    if idx < 0:
+        return result
+    session = data[idx:]
     result["log_present"] = True
 ```
 
@@ -1369,7 +1384,7 @@ Expected: 新测试失败（`log_present`/`--counterbalance` 未实现；timeout
 - [ ] **Step 4: 跑测试通过**
 
 Run: `python -I -m pytest tests/tools/test_m26_ab.py -q`
-Expected: 全部通过（原 6 + 新 4）。再跑 `python -I -m pytest tests/tools -q` → 297 passed（293 + 4）。实际计数以报告为准。
+Expected: 全部通过（原 6 + 新 5）。再跑 `python -I -m pytest tests/tools -q` → 298 passed（293 + 5）。实际计数以报告为准。
 
 - [ ] **Step 5: 提交**
 
