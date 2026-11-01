@@ -51,6 +51,7 @@ public final class LazyDrainTransformer implements ClassFileTransformer {
                 return null;
             }
             AgentLog.info("lazy: engine-map drain hook added to MarkovNames.loadIfNeeded");
+            LazyTextures.noteDrainArmed();
             return writer.toByteArray();
         } catch (Throwable t) {
             AgentLog.fail("lazy: MarkovNames transform failed; engine-map drain disabled", t);

@@ -79,6 +79,7 @@ public final class LazyTextureTransformer implements ClassFileTransformer {
             return null;
         }
         AgentLog.info("lazy probe: queue lambda hook added to " + TEXTURE_LOADER);
+        LazyTextures.noteQueueArmed();
         return writer.toByteArray();
     }
 
@@ -173,6 +174,7 @@ public final class LazyTextureTransformer implements ClassFileTransformer {
         if (registerPatched[0]) {
             AgentLog.info("lazy probe: engine map register hook added to " + REPOSITORY
                     + " (method=" + REGISTER_NAME + ")");
+            LazyTextures.noteRegisterArmed();
         } else {
             AgentLog.info("lazy probe: engine map register hook missing in " + REPOSITORY
                     + "; onRegister disabled");

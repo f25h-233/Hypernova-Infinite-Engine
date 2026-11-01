@@ -49,7 +49,17 @@ public final class LazyTextures {
     private static final Map<Object, ProxyEntry> PROXY_BY_OBJ = new ConcurrentHashMap<>();
     /** Skip paths whose proxy has not been inserted into oOoO.new yet. */
     private static final Set<String> PENDING = ConcurrentHashMap.newKeySet();
-    private static final AtomicBoolean DRAIN_WARNED = new AtomicBoolean();
+    private static final AtomicBoolean LOADING_WARNED = new AtomicBoolean();
+
+    // Wiring armed flags: set by the transformers when their hook is actually
+    // applied. ensureShape() force-loads every target and refuses to skip if any
+    // hook is missing, so version drift fails open instead of leaving 45k paths
+    // out of oOoO.new.
+    private static volatile boolean queueArmed;
+    private static volatile boolean registerArmed;
+    private static volatile boolean drainArmed;
+    private static volatile boolean threadArmed;
+    private static volatile long loadingResolveNanos;
 
     private static volatile boolean enabled;
     private static volatile boolean probe;
@@ -138,7 +148,7 @@ public final class LazyTextures {
             AgentLog.fail("lazy probe: counter failed; continuing", t);
         }
         if (shouldSkip(type, path)) {
-            if (registerProxy(path)) {
+            if (registerProxy(path, type)) {
                 LAZY_SKIPPED.incrementAndGet();
                 return;
             }
@@ -155,6 +165,70 @@ public final class LazyTextures {
         return index != null && index.contains(path);
     }
 
+    // ---- wiring armed flags (set by the transformers when a hook is applied) ----
+
+    static void noteQueueArmed() {
+        queueArmed = true;
+    }
+
+    static void noteRegisterArmed() {
+        registerArmed = true;
+    }
+
+    static void noteDrainArmed() {
+        drainArmed = true;
+    }
+
+    static void noteThreadArmed() {
+        threadArmed = true;
+    }
+
+    static boolean wiringArmed() {
+        return queueArmed && registerArmed && drainArmed && threadArmed;
+    }
+
+    static boolean queueArmed() {
+        return queueArmed;
+    }
+
+    static boolean registerArmed() {
+        return registerArmed;
+    }
+
+    static boolean drainArmed() {
+        return drainArmed;
+    }
+
+    static boolean threadArmed() {
+        return threadArmed;
+    }
+
+    static void resetWiringForTest() {
+        queueArmed = false;
+        registerArmed = false;
+        drainArmed = false;
+        threadArmed = false;
+    }
+
+    /**
+     * Shape gate for the wiring the skip path depends on. Pure so the hook
+     * matrix can be tested without loading game classes. objectType is
+     * com.fs.graphics.Object; proxyType is LazyProxyObject, which must itself
+     * declare both overrides (otherwise bind/id never materializes).
+     */
+    static boolean wiringOk(boolean queue, boolean register, boolean drain, boolean thread,
+                            Method engineRegister, Class<?> objectType, Class<?> proxyType) {
+        if (!queue || !register || !drain || !thread || engineRegister == null) return false;
+        try {
+            objectType.getMethod("Ø00000");
+            objectType.getMethod("ö00000");
+            return proxyType.getMethod("Ø00000").getDeclaringClass() == proxyType
+                    && proxyType.getMethod("ö00000").getDeclaringClass() == proxyType;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     public static boolean shouldSkip(String type, String path) {
         try {
             if (!eligible(enabled, probe, disabled, index, type, path)) return false;
@@ -165,7 +239,7 @@ public final class LazyTextures {
         }
     }
 
-    private static boolean registerProxy(String path) {
+    private static boolean registerProxy(String path, String type) {
         try {
             if (PROXIES.containsKey(path)) return true;
             LazySkipIndex idx = index;
@@ -173,7 +247,7 @@ public final class LazyTextures {
             ProxyShape shape = proxyShape;
             if (dim == null || shape == null) return false;
             Object obj = shape.newProxy(path, dim.w(), dim.h());
-            ProxyEntry entry = new ProxyEntry(path, dim.w(), dim.h(), obj);
+            ProxyEntry entry = new ProxyEntry(path, type, dim.w(), dim.h(), obj);
             ProxyEntry prev = PROXIES.putIfAbsent(path, entry);
             if (prev != null) return true;
             PROXY_BY_OBJ.put(obj, entry);
@@ -227,21 +301,25 @@ public final class LazyTextures {
 
     /**
      * Inserts every pending proxy into oOoO.new. Must run on the loading thread
-     * (FR-Main-Loader, first step of initMods) or the runtime main thread; other
-     * threads leave PENDING untouched for a later drain.
+     * (FR-Main-Loader, first step of initMods) or the runtime main thread. Any
+     * failure — wrong thread, register error, or leftovers after the drain —
+     * disables lazy skipping and reloads the remaining textures through the
+     * normal async path, instead of leaving skip paths out of the repository.
      */
     public static void drainPending() {
         try {
             if (!enabled || probe || disabled) return;
             Thread current = Thread.currentThread();
-            if (current != runtimeMain && current != loadingThread()) {
-                if (DRAIN_WARNED.compareAndSet(false, true)) {
-                    AgentLog.info("lazy: drain skipped on " + current.getName()
-                            + "; will retry on the loading/main thread");
-                }
+            Thread loading = loadingThread();
+            if (current != runtimeMain && current != loading) {
+                AgentLog.fail("lazy: drain on " + current.getName()
+                        + " (loading=" + (loading == null ? "none" : loading.getName())
+                        + "); failing open and reloading pending textures", null);
+                failOpenPending();
                 return;
             }
             int drained = 0;
+            boolean failed = false;
             for (String path : PENDING) {
                 ProxyEntry e = PROXIES.get(path);
                 if (e == null) {
@@ -253,46 +331,87 @@ public final class LazyTextures {
                     if (PENDING.remove(path)) drained++;
                 } catch (Throwable t) {
                     AgentLog.fail("lazy: engine map register failed for " + path, t);
-                    break; // keep the rest pending for a later drain
+                    failed = true;
+                    break;
                 }
             }
             if (drained > 0) {
                 LAZY_DRAINED.addAndGet(drained);
                 AgentLog.info("lazy: drained " + drained + " proxies into oOoO.new");
             }
+            if (failed || !PENDING.isEmpty()) {
+                AgentLog.fail("lazy: drain incomplete (pending=" + PENDING.size()
+                        + "); failing open and reloading pending textures", null);
+                failOpenPending();
+            }
         } catch (Throwable t) {
-            AgentLog.fail("lazy: drain failed", t);
+            AgentLog.fail("lazy: drain failed; failing open", t);
+            failOpenPending();
+        }
+    }
+
+    /** Stops skipping and restores every still-pending path through loadAsync. */
+    private static void failOpenPending() {
+        disabled = true;
+        Object loader = loaderSingleton;
+        if (loader == null) {
+            AgentLog.fail("lazy: no TextureLoader singleton; cannot reload pending textures", null);
+            return;
+        }
+        int reloaded = 0;
+        for (String path : PENDING) {
+            ProxyEntry e = PROXIES.get(path);
+            if (e == null) {
+                PENDING.remove(path);
+                continue;
+            }
+            try {
+                loadAsync(loader, e.type, path);
+                PENDING.remove(path);
+                reloaded++;
+            } catch (Throwable t) {
+                AgentLog.fail("lazy: pending reload failed for " + path, t);
+            }
+        }
+        AgentLog.info("lazy: fail-open reloaded " + reloaded + " pending textures");
+    }
+
+    private static Method engineRegister() {
+        Method m = engineRegisterMethod;
+        if (m != null || engineRegisterResolved) return m;
+        synchronized (LazyTextures.class) {
+            m = engineRegisterMethod;
+            if (m != null || engineRegisterResolved) return m;
+            try {
+                Class<?> objClass = Class.forName("com.fs.graphics.Object");
+                Class<?> repo = Class.forName("com.fs.graphics.oOoO");
+                Method found = null;
+                for (Method candidate : repo.getDeclaredMethods()) {
+                    if (!"super".equals(candidate.getName())) continue;
+                    if ((candidate.getModifiers() & Modifier.STATIC) == 0) continue;
+                    Class<?>[] p = candidate.getParameterTypes();
+                    if (p.length == 2 && p[0] == String.class && p[1] == objClass) {
+                        found = candidate;
+                        break;
+                    }
+                }
+                if (found != null) {
+                    found.setAccessible(true);
+                    engineRegisterMethod = found;
+                    AgentLog.info("lazy: engine texture map register resolved");
+                }
+                engineRegisterResolved = true;
+                return found;
+            } catch (Throwable t) {
+                AgentLog.fail("lazy: engine texture map register resolution failed", t);
+                engineRegisterResolved = true;
+                return null;
+            }
         }
     }
 
     private static void registerEngineMap(String path, Object obj) throws Throwable {
-        Method m = engineRegisterMethod;
-        if (m == null && !engineRegisterResolved) {
-            synchronized (LazyTextures.class) {
-                m = engineRegisterMethod;
-                if (m == null && !engineRegisterResolved) {
-                    Class<?> objClass = Class.forName("com.fs.graphics.Object");
-                    Class<?> repo = Class.forName("com.fs.graphics.oOoO");
-                    Method found = null;
-                    for (Method candidate : repo.getDeclaredMethods()) {
-                        if (!"super".equals(candidate.getName())) continue;
-                        if ((candidate.getModifiers() & Modifier.STATIC) == 0) continue;
-                        Class<?>[] p = candidate.getParameterTypes();
-                        if (p.length == 2 && p[0] == String.class && p[1] == objClass) {
-                            found = candidate;
-                            break;
-                        }
-                    }
-                    if (found != null) {
-                        found.setAccessible(true);
-                        engineRegisterMethod = found;
-                        AgentLog.info("lazy: engine texture map register resolved");
-                    }
-                    engineRegisterResolved = true;
-                    m = found;
-                }
-            }
-        }
+        Method m = engineRegister();
         if (m == null) throw new IllegalStateException("oOoO.super(String,Object) unavailable");
         try {
             m.invoke(null, path, obj);
@@ -311,29 +430,38 @@ public final class LazyTextures {
 
     private static Thread loadingThread() {
         Thread t = loadingThreadField;
-        if (t == null && !loadingThreadResolved) {
-            synchronized (LazyTextures.class) {
-                t = loadingThreadField;
-                if (t == null && !loadingThreadResolved) {
-                    try {
-                        Class<?> fileLoader = Class.forName("com.fs.util.C",
-                                false, LazyTextures.class.getClassLoader());
-                        Method getInstance = fileLoader.getDeclaredMethod("Ó00000");
-                        getInstance.setAccessible(true);
-                        Object instance = getInstance.invoke(null);
-                        Field field = fileLoader.getDeclaredField("mainThread");
-                        field.setAccessible(true);
-                        t = (Thread) field.get(instance);
-                        loadingThreadField = t;
-                    } catch (Throwable t2) {
-                        AgentLog.info("lazy: FileLoader.mainThread unavailable; loading-thread materialize disabled");
-                    } finally {
-                        loadingThreadResolved = true;
-                    }
+        if (t != null) return t;
+        synchronized (LazyTextures.class) {
+            t = loadingThreadField;
+            if (t != null) return t;
+            // Never cache a null resolution: the summary thread can run before
+            // initResourceLoading() sets mainThread. Retry, but throttle the
+            // reflection and the log so a version drift cannot hot-loop.
+            long now = System.nanoTime();
+            if (now - loadingResolveNanos < 1_000_000_000L) return null;
+            loadingResolveNanos = now;
+            try {
+                Class<?> fileLoader = Class.forName("com.fs.util.C",
+                        false, LazyTextures.class.getClassLoader());
+                Method getInstance = fileLoader.getDeclaredMethod("Ó00000");
+                getInstance.setAccessible(true);
+                Object instance = getInstance.invoke(null);
+                Field field = fileLoader.getDeclaredField("mainThread");
+                field.setAccessible(true);
+                t = (Thread) field.get(instance);
+                if (t != null) {
+                    loadingThreadField = t;
+                    loadingThreadResolved = true;
+                } else if (LOADING_WARNED.compareAndSet(false, true)) {
+                    AgentLog.info("lazy: FileLoader.mainThread not set yet; will retry");
+                }
+            } catch (Throwable t2) {
+                if (LOADING_WARNED.compareAndSet(false, true)) {
+                    AgentLog.info("lazy: FileLoader.mainThread unavailable; will retry");
                 }
             }
+            return t;
         }
-        return t;
     }
 
     public static void captureMainThread(Object state) {
@@ -406,6 +534,7 @@ public final class LazyTextures {
         synchronized (LazyTextures.class) {
             if (shapeResolved) return !disabled;
             try {
+                ClassLoader loader = LazyTextures.class.getClassLoader();
                 Class<?> obj = Class.forName("com.fs.graphics.Object");
                 Class<?> proxy = Class.forName("hypernova.agent.textures.LazyProxyObject");
                 proxyShape = ProxyShape.resolve(obj, proxy);
@@ -413,7 +542,21 @@ public final class LazyTextures {
                 if (syncMethod == null || loaderSingleton == null) {
                     throw new IllegalStateException("TextureLoader sync path unavailable");
                 }
+                // Force-load every transformer target so its hook is applied and
+                // armed before the first skip; version drift must fail open here.
+                Class.forName("com.fs.graphics.TextureLoader", false, loader);
+                Class.forName("com.fs.graphics.oOoO", false, loader);
+                Class.forName("com.fs.starfarer.api.impl.campaign.procgen.MarkovNames", false, loader);
+                Class.forName("com.fs.starfarer.BaseGameState", false, loader);
+                Method engine = engineRegister();
+                if (!wiringOk(queueArmed, registerArmed, drainArmed, threadArmed, engine, obj, proxy)) {
+                    throw new IllegalStateException("lazy wiring incomplete: queue=" + queueArmed
+                            + " register=" + registerArmed + " drain=" + drainArmed
+                            + " thread=" + threadArmed + " engineRegister=" + (engine != null));
+                }
                 AgentLog.info("lazy: shape ok; proxy + sync loader resolved");
+                AgentLog.info("lazy: wiring armed queue=" + queueArmed + " register=" + registerArmed
+                        + " drain=" + drainArmed + " thread=" + threadArmed);
             } catch (Throwable t) {
                 disabled = true;
                 AgentLog.fail("lazy: shape gate failed; lazy skip disabled", t);
@@ -682,6 +825,7 @@ public final class LazyTextures {
 
     private static final class ProxyEntry {
         final String path;
+        final String type;
         final int w;
         final int h;
         final Object obj;
@@ -689,8 +833,9 @@ public final class LazyTextures {
         volatile boolean failed;
         final AtomicLong attempts = new AtomicLong();
 
-        ProxyEntry(String path, int w, int h, Object obj) {
+        ProxyEntry(String path, String type, int w, int h, Object obj) {
             this.path = path;
+            this.type = type;
             this.w = w;
             this.h = h;
             this.obj = obj;

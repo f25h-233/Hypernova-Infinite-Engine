@@ -49,6 +49,7 @@ public final class LazyGameThreadTransformer implements ClassFileTransformer {
                 return null;
             }
             AgentLog.info("lazy: runtime main-thread capture hook added to BaseGameState.traverse");
+            LazyTextures.noteThreadArmed();
             return writer.toByteArray();
         } catch (Throwable t) {
             AgentLog.fail("lazy: BaseGameState transform failed; capture disabled", t);
