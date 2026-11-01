@@ -7,17 +7,26 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 
-/** Immutable path -> (w,h) index generated from the runtime manifest. */
+/**
+ * Immutable path -> (w,h[,absPath,ddsPath,baked]) index.
+ *
+ * <p>v1: 3 tab-separated columns. v2: 6 columns
+ * (path, w, h, absPath, ddsPath, baked). The optional generation header
+ * "# generation=<sha256>" is the runtime manifest hash (Task 0 checks it).
+ */
 public final class LazySkipIndex {
-    public record Dim(int w, int h) {
+    public record Entry(int w, int h, String absPath, String ddsPath, boolean baked) {
+        public boolean hasDds() {
+            return ddsPath != null && !ddsPath.isBlank();
+        }
     }
 
-    private final Map<String, Dim> byPath;
+    private final Map<String, Entry> byPath;
     private final int invalid;
     private final long loadMillis;
     private final String generation;
 
-    private LazySkipIndex(Map<String, Dim> byPath, int invalid, long loadMillis,
+    private LazySkipIndex(Map<String, Entry> byPath, int invalid, long loadMillis,
                           String generation) {
         this.byPath = byPath;
         this.invalid = invalid;
@@ -27,7 +36,7 @@ public final class LazySkipIndex {
 
     public static LazySkipIndex load(Path file) throws Exception {
         long t0 = System.nanoTime();
-        Map<String, Dim> map = new HashMap<>(1 << 17);
+        Map<String, Entry> map = new HashMap<>(1 << 17);
         int invalid = 0;
         String generation = null;
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
@@ -40,20 +49,23 @@ public final class LazySkipIndex {
                     }
                     continue;
                 }
-                int t1 = line.indexOf('\t');
-                int t2 = t1 < 0 ? -1 : line.indexOf('\t', t1 + 1);
-                if (t1 <= 0 || t2 <= t1) {
+                String[] parts = line.split("\t", -1);
+                if (parts.length < 3 || parts[0].isEmpty()) {
                     invalid++;
                     continue;
                 }
                 try {
-                    int w = Integer.parseInt(line.substring(t1 + 1, t2));
-                    int h = Integer.parseInt(line.substring(t2 + 1));
+                    int w = Integer.parseInt(parts[1]);
+                    int h = Integer.parseInt(parts[2]);
                     if (w <= 0 || h <= 0) {
                         invalid++;
                         continue;
                     }
-                    map.put(line.substring(0, t1), new Dim(w, h));
+                    String abs = parts.length >= 4 && !parts[3].isEmpty() ? parts[3] : null;
+                    String dds = parts.length >= 5 && !parts[4].isEmpty() ? parts[4] : null;
+                    boolean baked = parts.length >= 6
+                            && ("1".equals(parts[5]) || "true".equalsIgnoreCase(parts[5]));
+                    map.put(parts[0], new Entry(w, h, abs, dds, baked));
                 } catch (NumberFormatException e) {
                     invalid++;
                 }
@@ -67,7 +79,7 @@ public final class LazySkipIndex {
         return path != null && byPath.containsKey(path);
     }
 
-    public Dim get(String path) {
+    public Entry get(String path) {
         return byPath.get(path);
     }
 

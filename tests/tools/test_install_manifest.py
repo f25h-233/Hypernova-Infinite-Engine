@@ -90,6 +90,24 @@ def test_install_writes_lazy_skip_file(mini_game):
     assert all(line.split("\t")[0] not in l1 for line in records)
 
 
+def test_install_writes_lazy_skip_v2(mini_game):
+    _seed_core(mini_game)
+    result = install(mini_game)
+    assert result.skip_v2_file == result.out.parent / "lazy-skip-v2.txt"
+    assert result.skip_v2_file.is_file()
+    lines = result.skip_v2_file.read_text(encoding="utf-8").splitlines()
+    header = [line for line in lines if line.startswith("#")]
+    assert header == [f"# generation={hashlib.sha256(result.out.read_bytes()).hexdigest()}"]
+    records = [line for line in lines if line and not line.startswith("#")]
+    assert result.skip_v2_count > 0
+    assert len(records) == result.skip_v2_count
+    assert all(len(line.split("\t")) == 6 for line in records)
+    v1 = [line.split("\t")[0] for line in
+          result.skip_file.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#")]
+    v2 = [line.split("\t")[0] for line in records]
+    assert v1 == v2
+
+
 def test_install_skip_replace_failure_deletes_old_skip(mini_game, monkeypatch):
     _seed_core(mini_game)
     out = mini_game / "runtime.json"
@@ -116,6 +134,7 @@ def test_install_skip_replace_failure_deletes_old_skip(mini_game, monkeypatch):
     # 绝不留下新 manifest + 旧 skip 的跨代 pair。
     assert json.loads(out.read_text(encoding="utf-8")) == new_runtime
     assert not skip_target.exists()
+    assert not (skip_target.parent / "lazy-skip-v2.txt").exists()
     assert not out.with_name(out.name + ".tmp").exists()
     assert not skip_target.with_name(skip_target.name + ".tmp").exists()
 
@@ -146,9 +165,33 @@ def test_install_skip_write_failure_keeps_old_pair(mini_game, monkeypatch):
     assert not first.skip_file.with_name(first.skip_file.name + ".tmp").exists()
 
 
+def test_install_skip_v2_write_failure_keeps_old_pair(mini_game, monkeypatch):
+    _seed_core(mini_game)
+    out = mini_game / "runtime.json"
+    first = install(mini_game, out=out)
+    old_manifest = out.read_bytes()
+    old_v1 = first.skip_file.read_bytes()
+    old_v2 = first.skip_v2_file.read_bytes()
+
+    def boom(*args, **kwargs):
+        raise OSError("simulated v2 write failure")
+
+    monkeypatch.setattr(install_module, "write_skip_v2", boom)
+    with pytest.raises(OSError, match="simulated v2 write failure"):
+        install(mini_game, out=out)
+    assert out.read_bytes() == old_manifest
+    assert first.skip_file.read_bytes() == old_v1
+    assert first.skip_v2_file.read_bytes() == old_v2
+    assert not out.with_name(out.name + ".tmp").exists()
+    assert not first.skip_file.with_name(first.skip_file.name + ".tmp").exists()
+    assert not first.skip_v2_file.with_name(first.skip_v2_file.name + ".tmp").exists()
+
+
 def test_critical_install_does_not_write_skip_file(mini_game):
     _seed_core(mini_game)
     result = install(mini_game, max_l1=1)
     assert any(f.severity == "Critical" for f in result.findings)
     assert result.skip_file is None
     assert result.skip_count == 0
+    assert result.skip_v2_file is None
+    assert result.skip_v2_count == 0

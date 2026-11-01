@@ -18,7 +18,7 @@ from pathlib import Path
 # `python -I` 不会把脚本目录加入 sys.path；工具内部自行补上。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gen_lazy_skip import build_skip, write_skip  # noqa: E402
+from gen_lazy_skip import build_skip, build_skip_v2, write_skip, write_skip_v2  # noqa: E402
 from manifest_builder import build_manifest, load_tier_overrides  # noqa: E402
 from trim_manifest import trim  # noqa: E402
 from validate_manifest import Finding, validate  # noqa: E402
@@ -36,6 +36,8 @@ class InstallResult:
     findings: list[Finding]
     skip_file: Path | None = None
     skip_count: int = 0
+    skip_v2_file: Path | None = None
+    skip_v2_count: int = 0
 
 
 def install(
@@ -62,40 +64,44 @@ def install(
     runtime: dict = {}
     skip_file: Path | None = None
     skip_count = 0
+    skip_v2_file: Path | None = None
+    skip_v2_count = 0
     if not critical:
         runtime = trim(built.manifest)
         target.parent.mkdir(parents=True, exist_ok=True)
         skip_target = target.parent / "lazy-skip-v1.txt"
-        # manifest 与 skip 必须同代：先把两者都算好、都写到同目录 .tmp，再按
-        # 顺序替换。任何一步失败都不能留下“新 manifest + 旧 skip”的跨代 pair
-        # （旧 skip 可能跳过新 manifest 提升为 L1 的 path，违反硬不变量）。
         skip_rows, _skip_stats = build_skip(runtime)
+        skip_v2_rows, _skip_v2_stats = build_skip_v2(built.manifest)
+        skip_v2_target = target.parent / "lazy-skip-v2.txt"
         tmp = target.with_name(target.name + ".tmp")
         skip_tmp = skip_target.with_name(skip_target.name + ".tmp")
+        skip_v2_tmp = skip_v2_target.with_name(skip_v2_target.name + ".tmp")
         try:
-            # 原子写：先写同目录 sibling 临时文件，成功后再替换目标；任何异常
-            # 都删除临时文件并保留旧 manifest（这是运行时唯一的 manifest 写点）。
             with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
                 json.dump(runtime, fh, ensure_ascii=False, separators=(",", ":"))
                 fh.flush()
-            # skip 头记录它所配对的那份 manifest 的 sha256（agent 读取时跳过
-            # # 行），便于事后核对两者是不是同一代。
             generation = hashlib.sha256(tmp.read_bytes()).hexdigest()
-            write_skip(skip_tmp, skip_rows, header=f"# generation={generation}")
+            header = f"# generation={generation}"
+            write_skip(skip_tmp, skip_rows, header=header)
+            write_skip_v2(skip_v2_tmp, skip_v2_rows, header=header)
             os.replace(tmp, target)
             try:
                 os.replace(skip_tmp, skip_target)
+                os.replace(skip_v2_tmp, skip_v2_target)
             except BaseException:
-                # manifest 已换新而 skip 还是旧代：删除旧 skip，让 agent 走
-                # “skip 缺失 → lazy disabled → 正常加载”，绝不留下跨代 pair。
+                # manifest 已换新：删除两份旧 skip，绝不留跨代 pair。
                 skip_target.unlink(missing_ok=True)
+                skip_v2_target.unlink(missing_ok=True)
                 raise
         except BaseException:
             tmp.unlink(missing_ok=True)
             skip_tmp.unlink(missing_ok=True)
+            skip_v2_tmp.unlink(missing_ok=True)
             raise
         skip_file = skip_target
         skip_count = len(skip_rows)
+        skip_v2_file = skip_v2_target
+        skip_v2_count = len(skip_v2_rows)
     return InstallResult(
         built.manifest,
         runtime,
@@ -103,6 +109,8 @@ def install(
         findings,
         skip_file=skip_file,
         skip_count=skip_count,
+        skip_v2_file=skip_v2_file,
+        skip_v2_count=skip_v2_count,
     )
 
 
@@ -147,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"installed: {result.out}")
     print(f"skip={result.skip_count} skip_file={result.skip_file}")
+    print(f"skip_v2={result.skip_v2_count} skip_v2_file={result.skip_v2_file}")
     return 0
 
 

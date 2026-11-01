@@ -331,7 +331,7 @@ public final class LazyTextures {
             synchronized (DRAIN_LOCK) {
                 if (PROXIES.containsKey(path)) return true;
                 LazySkipIndex idx = index;
-                LazySkipIndex.Dim dim = idx == null ? null : idx.get(path);
+                LazySkipIndex.Entry dim = idx == null ? null : idx.get(path);
                 ProxyShape shape = proxyShape;
                 if (dim == null || shape == null) return false;
                 Object obj = shape.newProxy(path, dim.w(), dim.h());

@@ -60,6 +60,72 @@ def build_skip(manifest: dict) -> tuple[list[tuple[str, int, int]], dict]:
     return out, stats
 
 
+def build_skip_v2(manifest: dict) -> tuple[list[tuple[str, int, int, str, str, bool]], dict]:
+    """Same eligibility as build_skip, plus absolutePath/ddsPath/baked for DDS.
+
+    Rows are (path, w, h, absPath, ddsPath, baked). absPath/ddsPath may be
+    empty; baked is true only when the full manifest says so AND ddsPath is
+    non-empty. File existence is validated at runtime by DdsCheck.
+    """
+    layers = manifest.get("layers") or {}
+    if not isinstance(layers, dict):
+        layers = {}
+    l1 = {e.get("path") for e in layers.get("L1") or [] if isinstance(e, dict)}
+    stats = {
+        "l1": len(l1), "candidates": 0, "skip": 0, "dds": 0,
+        "excluded_l1": 0, "excluded_invalid": 0,
+        "excluded_blacklist": 0, "excluded_duplicate": 0,
+    }
+    seen: set[str] = set()
+    out: list[tuple[str, int, int, str, str, bool]] = []
+    for layer in ("L2", "L3"):
+        for entry in layers.get(layer) or []:
+            if not isinstance(entry, dict):
+                continue
+            stats["candidates"] += 1
+            path = entry.get("path")
+            if not isinstance(path, str) or not path:
+                stats["excluded_invalid"] += 1
+                continue
+            if path in l1:
+                stats["excluded_l1"] += 1
+                continue
+            if path.startswith(BLACKLIST_PREFIX):
+                stats["excluded_blacklist"] += 1
+                continue
+            w, h = entry.get("w"), entry.get("h")
+            if not isinstance(w, int) or not isinstance(h, int) or w <= 0 or h <= 0:
+                stats["excluded_invalid"] += 1
+                continue
+            if path in seen:
+                stats["excluded_duplicate"] += 1
+                continue
+            seen.add(path)
+            abs_path = entry.get("absolutePath")
+            dds_path = entry.get("ddsPath")
+            abs_path = abs_path if isinstance(abs_path, str) else ""
+            dds_path = dds_path if isinstance(dds_path, str) else ""
+            baked = bool(entry.get("baked")) and bool(dds_path)
+            if baked:
+                stats["dds"] += 1
+            out.append((path, w, h, abs_path, dds_path, baked))
+    out.sort()
+    stats["skip"] = len(out)
+    return out, stats
+
+
+def write_skip_v2(path: Path, rows: list[tuple[str, int, int, str, str, bool]],
+                  header: str | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as f:
+        if header is not None:
+            f.write(header.rstrip("\n") + "\n")
+        for p, w, h, abs_path, dds_path, baked in rows:
+            f.write(f"{p}\t{w}\t{h}\t{abs_path}\t{dds_path}\t{1 if baked else 0}\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
 def write_skip(path: Path, rows: list[tuple[str, int, int]],
                header: str | None = None) -> None:
     """Write an optional header line plus one ``<path>\\t<w>\\t<h>`` per row.
