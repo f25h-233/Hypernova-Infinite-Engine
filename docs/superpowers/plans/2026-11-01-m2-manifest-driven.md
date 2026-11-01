@@ -31,7 +31,7 @@
 1. **mod 文件夹改名、`ModID` 不变** → manifest 仍能把 metadata 绑到当前文件夹，`absolutePath`/`ddsPath` 存在，覆盖率仍 100%。测试：Task 2 `test_renamed_mod_folder_resolves_by_mod_id`。
 2. **mod 被禁用/移除、DDSCache 仍留着旧 metadata** → 不进覆盖面分母，只进 `metadata_unused`，validator 不报 Critical。测试：Task 2 `test_disabled_mod_metadata_is_excluded`（既有）+ Task 3 覆盖率口径测试。
 3. **两个 mod 共享同一相对路径 / 同一个 `ModID` 出现在两个文件夹** → 按 enabled 顺序稳定 first-wins，`(modId,path)` 不重复。测试：Task 2 `test_l3_dedupes_duplicate_mod_id_folders`（既有）+ `test_same_path_first_enabled_wins`（Task 2）。
-4. **Base 的 DDSCache 为空** → `source_mode=disk_scan`，L1 仍由 core 静态资产构成，validator 通过（`coverage.metadata=None`、`coverage.baked=1.0`），不能把「没有 metadata」判成失败。测试：Task 3 `test_disk_scan_manifest_passes_without_metadata`。
+4. **Base 的 DDSCache 为空**（无缓存副本）→ `source_mode=disk_scan`，L1 仍由 core 静态资产构成，validator 通过（`coverage.metadata=None`、`coverage.baked=1.0`），不能把「没有 metadata」判成失败。测试：Task 3 `test_disk_scan_manifest_passes_without_metadata`。**注意**：stock Base 实际带 DDSCache（7 个缓存、81 条 + 3,204 core），走 `dds_metadata`、baked 3,285/3,285；`disk_scan` 只在临时移走 DDSCache 的副本上验证。
 5. **tier override 把整个 mod 推进 L1 导致超限** → validator 必须报 `l1_too_large` Critical，且 `install_manifest.py` 在写盘前拒绝。测试：Task 3 `test_l1_too_large_is_critical`（既有）+ Task 5 `test_install_refuses_to_write_when_critical`。
 
 ---
@@ -1499,7 +1499,7 @@ Expected: PASS（3/3）。
 
 再跑全量 Java 套件：
 Run: `bash tools/java/run-tests.sh`
-Expected: 110+ found / 109+ pass / 1 pre-existing symlink abort / 0 fail（数字以实测为准）。
+Expected: **103 found / 103 pass / 0 fail**（既有套件的实测值；计划早期估计的 110+/109+ 偏高，以实测为准）。
 
 - [ ] **Step 5: 提交**
 
@@ -1537,12 +1537,12 @@ Expected（全部以实测为准，不符按 escape hatch 报告）：
 - validator **exit 0，0 Critical**；260mods 会打印 **1 条聚合既有 `cross_layer_duplicate` Important（覆盖 44 个 key）**（同路径跨层，L1 优先；R8），这是预期，不是失败。
 - `l1_count=6624`、`l2_count=18525`、`l3_count=55444`（10 张由 L2 升 L1；R10）。
 - `coverage.baked_expected=80286`（稳定 ModID 多纳入 8 条；R9）、`baked_resolved` 相等、`baked=1.0`、`unresolved_baked_count=0`。
-- `closure.variants=[1797,1797]`、`closure.wings=[364,364]`（17 个 wing 根 id 已转入 wing 计数）、`closure_refs=1.0`。
+- `closure.variants=[1803,1803]`、`closure.wings=[354,354]`（实测；17 个 wing 根 id 中 10 个早已通过 FIGHTER hull 计入 wings，另带出 6 个新 variant）、`closure_refs=1.0`。
 - `mods` 257 行；三层求和 = 6,624 / 18,525 / 55,444。
 
 若 `l1_count` 或闭包数字不同：记录实际值，检查是否有新的 title CSV/mod 变化；**不要**改断言来掩盖。
 
-- [ ] **Step 2: Base 生成 + 校验（无 DDSCache 的降级路径）**
+- [ ] **Step 2: Base 生成 + 校验（stock 有 DDSCache；另验无缓存降级）**
 
 ```bash
 mkdir -p build/m2/base
@@ -1553,31 +1553,32 @@ python -I tools/validate_manifest.py \
   --game-root Starsector-098-Base
 ```
 
-Expected：validator `OK: no findings`；`source_mode=disk_scan`；`coverage.metadata=None`；`coverage.baked=1.0`（expected=0 的约定）；L1 仍为 core 静态集（185 ± wing 回退增量，以实测为准）。
+Expected（实测）：stock Base **带** DDSCache → `source_mode=dds_metadata`、L1 185 / L2 509 /
+L3 2,612、`coverage.baked=3,285/3,285=1.0`、validator **0 Critical / exit 0**。
+无缓存降级路径用临时移走 DDSCache 的副本验证：`source_mode=disk_scan`、`coverage.metadata=None`、
+`coverage.baked=1.0`（expected=0 的约定）、validator 0 Critical；原 DDSCache 必须还原。
 
-- [ ] **Step 3: 构建并安装新 jar、恢复 M2 manifest，再跑运行时冒烟**
+- [ ] **Step 3: 构建并安装新 jar、恢复 M2 manifest，再跑 Base 运行时冒烟**
 
-`smoke-prepare.sh` 会构建并安装新 jar/配置（并临时设 `startup_probe_paths=8`），但它随后调用
-`install-manifest.sh --env base` 会装入 M0 manifest（L1 185 / L2 509 / L3 2,611）。因此必须
-紧接着重跑 `install_manifest.py` 把 M2 运行时 manifest 写回，再跑冒烟：
+**环境裁决**：260mods 是 agent-only（256 mods，不含 `hypernova_infinite_engine`），
+运行期 mod 在 Base 验证；`smoke-prepare.sh` 在 260mods 会于第 5 步断言中止。冒烟走 Base。
 
 ```bash
 bash tools/java/build-mod.sh
-bash tools/java/smoke-prepare.sh Starsector-098-260mods
-python -I tools/install_manifest.py --game-root Starsector-098-260mods
-python -I tools/smoke_run.py --profile miko-lite --rounds 1 \
-  --wait-menu 300 --json-out build/m2/smoke.json
+bash tools/java/smoke-prepare.sh                       # 默认 Base：装新 jar + M0 manifest + probe=8，随后重写 M2 manifest
+python -I tools/smoke_run.py --profile base --rounds 1 \
+  --wait-menu 300 --json-out build/m2/smoke-base.json
+bash tools/java/smoke-restore.sh                        # probe 归 0，并再次重写 M2 manifest
 ```
 
 Expected：
-- `installed: .../mods/hypernova_infinite_engine/data/config/hypernova/manifest-v1.json`
-- 本次冒烟**启用** `startup_probe_paths=8`；跑完用
-  `bash tools/java/smoke-restore.sh Starsector-098-260mods` 还原为 0（restore 也会在装完
-  M0 后重跑 `install_manifest.py` 恢复 M2 manifest）。
+- Base 运行时 manifest：`hypernova-runtime-1`，L1 185 / L2 509 / L3 2,612（unique 3,306）。
 - smoke 到主菜单；`starsector-core/starsector.log` 含
-  `Hypernova active: ... manifest=80084 paths, discarded=509, crossLayer=44`
-  （`manifest` 是唯一 path 数；三层合计仍是 80,593）。
-- 无 `Hypernova disabled`、无 `selfcheck: FAILED`、无 `Failed to load texture`。
+  `Hypernova active: ... manifest=3306 paths, discarded=0, crossLayer=0`。
+- 无 `Hypernova disabled`、无 `Failed to load texture`。
+- **自检边界**：`smoke_run.py` 只到主菜单、不进 campaign，`startup_probe_paths=8` 不会触发
+  `runFallbackSelfCheck`；REQ-R1-05 的 L1-only 由 `StartupSelfCheckTest` 锁定，完整 campaign
+  `selfcheck` 仍需手动读档，不计入本次门禁。
 
 - [ ] **Step 4: 全量测试**
 
@@ -1632,7 +1633,7 @@ git commit -m "docs(m2): close the manifest-driven milestone"
 
 1. **Spec coverage**
    - REQ-R1-04（manifest 由 dds_metadata 生成、100%、无缓存降级）→ T2（生成）、T3（100% 门禁）、T7 Step 2（Base 降级）。
-   - REQ-R1-05（L1/L2/L3 分层、启动期只 L1）→ T2（分层与 tier）、T6（自检只 L1）、T7 Step 3（冒烟证据）。
+   - REQ-R1-05（L1/L2/L3 分层、启动期只 L1）→ T2（分层与 tier）、T6（自检只 L1，单测锁定）、T7 Step 3（Base 主菜单冒烟证明 manifest 被加载；campaign 自检为手动项）。
    - §7 M2 交付物（生成器、校验器、按 mod 分级）→ T2（生成器 + per-mod 汇总 + tier）、T3（校验器）、T5（安装器）。
    - §7 M2 停止条件（改名/新增 mod → 先解决键稳定性）→ T1/T2（ModID 稳定身份 + 改名 fixture）。
    - OD-02 A 全预载（L1 ≤ 8,000）→ T4（精确化）、T7（实测 6,624）。
@@ -1649,5 +1650,5 @@ git commit -m "docs(m2): close the manifest-driven milestone"
 - [ ] `mods[]` 三层求和与 `layers` 完全相等；per-mod tier 可覆盖。
 - [ ] 改名/禁用/duplicate/空 DDSCache 四类 fixture 测试全绿。
 - [ ] Java 全量测试 0 failed；Python M2 测试全绿。
-- [ ] 260mods 冒烟到主菜单，`Hypernova active`，无 selfcheck 失败。
+- [ ] **Base** 冒烟到主菜单，`starsector.log` 含 `Hypernova active: ... manifest=3306 paths, discarded=0, crossLayer=0`；260mods 是 agent-only，只交出离线 manifest 证据。
 - [ ] `docs/m2-results.md` 落盘；规格 §7/§5.4/ADR-05 回写；记忆钩子更新。

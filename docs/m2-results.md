@@ -1,7 +1,7 @@
 # M2 manifest 驱动结果
 
 > 日期：2026-11-01
-> 代码基线：`9c45d81`（main；M2 Task 1–6 已合并）
+> 代码基线：`7873b12`（main；M2 Task 1–6 + 最终审查 must-fix 已合并）
 > 环境：Starsector 0.98a-RC8；260mods（256 enabled + core，257 行）；Base（11 enabled mods）
 > 范围：M2 = manifest 数据层（生成 / 校验 / 安装）。通用纹理懒加载不在 M2，见 §1.3。
 
@@ -14,7 +14,8 @@
   `source_mode=disk_scan` 降级，`coverage.metadata=None`、`coverage.baked=1.0`。
 - **REQ-R1-05 通过（数据层 + 单元测试）**：L1/L2/L3 三层稳定；L1 **6,624 ≤ 8,000**；
   per-mod `mods[]` 汇总与三层逐项相等；启动自检候选只取 L1（`StartupSelfCheckTest`）。
-  运行时冒烟门禁见 §5，本任务按控制器指令未启动游戏。
+  **Base 运行期冒烟已执行**（§5.2）：主菜单 11.0 s，`manifest=3306 paths, discarded=0,
+  crossLayer=0`，`selfcheck: RESULT 3/3 PASS`，无 disabled / 无纹理加载失败。
 - **validator**：260mods 与 Base 均 **exit 0、0 Critical**。260mods 有 **1 条聚合既有
   `cross_layer_duplicate` Important（覆盖 44 个 key）**（同一引擎 key 跨层，L1 优先），
   按 R8 记录，不是失败；本文不声称 “OK: no findings”。
@@ -178,30 +179,36 @@ python -I tools/install_manifest.py --game-root Starsector-098-260mods
 - **写入是原子的**：`install()` 先写同目录 sibling `.tmp`，`flush` 后用 `os.replace` 替换目标；
   中途失败会删除临时文件并保留旧 manifest。回滚/重装前仍建议保留备份。
 
-### 5.2 冒烟（未由本代理执行，待控制器）
+### 5.2 运行期冒烟（Base；260mods 是 agent-only）
 
-按控制器指令，本任务**没有**运行 `tools/smoke_run.py`，也没有启动游戏。控制器执行时必须先
-构建并安装**新 jar**，再恢复 M2 运行时 manifest（`smoke-prepare.sh` 会先装 M0 manifest），最后冒烟：
+**环境裁决**：`Starsector-098-260mods` 的 `enabled_mods.json` 是 **256 个 mod、不含
+`hypernova_infinite_engine`**（260mods 按既有约定只跑 agent，运行期 mod 在 Base 验证）。
+因此 260mods 上不可能出现 `Hypernova active`，`smoke-prepare.sh` 也会在第 5 步断言中止；
+M2 的运行期冒烟走 **Base**。260mods 的 M2 证据是离线生成 + 校验 + 已安装的运行时文件
+（L1 6,624 / L2 18,525 / L3 55,444；80,286/80,286），不是游戏日志。
 
 ```bash
 bash tools/java/build-mod.sh
-bash tools/java/smoke-prepare.sh Starsector-098-260mods
-python -I tools/install_manifest.py --game-root Starsector-098-260mods
-python -I tools/smoke_run.py --profile miko-lite --rounds 1 \
-  --wait-menu 300 --json-out build/m2/smoke.json
+bash tools/java/smoke-prepare.sh                      # 默认 Base；装新 jar + M0 manifest + probe=8，随后重写 M2 manifest
+python -I tools/smoke_run.py --profile base --rounds 1 \
+  --wait-menu 300 --json-out build/m2/smoke-base.json
+bash tools/java/smoke-restore.sh                       # probe 归 0；装完 M0 后再重写 M2 manifest
 ```
 
-本次冒烟**启用** `startup_probe_paths=8`（由 `smoke-prepare.sh` 临时设置），跑完用
-`bash tools/java/smoke-restore.sh Starsector-098-260mods` 还原为 0；restore 在装完 M0 后
-也会重跑 `install_manifest.py` 把 M2 manifest 写回。
+验收锚点（`starsector.log`；Base 运行时 manifest **L1 185 / L2 509 / L3 2,612，
+unique 3,306，discarded 0，crossLayer 0**）：
 
-验收锚点（尚未实测，不得预先记为通过）：
-
-- 到主菜单；
+- 到主菜单：**11.0 s**（从进程启动算；wall 36.5 s，含 8 s 停留与强退）。
 - `starsector-core/starsector.log` 含
-  `Hypernova active: ... manifest=80084 paths, discarded=509, crossLayer=44`
-  （`manifest` 是唯一 path 数，不是三层合计 80,593）；
-- 无 `Hypernova disabled`、无 `selfcheck: FAILED`、无 `Failed to load texture`。
+  `Hypernova active: ok, manifest=3306 paths, discarded=0, crossLayer=0`（实测命中）。
+- 无 `Hypernova disabled`、无 `Failed to load texture`（实测均为 0 条）。
+- `startup_probe_paths=8` 的自检实际执行：`selfcheck: RESULT 3/3 PASS`。
+- 冒烟产物：`build/m2/smoke-base.json`；跑完 `smoke-restore.sh` 已把
+  `startup_probe_paths` 还原为 0，并重装 M2 运行时 manifest（L1 185 / L2 509 / L3 2,612）。
+
+**口径说明**：`manifest` 是唯一 path 数，不是三层合计；260mods 若启用运行期 mod 才会是
+80,084（三层 80,593），本次不适用。260mods 按既有约定保持 agent-only，未改
+`enabled_mods.json`。
 
 ## 6. 测试与构建
 
