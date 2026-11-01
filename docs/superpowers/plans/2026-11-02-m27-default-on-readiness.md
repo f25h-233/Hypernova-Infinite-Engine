@@ -452,7 +452,7 @@ Expected: 编译失败（`evictOneForTest(ProxyEntry)`/`parkFailedProxy`/`failed
     }
 ```
 
-3b. `runSelfTest` 的 `evictOne(pick, true)` 改为 `evictOne(pick)`。
+3b. 所有调用点改成单参：`runSelfTest` 的 `evictOne(pick, true)` 改为 `evictOne(pick)`；Task 1 的 `evictPass` 里 `evictOne(e, false)` 改为 `evictOne(e)`。
 
 3c. 停车（放在 `evictOneForTest` 后）：
 
