@@ -1,7 +1,10 @@
 package hypernova.agent.textures;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -15,6 +18,15 @@ class LazyEvictionTest {
         e.bytes = bytes;
         e.lastUseNanos = lastUse;
         return e;
+    }
+
+    /**
+     * Selftest candidates are unmaterialized proxies. {@link #entry} builds
+     * ready entries with a null obj, which the picker must reject; tests that
+     * exercise the picker need a non-ready proxy with a real obj reference.
+     */
+    private static LazyTextures.ProxyEntry candidate(String path) {
+        return new LazyTextures.ProxyEntry(path, "TEXTURE", 10, 10, new Object());
     }
 
     @Test
@@ -81,5 +93,21 @@ class LazyEvictionTest {
     void ddsBytesIsOneBytePerPixel() {
         assertEquals(810L * 500L, LazyTextures.ddsBytes(810, 500));
         assertEquals(0L, LazyTextures.ddsBytes(-1, 10));
+    }
+
+    @Test
+    void selfTestPickerPrefersDdsAndSkipsBasic(@TempDir Path dir) throws Exception {
+        Path f = dir.resolve("skip.txt");
+        Files.writeString(f, "graphics/a.png\t1\t1\tD:/a.png\tD:/a.dds\t1\n"
+                + "graphics/b.png\t1\t1\t\t\t0\n");
+        LazySkipIndex idx = LazySkipIndex.load(f);
+        LazyTextures.ProxyEntry ready = entry("graphics/ready.png", 1, 1);
+        ready.ready = true;
+        LazyTextures.ProxyEntry ui = candidate("graphics/ui/x.png");
+        LazyTextures.ProxyEntry a = candidate("graphics/a.png");
+        LazyTextures.ProxyEntry b = candidate("graphics/b.png");
+        assertSame(a, LazyTextures.pickSelfTestEntry(List.of(ready, ui, a, b), idx, true));
+        assertNull(LazyTextures.pickSelfTestEntry(List.of(ready, ui), idx, true));
+        assertSame(b, LazyTextures.pickSelfTestEntry(List.of(b), idx, false));
     }
 }

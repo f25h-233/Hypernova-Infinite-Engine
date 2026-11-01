@@ -87,6 +87,10 @@ public final class LazyTextures {
     private static volatile String lastStateName;
     private static volatile long stateTransitions;
     private static volatile long mainCapturedNanos;
+    // ---- M2.6 selftest state ----
+    private static volatile boolean selftest;
+    private static volatile int selftestResult;
+    private static final AtomicBoolean SELFTEST_DONE = new AtomicBoolean();
     private static final String PLACEHOLDER_PATH = "graphics/hypernova/blank.png";
     private static final AtomicBoolean LOAD_ASYNC_FAILED = new AtomicBoolean();
     private static final Map<String, ProxyEntry> PROXIES = new ConcurrentHashMap<>();
@@ -145,6 +149,7 @@ public final class LazyTextures {
         if (!enabled && !probe) return;
         dds = config.dds();
         eviction = config.eviction();
+        selftest = config.selftest();
         evictionBudgetMb = config.evictionBudgetMb();
         evictionGraceNanos = Math.max(0, config.evictionGraceMs()) * 1_000_000L;
         evictionSceneDelayNanos = Math.max(0, config.evictionSceneDelayMs()) * 1_000_000L;
@@ -314,6 +319,8 @@ public final class LazyTextures {
         lastStateName = null;
         PENDING_DELETE.clear();
         DEFERRED_DELETES.set(0);
+        selftestResult = 0;
+        SELFTEST_DONE.set(false);
     }
 
     // ---- wiring armed flags (set by the transformers when a hook is applied) ----
@@ -436,6 +443,7 @@ public final class LazyTextures {
     public static Object lookup(String path) {
         if (path == null) return null;
         try {
+            if (selftest) maybeRunSelfTest(System.nanoTime());
             ProxyEntry e = PROXIES.get(path);
             if (e == null) return null;
             if (!e.ready) {
@@ -458,6 +466,7 @@ public final class LazyTextures {
      */
     public static void onProxyUse(Object proxy) {
         try {
+            if (selftest) maybeRunSelfTest(System.nanoTime());
             if (proxy == null) return;
             ProxyEntry e = PROXY_BY_OBJ.get(proxy);
             if (e == null || e.ready) return;
@@ -702,6 +711,24 @@ public final class LazyTextures {
                 evictDueNanos = 0;
                 if (!isCombatState(name)) evictPass();
             }
+        }
+        maybeRunSelfTest(now);
+    }
+
+    /**
+     * Runs the real-process selftest at most once, on the runtime main thread,
+     * at least 5 s after the main thread was captured. This build calls
+     * BaseGameState.traverse (and therefore noteGameState) only on state
+     * transitions, so the same gate is also evaluated from the per-frame
+     * main-thread paths (lookup miss / onProxyUse bind-id).
+     */
+    private static void maybeRunSelfTest(long now) {
+        if (!selftest || SELFTEST_DONE.get()) return;
+        if (Thread.currentThread() != runtimeMain) return;
+        long captured = mainCapturedNanos;
+        if (captured == 0 || now - captured < 5_000_000_000L) return;
+        if (SELFTEST_DONE.compareAndSet(false, true)) {
+            runSelfTest();
         }
     }
 
@@ -1396,6 +1423,68 @@ public final class LazyTextures {
     }
 
     /**
+     * Picks an invisible, not-yet-materialized proxy for the real-process
+     * selftest. Basic UI/font/intro paths, startup textures, and failed
+     * proxies are never candidates; a DDS-backed entry is preferred so the
+     * selftest exercises the DDS materialize path.
+     */
+    static ProxyEntry pickSelfTestEntry(java.util.Collection<ProxyEntry> proxies,
+                                        LazySkipIndex idx, boolean preferDds) {
+        ProxyEntry fallback = null;
+        for (ProxyEntry e : proxies) {
+            if (e == null || e.ready || e.failed || e.startup || e.obj == null) continue;
+            if (isBasicPath(e.path)) continue;
+            LazySkipIndex.Entry meta = idx == null ? null : idx.get(e.path);
+            if (preferDds && meta != null && meta.hasDds()) return e;
+            if (fallback == null) fallback = e;
+        }
+        return fallback;
+    }
+
+    private static void runSelfTest() {
+        try {
+            ProxyEntry pick = pickSelfTestEntry(PROXIES.values(), index, dds);
+            if (pick == null) {
+                selftestResult = 3;
+                AgentLog.fail("lazy selftest: no candidate proxy", null);
+                return;
+            }
+            Object before = lookup(pick.path);
+            if (before == null || !pick.ready || pick.glId <= 0) {
+                selftestResult = 2;
+                AgentLog.fail("lazy selftest: materialize failed for " + pick.path, null);
+                return;
+            }
+            int firstId = pick.glId;
+            if (!evictOne(pick, true) || pick.ready) {
+                selftestResult = 2;
+                AgentLog.fail("lazy selftest: evict failed for " + pick.path, null);
+                return;
+            }
+            Object after = lookup(pick.path);
+            if (after == null || !pick.ready || pick.glId <= 0
+                    || pick.rematerialized <= 0) {
+                selftestResult = 2;
+                AgentLog.fail("lazy selftest: re-materialize failed for " + pick.path, null);
+                return;
+            }
+            if (dds && !pick.dds) {
+                selftestResult = 2;
+                AgentLog.fail("lazy selftest: DDS path not used for " + pick.path
+                        + " (ddsFallback=" + DDS_FALLBACK.get() + ")", null);
+                return;
+            }
+            selftestResult = 1;
+            AgentLog.info("lazy selftest: ok path=" + pick.path + " ids=" + firstId
+                    + "->" + pick.glId + " dds=" + (pick.dds ? 1 : 0)
+                    + " rematerialized=" + pick.rematerialized);
+        } catch (Throwable t) {
+            selftestResult = 2;
+            AgentLog.fail("lazy selftest failed", t);
+        }
+    }
+
+    /**
      * I2: textures first materialized off the runtime main thread (including
      * anything while {@code runtimeMain} is still null during loading) are
      * startup textures and are excluded from eviction. One-way latch.
@@ -1474,7 +1563,8 @@ public final class LazyTextures {
                     + " placeholder=" + placeholderId
                     + " oldIdDeleted=" + OLD_ID_DELETED.get()
                     + " evictSkipped=" + OLD_ID_SKIPPED.get()
-                    + " deferredDeletes=" + DEFERRED_DELETES.get());
+                    + " deferredDeletes=" + DEFERRED_DELETES.get()
+                    + " selftest=" + selftestResult);
         } catch (Throwable t) {
             AgentLog.fail("lazy probe: summary failed", t);
         }
