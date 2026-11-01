@@ -1,12 +1,15 @@
 # 大饼：DDS 按需物化 + 有界 LRU（M2.6 方向）
 
-> 状态：**M2.6 已实现并收口（2026-11-01，experimental / 默认 off）；I-1/I-2 已修（2026-11-02，
-> `35fc768` + `01cf3e1`）；战斗/手动/A→B pending**。计划为
-> `docs/superpowers/plans/2026-11-01-m26-dds-lru.md`；结果 `docs/m26-results.md`。
-> 剩余 default-on gates：refcount/第三方 id、预算口径（startup bytes/空 pass 30 s backoff）、M2.5 W5/W6、
-> W-2/W-3/W-5/W-10、用户战斗/手动/A→B/stutter。
+> 状态：**M2.6 已实现并收口（2026-11-01，experimental / 默认 off）；M2.7 代码侧 default-on
+> gates 已关闭（2026-11-02，`2d17977`/`ae56ac8`/`e828055`/`37899bf`/`bc886c8`/`40dd39c`/
+> `196e090`/`7de2cc6`/`8e6be81`），默认仍 off；战斗/读档/分辨率/手动、A→B、stutter
+> 仍 user gates**。计划为 `docs/superpowers/plans/2026-11-01-m26-dds-lru.md`（M2.6）与
+> `docs/superpowers/plans/2026-11-02-m27-default-on-readiness.md`（M2.7）；结果
+> `docs/m26-results.md`、`docs/m27-results.md`；用户清单 `docs/m27-manual-acceptance.md`。
+> 剩余 gates：refcount/第三方 id（residual）、W-2（user gate）、战斗/读档/分辨率/手动、
+> A→B 长会话净 VRAM、>200 ms stutter。
 > 战斗/读档/手动目检与 A→B 长会话净 VRAM **仍 pending user**。
-> 关联：`docs/m25-results.md`、`技术笔记-纹理按需加载.md` §5.7/§7（M2.5/M2.6）、REQ-R1-10、REQ-R2-01/02、INV-08/10、ADR-02/05 补记 6。
+> 关联：`docs/m25-results.md`、`技术笔记-纹理按需加载.md` §5.7/§7（M2.5/M2.6/M2.7）、REQ-R1-10、REQ-R2-01/02、INV-08/10、ADR-02/05 补记 6。
 > 前置：M2.5 的跳过 / 代理 / drain / path cache / F3 已落地（默认 off）。
 
 ## 一、要解决的问题

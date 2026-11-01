@@ -357,6 +357,26 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
     关闭前，不得声称 bounded LRU 已在真实会话自动工作（自动 trigger 已证明，真实自动 victim/
     长会话未验收），也不得对外称“可选显存优化”。
 
+    **M2.7 回写（2026-11-02；不改变以上 M2.6 历史数字）**：以下 gates 已在 M2.7
+    关闭/修复，证据见 `docs/m27-results.md`：
+
+    - 预算口径 → **fixed**（Task 1 `2d17977`；实机 `startupBytes`/`foreignBytes`/
+      `evictableBytes`；R-M27-9 诊断 `budgetBytes` 覆盖 `8e6be81`）。
+    - W-4 `ddsFallback` 盲区 → **closed（可诊断）**（Task 3 `37899bf`/`bc886c8`；
+      10 个 `ddsFb*`；R-M27-8：`BRIDGE` 自 M2.7 起计入总数，M2.6/M2.7 仅在
+      `ddsDisabled=0` 时可直接比较）。
+    - W-5 pick→evict TOCTOU → **fixed**（Task 2 `ae56ac8`/`e828055`）。
+    - W-10 失败物化 id=0 → **fixed**（Task 2 `parkFailedProxy` + `failedParked`；
+      `blank.png` 缺失残余见 `docs/m27-results.md`）。
+    - W-7 DDS commit 监视器 → **defensive fixed**（Task 2 `synchronized(loader)`；
+      R-M27-7 仍存在潜在 loader→e 反向路径，不声称“无反向路径”）。
+    - M2.5 W5 发行包 mod 集 → **documented + fail-open**（Task 4 `40dd39c`）。
+    - M2.5 W6 agent jar 新鲜度 → **fixed**（Task 4 `40dd39c`）。
+
+    仍 **open**：refcount/REQ-R1-10（无全局注册表，not implementable）、第三方 id 缓存
+    （W-3，residual）、GL context 重建（W-2，user gate）、战斗/读档/分辨率/手动目检、
+    A→B 长会话净 VRAM、>200 ms 卡顿（user gates）。
+
 ---
 
 ## 8. 默认 / 回滚 / 文件 / commits
