@@ -21,6 +21,18 @@ class LazyEvictionTest {
         return e;
     }
 
+    /** Ready entry with a real obj, so evictOne reaches the owned gate in tests. */
+    private static LazyTextures.ProxyEntry readyWithObj(String path, boolean owned) {
+        LazyTextures.ProxyEntry e =
+                new LazyTextures.ProxyEntry(path, "TEXTURE", 10, 10, new Object());
+        e.ready = true;
+        e.glId = 1;
+        e.bytes = 10;
+        e.lastUseNanos = 100;
+        e.owned = owned;
+        return e;
+    }
+
     /**
      * Selftest candidates are unmaterialized proxies. {@link #entry} builds
      * ready entries with a null obj, which the picker must reject; tests that
@@ -92,9 +104,8 @@ class LazyEvictionTest {
 
     @Test
     void engineOwnedEntriesAreNotEvicted() {
-        LazyTextures.ProxyEntry engine = entry("engine", 10, 100);
-        engine.owned = false;
-        LazyTextures.ProxyEntry mine = entry("mine", 10, 100);
+        LazyTextures.ProxyEntry engine = readyWithObj("engine", false);
+        LazyTextures.ProxyEntry mine = readyWithObj("mine", true);
         assertEquals(List.of(mine), LazyTextures.selectVictims(
                 List.of(engine, mine), 150, 100, 0, 10_000, 10));
         assertFalse(LazyTextures.evictOneForTest(engine, true));
@@ -143,6 +154,20 @@ class LazyEvictionTest {
         com.fs.starfarer.api.Global.currentState = null;
         assertFalse(LazyTextures.isInCombat());
         LazyTextures.resetGateStateForTest();
+    }
+
+    @Test
+    void combatProbeFailsClosedWhenProbeThrows() {
+        LazyTextures.resetGateStateForTest();
+        try {
+            com.fs.starfarer.api.Global.currentState = "CAMPAIGN";
+            com.fs.starfarer.api.Global.throwNow = true;
+            assertTrue(LazyTextures.isInCombat());
+        } finally {
+            com.fs.starfarer.api.Global.throwNow = false;
+            com.fs.starfarer.api.Global.currentState = null;
+            LazyTextures.resetGateStateForTest();
+        }
     }
 
     @Test

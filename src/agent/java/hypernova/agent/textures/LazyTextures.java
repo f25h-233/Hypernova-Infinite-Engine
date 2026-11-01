@@ -63,7 +63,7 @@ public final class LazyTextures {
     /**
      * R-M26-10: GL deletes are only legal on the runtime main thread. Ids freed
      * off-main (loading thread DDS cleanup, F3 refresh) wait here for the next
-     * main-thread noteGameState() drain.
+     * main-thread drain (maybeRunEviction from lookup/onProxyUse/noteGameState).
      */
     private static final java.util.Set<Integer> PENDING_DELETE =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -456,6 +456,7 @@ public final class LazyTextures {
             if (selftest) maybeRunSelfTest(now);
             ProxyEntry e = PROXIES.get(path);
             if (e == null) return null;
+            touch(e);
             if (!e.ready) {
                 if (canMaterialize()) {
                     materialize(e);
@@ -481,7 +482,9 @@ public final class LazyTextures {
             if (selftest) maybeRunSelfTest(now);
             if (proxy == null) return;
             ProxyEntry e = PROXY_BY_OBJ.get(proxy);
-            if (e == null || e.ready) return;
+            if (e == null) return;
+            touch(e);
+            if (e.ready) return;
             if (canMaterialize()) {
                 materialize(e);
             } else {
