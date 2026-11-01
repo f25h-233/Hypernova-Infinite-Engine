@@ -1,6 +1,8 @@
 # 大饼：DDS 按需物化 + 有界 LRU（M2.6 方向）
 
-> 状态：**未立项**。本文是 M2.5 收口后记录的方向，不是已批准计划；M2.6 未写计划、未实现。
+> 状态：**M2.6 已实现并收口（2026-11-01，experimental / 默认 off）；战斗/手动/A→B pending**。计划为
+> `docs/superpowers/plans/2026-11-01-m26-dds-lru.md`；结果 `docs/m26-results.md`。
+> 战斗/读档/手动目检与 A→B 长会话净 VRAM **仍 pending user**。
 > 关联：`docs/m25-results.md`、`技术笔记-纹理按需加载.md` §5.7/§7（M2.5/M2.6）、REQ-R1-10、REQ-R2-01/02、INV-08/10、ADR-02/05 补记 6。
 > 前置：M2.5 的跳过 / 代理 / drain / path cache / F3 已落地（默认 off）。
 
