@@ -59,14 +59,14 @@
 - **Task 3（`8d01fe1` + fix `b716f74`）有界 LRU**：默认 off；预算 256 MB / grace 10 s / 场景切换延迟 2 s /
   每次最多 64 条；1×1 透明占位（`graphics/hypernova/blank.png`，70 B）；删除后清 `oOoO`/`TextureLoader`
   缓存、旧 id 不复用；`markStartup` 一次性闩锁把 loading 期物化永久排除在淘汰之外。测试：`LazyEvictionTest`
-  7/7（选择/低水位/grace/basic/旧 id/字节/startup/picker）；Lazy 47/47；full agent 164 found / 163 pass /
-  1 known symlink abort / 0 fail；pytest 279。
+  6/6（选择/低水位/grace/basic/旧 id/字节/startup；Task 4 加 picker 后 7/7）；Lazy 47/47；full agent
+  164 found / 163 pass / 1 known symlink abort / 0 fail；pytest 279。
 - **Task 4（`ad16a4d`）真实进程 selftest + 菜单 A/B**：`LazyTextures.runSelfTest`（materialize→evict→
   re-materialize）+ `tools/m26_ab.py`（交错 C/T、归档日志与 smoke JSON、gates）；260mods 3 轮 A/B、selftest
   1 对、Base 1 对。测试：`LazyEviction` 7/7、`test_m26_ab.py` 6 passed、full agent 165 found / 164 pass /
   1 known symlink abort / 0 fail、pytest 287 passed。
-- **Task 5（本条 docs commit）**：本文件 + `技术笔记-纹理按需加载.md` §7 状态 + `大饼-DDS按需物化与LRU.md`
-  状态行。未改代码/测试/工具，未启动游戏。
+- **Task 5（本条 docs commit）**：本文件 + `技术笔记-纹理按需加载.md` §6.1/§7 状态 +
+  `大饼-DDS按需物化与LRU.md` 状态行。未改代码/测试/工具，未启动游戏。
 
 ---
 
@@ -194,13 +194,15 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
 
 ## 6. 正确性
 
-- 归档 **10 个会话**（A/B 3 轮 × 2 + selftest 1 轮 × 2 + Base 1 轮 × 2）：每会话 0
+- 本轮共 **10 个会话**（A/B 3 轮 × 2 + selftest 1 轮 × 2 + Base 1 轮 × 2）；每会话 0
   `Failed to load texture` / 0 `VerifyError` / 0 `ClassFormatError` / 0 `AsyncException` /
-  0 `isStateCorrupted`。
+  0 `isStateCorrupted`。错误计数来自聚合 JSON（`ab-result.json` / `selftest.json` / `base-ab.json`）与
+  live agent log；selftest 的归档日志被后续 run 覆盖（§7.10），不能作为独立切片复核。
 - agent：260mods `failed=0`、`disabled=0`、`pending=0`、`drained=45,784`；Base `failed=0`、`disabled=0`、
   `drained=2,330`；两侧 `dimMismatch=0`、`lateRegistered=lateLoaded=0`、`deferredDeletes=0`。
 - Live 日志确认 bridge 形状：`lazy: GL delete bridge resolved on com.genir.renderer.bridge.opengl.GL11`；
-  `lazy: dds materialized ...` 多行；`lazy selftest: ok ...` 1 行。
+  `lazy: dds materialized ...` 多行；`lazy selftest: ok ...` 共 **2 行**（14:00:45.772 的 probe run 与
+  14:06:54.007 的正式 run，路径/ids 相同）；selftest 归档切片已被后续 run 覆盖，这两行来自 live agent log。
 - **manual visual / battle 明确未做，不标 PASS。**
 
 ---
@@ -256,8 +258,9 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
 - `textures.lazy.eviction.enabled=false`；预算默认 256 MB、grace 10 s、场景切换延迟 2 s、每次最多 64 条。
 - `textures.lazy.dds=true`（**仅当 lazy 开启时**生效；lazy 默认关闭时 `dds` 不触发反射/桥接）。
 - `textures.lazy.selftest=false`。
-- 两侧安装的 `hypernova.json` 当前为 `textures.lazy = {}`；A/B 的开关都走命令行 `-D`，没有写进
-  `Miko_*.txt` / `fr.vmparams` / `enabled_mods.json` / 游戏设置。
+- 两侧安装的 `hypernova.json` **没有 `textures.lazy` 键**（等同默认关闭；`textures` 下只有
+  `enabled=true`）；A/B 的开关都走命令行 `-D`，没有写进 `Miko_*.txt` / `fr.vmparams` /
+  `enabled_mods.json` / 游戏设置。
 
 ### 8.2 回滚（任一即可）
 
@@ -284,4 +287,5 @@ skip v1/v2 可以保留；关闭后不读取、不跳过、不注册代理，行
 - 实现：`7fbb9e6`（Task 0）、`f2f3625`（Task 1）、`e5c7fcf`（Task 0 F1/F2）、`5d982e4`（Task 2）、
   `8d01fe1`（Task 3）、`d2e1cb9`（Task 2 C1/I1/I2）、`b716f74`（Task 3 I2）、`ad16a4d`（Task 4）
 - 工具：`57b9b0b`（逐进程 GPU 采样）
-- 文档：本条 docs commit（本文件 + `技术笔记` §7 + `大饼` 状态行）
+- 文档：`e02bff6`（本文件 + `技术笔记` §6.1 的 M2.5 W1 → 逐进程 GPU 口径行 + §7 M2.6 状态 +
+  `大饼` 状态行）；本条 review-fix docs commit（4 个文字更正，见 `.superpowers/sdd/2026-11-01-m26-dds-lru/task-5-fix-report.md`）。
