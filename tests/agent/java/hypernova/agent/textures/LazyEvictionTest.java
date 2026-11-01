@@ -264,4 +264,21 @@ class LazyEvictionTest {
         assertFalse(LazyTextures.parkFailedProxy(
                 failed, true, 77, (e, pid) -> { throw new IllegalStateException("boom"); }));
     }
+
+    @Test
+    void evictionGateIsMutationDetectable() {
+        LazyTextures.ProxyEntry mine = readyWithObj("mine", true);
+        assertTrue(LazyTextures.canEvict(mine, true));
+        assertFalse(LazyTextures.canEvict(mine, false));
+        LazyTextures.ProxyEntry startup = readyWithObj("startup", true);
+        startup.startup = true;
+        assertFalse(LazyTextures.canEvict(startup, true));
+        LazyTextures.ProxyEntry ui = readyWithObj("graphics/ui/x.png", true);
+        assertFalse(LazyTextures.canEvict(ui, true));
+        LazyTextures.ProxyEntry engine = readyWithObj("engine", false);
+        assertFalse(LazyTextures.canEvict(engine, true));
+        LazyTextures.ProxyEntry notReady = readyWithObj("notReady", true);
+        notReady.ready = false;
+        assertFalse(LazyTextures.canEvict(notReady, true));
+    }
 }

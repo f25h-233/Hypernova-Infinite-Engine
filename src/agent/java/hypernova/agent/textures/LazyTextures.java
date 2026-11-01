@@ -1391,6 +1391,12 @@ public final class LazyTextures {
         e.lastUseNanos = System.nanoTime();
     }
 
+    static boolean canEvict(ProxyEntry e, boolean onMain) {
+        if (e == null || !e.ready || e.glId <= 0 || e.obj == null) return false;
+        if (!e.owned || e.startup || isBasicPath(e.path)) return false;
+        return onMain;
+    }
+
     static List<ProxyEntry> selectVictims(List<ProxyEntry> ready, long liveBytes,
                                           long budgetBytes, long graceNanos,
                                           long now, int max) {
@@ -1487,20 +1493,14 @@ public final class LazyTextures {
     }
 
     private static boolean evictOne(ProxyEntry e) {
-        if (e == null || !e.ready || e.glId <= 0 || e.obj == null) return false;
-        if (!e.owned) return false;
-        if (e.startup || isBasicPath(e.path)) return false;
-        if (Thread.currentThread() != runtimeMain) return false;
+        if (!canEvict(e, Thread.currentThread() == runtimeMain)) return false;
         if (!ensurePlaceholder()) return false;
         int id;
         synchronized (e) {
             // W-5: materialize()/refreshReady() hold this same monitor. Re-check
             // under it so a texture that became startup/engine-owned between
             // pick and evict is never deleted.
-            if (!e.ready || e.glId <= 0 || !e.owned
-                    || e.startup || isBasicPath(e.path)) {
-                return false;
-            }
+            if (!canEvict(e, true)) return false;
             ProxyShape shape = proxyShape;
             if (shape == null) return false;
             id = e.glId;
