@@ -9,18 +9,16 @@ import java.lang.reflect.Field;
  * obfuscated names verified by javap; any rename/type change makes resolve()
  * throw and the lazy module fail open (disabled).
  *
- * <p>fieldType supplies the 14 data fields (com.fs.graphics.Object); proxyType
- * supplies the 3-arg constructor (LazyProxyObject, a subclass of Object, so the
- * superclass fields apply to its instances).
- *
- * Field semantics (see docs/m25-spike.md):
+ * <p>Field semantics (final-review m6; see docs/m25-spike.md):
  *   ö00000 target, ô00000 GL id, ÒO0000 imageHeight, Ô00000 imageWidth,
- *   oO0000 width, Object height, for texWidth, ø00000 texHeight,
+ *   oO0000 texture width, Object texture height, for texWidth, ø00000 texHeight,
  *   int path, Ò00000 stringId, Ø00000 deferred, three Color fields.
  */
 final class ProxyShape {
     private final Constructor<?> ctor;
     private final Field[] all;
+    private final Field target;
+    private final Field glId;
     private final Field width;
     private final Field height;
     private final Field imageWidth;
@@ -29,12 +27,19 @@ final class ProxyShape {
     private final Field texHeight;
     private final Field path;
     private final Field stringId;
+    private final Field deferred;
+    private final Field color0;
+    private final Field color1;
+    private final Field color2;
 
-    private ProxyShape(Constructor<?> ctor, Field[] all, Field width, Field height,
-                       Field imageWidth, Field imageHeight, Field texWidth, Field texHeight,
-                       Field path, Field stringId) {
+    private ProxyShape(Constructor<?> ctor, Field[] all, Field target, Field glId,
+                       Field width, Field height, Field imageWidth, Field imageHeight,
+                       Field texWidth, Field texHeight, Field path, Field stringId,
+                       Field deferred, Field color0, Field color1, Field color2) {
         this.ctor = ctor;
         this.all = all;
+        this.target = target;
+        this.glId = glId;
         this.width = width;
         this.height = height;
         this.imageWidth = imageWidth;
@@ -43,6 +48,10 @@ final class ProxyShape {
         this.texHeight = texHeight;
         this.path = path;
         this.stringId = stringId;
+        this.deferred = deferred;
+        this.color0 = color0;
+        this.color1 = color1;
+        this.color2 = color2;
     }
 
     static ProxyShape resolve(Class<?> fieldType, Class<?> proxyType) throws Exception {
@@ -64,8 +73,9 @@ final class ProxyShape {
         Field color2 = field(fieldType, "public", Color.class);
         Field[] all = {target, id, imageHeight, imageWidth, width, height,
                 texWidth, texHeight, path, stringId, deferred, color0, color1, color2};
-        return new ProxyShape(ctor, all, width, height, imageWidth, imageHeight,
-                texWidth, texHeight, path, stringId);
+        return new ProxyShape(ctor, all, target, id, width, height, imageWidth,
+                imageHeight, texWidth, texHeight, path, stringId, deferred,
+                color0, color1, color2);
     }
 
     Object newProxy(String pathValue, int w, int h) throws Exception {
@@ -83,6 +93,42 @@ final class ProxyShape {
 
     void copy(Object from, Object to) throws Exception {
         for (Field field : all) field.set(to, field.get(from));
+    }
+
+    /**
+     * Resets a proxy to the shared 1x1 placeholder texture while keeping the
+     * declared image dimensions (layout) so existing Sprites do not collapse.
+     */
+    void reset(Object obj, int targetValue, int idValue, int w, int h,
+               float tw, float th, int imageW, int imageH) throws Exception {
+        target.setInt(obj, targetValue);
+        glId.setInt(obj, idValue);
+        width.setInt(obj, w);
+        height.setInt(obj, h);
+        texWidth.setFloat(obj, tw);
+        texHeight.setFloat(obj, th);
+        imageWidth.setInt(obj, imageW);
+        imageHeight.setInt(obj, imageH);
+        deferred.setBoolean(obj, false);
+        color0.set(obj, Color.WHITE);
+        color1.set(obj, Color.WHITE);
+        color2.set(obj, Color.WHITE);
+    }
+
+    int imageWidth(Object obj) throws Exception {
+        return imageWidth.getInt(obj);
+    }
+
+    int imageHeight(Object obj) throws Exception {
+        return imageHeight.getInt(obj);
+    }
+
+    int glId(Object obj) throws Exception {
+        return glId.getInt(obj);
+    }
+
+    int target(Object obj) throws Exception {
+        return target.getInt(obj);
     }
 
     private static Field field(Class<?> type, String name, Class<?> expected) throws Exception {

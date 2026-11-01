@@ -102,4 +102,23 @@ class LazyRefreshTest {
         assertFalse(LazyTextures.refreshReady(null, e, real(77).raw(), "register"));
         assertEquals(0, e.reregistered);
     }
+
+    @Test
+    void dimensionMismatchIsRejectedNotCopied() throws Exception {
+        ProxyShape shape = shape();
+        LazyTextures.ProxyEntry e = readyEntry(shape);
+        TextureObjectFixture real = real(77);
+        real.setImageWidth(64);
+        real.setImageHeight(32);
+        try {
+            assertFalse(LazyTextures.refreshReady(shape, e, real.raw(), "register"));
+            TextureObjectFixture out = new TextureObjectFixture(e.obj);
+            assertEquals(0, out.id());
+            assertEquals(32, out.imageWidth());
+            assertEquals(16, out.imageHeight());
+            assertEquals(0, e.reregistered);
+        } finally {
+            LazyTextures.resetGateStateForTest();
+        }
+    }
 }

@@ -15,21 +15,31 @@ public final class LazySkipIndex {
     private final Map<String, Dim> byPath;
     private final int invalid;
     private final long loadMillis;
+    private final String generation;
 
-    private LazySkipIndex(Map<String, Dim> byPath, int invalid, long loadMillis) {
+    private LazySkipIndex(Map<String, Dim> byPath, int invalid, long loadMillis,
+                          String generation) {
         this.byPath = byPath;
         this.invalid = invalid;
         this.loadMillis = loadMillis;
+        this.generation = generation;
     }
 
     public static LazySkipIndex load(Path file) throws Exception {
         long t0 = System.nanoTime();
         Map<String, Dim> map = new HashMap<>(1 << 17);
         int invalid = 0;
+        String generation = null;
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             String line;
             while ((line = reader.readLine()) != null) {
-                if (line.isEmpty() || line.charAt(0) == '#') continue;
+                if (line.isEmpty()) continue;
+                if (line.charAt(0) == '#') {
+                    if (line.startsWith("# generation=")) {
+                        generation = line.substring("# generation=".length()).trim();
+                    }
+                    continue;
+                }
                 int t1 = line.indexOf('\t');
                 int t2 = t1 < 0 ? -1 : line.indexOf('\t', t1 + 1);
                 if (t1 <= 0 || t2 <= t1) {
@@ -50,7 +60,7 @@ public final class LazySkipIndex {
             }
         }
         long ms = (System.nanoTime() - t0) / 1_000_000L;
-        return new LazySkipIndex(map, invalid, ms);
+        return new LazySkipIndex(map, invalid, ms, generation);
     }
 
     public boolean contains(String path) {
@@ -71,5 +81,9 @@ public final class LazySkipIndex {
 
     public long loadMillis() {
         return loadMillis;
+    }
+
+    public String generation() {
+        return generation;
     }
 }

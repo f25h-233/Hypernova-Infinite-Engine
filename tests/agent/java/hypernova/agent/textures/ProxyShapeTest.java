@@ -48,6 +48,25 @@ class ProxyShapeTest {
                 () -> ProxyShape.resolve(MissingFixture.class, MissingFixture.class));
     }
 
+    @Test
+    void resetWritesPlaceholderFields() throws Exception {
+        ProxyShape shape = ProxyShape.resolve(TextureObjectFixture.type(), TextureObjectFixture.proxyType());
+        TextureObjectFixture o = new TextureObjectFixture(shape.newProxy("graphics/a.png", 32, 16));
+        shape.reset(o.raw(), 3553, 99, 1, 1, 1.0f, 1.0f, 32, 16);
+        assertEquals(3553, o.target());
+        assertEquals(99, o.id());
+        assertEquals(1, o.width());
+        assertEquals(1, o.height());
+        assertEquals(32, o.imageWidth());
+        assertEquals(16, o.imageHeight());
+        assertEquals(1.0f, o.texWidth(), 1e-6);
+        assertEquals(1.0f, o.texHeight(), 1e-6);
+        assertEquals("graphics/a.png", o.path());
+        assertEquals(Color.WHITE, o.color0());
+        assertEquals(Color.WHITE, o.color1());
+        assertEquals(Color.WHITE, o.color2());
+    }
+
     static final class MissingFixture {
         MissingFixture(int a, int b, String c) {
         }

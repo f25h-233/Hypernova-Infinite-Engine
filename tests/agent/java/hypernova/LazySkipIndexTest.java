@@ -41,4 +41,15 @@ class LazySkipIndexTest {
     void missingFileThrows(@TempDir Path dir) {
         assertThrows(Exception.class, () -> LazySkipIndex.load(dir.resolve("nope.txt")));
     }
+
+    @Test
+    void parsesGenerationHeader(@TempDir Path dir) throws Exception {
+        Path f = dir.resolve("skip.txt");
+        Files.writeString(f, "# generation=abc123\n"
+                + "graphics/a.png\t10\t20\n");
+        LazySkipIndex idx = LazySkipIndex.load(f);
+        assertEquals("abc123", idx.generation());
+        assertEquals(1, idx.size());
+        assertEquals(0, idx.invalid());
+    }
 }

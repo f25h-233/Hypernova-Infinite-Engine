@@ -2,6 +2,10 @@
 # 用法: bash tools/java/install-manifest.sh <game-root>
 # 运行时 manifest 与 lazy-skip-v1.txt 由 M2 安装器根据该游戏安装就地生成。
 set -euo pipefail
+if [ "$#" -ne 1 ]; then
+  echo "FATAL: usage: install-manifest.sh <game-root>" >&2
+  exit 1
+fi
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GAME_ROOT="${1:?usage: install-manifest.sh <game-root>}"
 MODDIR="$GAME_ROOT/mods/hypernova_infinite_engine"

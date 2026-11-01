@@ -2,12 +2,15 @@ package hypernova.agent.textures;
 
 import hypernova.agent.AgentLog;
 
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,10 +49,16 @@ public final class LazyTextures {
     private static final AtomicLong LAZY_FAILED = new AtomicLong();
     private static final AtomicLong LAZY_DRAINED = new AtomicLong();
     private static final AtomicLong LAZY_REREGISTERED = new AtomicLong();
+    private static final AtomicLong DIM_MISMATCH = new AtomicLong();
+    private static final AtomicLong LATE_REGISTERED = new AtomicLong();
+    private static final AtomicLong LATE_LOADED = new AtomicLong();
+    private static final AtomicBoolean LOAD_ASYNC_FAILED = new AtomicBoolean();
     private static final Map<String, ProxyEntry> PROXIES = new ConcurrentHashMap<>();
     private static final Map<Object, ProxyEntry> PROXY_BY_OBJ = new ConcurrentHashMap<>();
     /** Skip paths whose proxy has not been inserted into oOoO.new yet. */
     private static final Set<String> PENDING = ConcurrentHashMap.newKeySet();
+    private static final Object DRAIN_LOCK = new Object();
+    private static volatile boolean drained;
     private static final AtomicBoolean LOADING_WARNED = new AtomicBoolean();
     /** Fail-open is one-shot: concurrent drain/register failures must not reload twice. */
     private static final AtomicBoolean FAILING_OPEN = new AtomicBoolean();
@@ -80,12 +89,11 @@ public final class LazyTextures {
 
     private static volatile Thread runtimeMain;
     private static volatile Thread loadingThreadField;
-    private static volatile boolean loadingThreadResolved;
 
     private static volatile LazySkipIndex index;
     private static volatile Path skipFile;
+    private static volatile Path manifestFile;
 
-    private static volatile boolean loadResolved;
     private static volatile Method loadAsyncMethod;
     private static volatile boolean renderResolved;
     private static volatile Field renderProgressField;
@@ -100,6 +108,7 @@ public final class LazyTextures {
         probe = config.probe();
         if (!enabled && !probe) return;
         skipFile = config.skipFile();
+        manifestFile = config.manifestFile();
         Thread loader = new Thread(LazyTextures::loadIndex, "Hypernova-Lazy-Index");
         loader.setDaemon(true);
         loader.start();
@@ -125,13 +134,26 @@ public final class LazyTextures {
                 return;
             }
             LazySkipIndex idx = LazySkipIndex.load(f);
+            String problem = verifyGeneration(idx, manifestFile);
+            if (problem != null) {
+                disabled = true;
+                AgentLog.fail("lazy: skip/manifest generation check failed: " + problem
+                        + "; lazy disabled", null);
+                return;
+            }
             index = idx;
             AgentLog.info("lazy probe: index loaded paths=" + idx.size()
-                    + " invalid=" + idx.invalid() + " in " + idx.loadMillis()
-                    + " ms; file=" + f);
+                    + " invalid=" + idx.invalid() + " generation="
+                    + shortGeneration(idx.generation())
+                    + " in " + idx.loadMillis() + " ms; file=" + f);
         } catch (Throwable t) {
             AgentLog.fail("lazy probe: index load failed; probe counts stay 0", t);
         }
+    }
+
+    private static String shortGeneration(String generation) {
+        if (generation == null || generation.isBlank()) return "none";
+        return generation.length() <= 12 ? generation : generation.substring(0, 12);
     }
 
     public static void queue(Object loader, String type, String path) throws Throwable {
@@ -158,7 +180,14 @@ public final class LazyTextures {
             AgentLog.fail("lazy: proxy unavailable for " + path + "; loading normally",
                     new IllegalStateException("proxy registration failed"));
         }
-        loadAsync(loader, type, path);
+        if (!loadAsync(loader, type, path)) {
+            disabled = true;
+            if (LOAD_ASYNC_FAILED.compareAndSet(false, true)) {
+                AgentLog.fail("lazy: loadTextureAsync unavailable for " + path
+                        + "; lazy disabled", null);
+            }
+            failOpenPending();
+        }
     }
 
     static boolean eligible(boolean enabled, boolean probe, boolean disabled,
@@ -166,6 +195,61 @@ public final class LazyTextures {
         if (!enabled || probe || disabled) return false;
         if ("TEXTURE_ALPHA_ADDER".equals(type)) return false;
         return index != null && index.contains(path);
+    }
+
+    static boolean skipAllowed(boolean enabled, boolean probe, boolean disabled,
+                               boolean drainedNow, LazySkipIndex index,
+                               String type, String path) {
+        return !drainedNow && eligible(enabled, probe, disabled, index, type, path);
+    }
+
+    static boolean dimensionsMatch(int realW, int realH, int expectedW, int expectedH) {
+        return realW > 0 && realH > 0 && realW == expectedW && realH == expectedH;
+    }
+
+    static boolean isLoadAsync(Method method) {
+        if (method == null) return false;
+        Class<?>[] p = method.getParameterTypes();
+        return "loadTextureAsync".equals(method.getName()) && p.length == 2
+                && p[0] == String.class && p[1] == String.class;
+    }
+
+    static String verifyGeneration(LazySkipIndex idx, Path manifest) {
+        if (idx == null) return "no index";
+        if (manifest == null) return "manifest path missing";
+        if (!Files.isRegularFile(manifest)) return "manifest missing: " + manifest;
+        String expected = idx.generation();
+        if (expected == null || expected.isBlank()) return "skip generation header missing";
+        try {
+            String actual = sha256(manifest);
+            if (!expected.equalsIgnoreCase(actual)) {
+                return "generation mismatch expected=" + expected + " actual=" + actual;
+            }
+            return null;
+        } catch (Throwable t) {
+            return "manifest hash failed: " + t;
+        }
+    }
+
+    static String sha256(Path file) throws Exception {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        try (InputStream in = Files.newInputStream(file)) {
+            byte[] buf = new byte[65_536];
+            int n;
+            while ((n = in.read(buf)) >= 0) {
+                if (n > 0) md.update(buf, 0, n);
+            }
+        }
+        return HexFormat.of().formatHex(md.digest());
+    }
+
+    static void resetGateStateForTest() {
+        disabled = false;
+        drained = false;
+        DIM_MISMATCH.set(0);
+        LAZY_FAILED.set(0);
+        LOAD_ASYNC_FAILED.set(false);
+        FAILING_OPEN.set(false);
     }
 
     // ---- wiring armed flags (set by the transformers when a hook is applied) ----
@@ -234,7 +318,7 @@ public final class LazyTextures {
 
     public static boolean shouldSkip(String type, String path) {
         try {
-            if (!eligible(enabled, probe, disabled, index, type, path)) return false;
+            if (!skipAllowed(enabled, probe, disabled, drained, index, type, path)) return false;
             return ensureShape();
         } catch (Throwable t) {
             AgentLog.fail("lazy: skip decision failed for " + path + "; loading normally", t);
@@ -244,21 +328,41 @@ public final class LazyTextures {
 
     private static boolean registerProxy(String path, String type) {
         try {
-            if (PROXIES.containsKey(path)) return true;
-            LazySkipIndex idx = index;
-            LazySkipIndex.Dim dim = idx == null ? null : idx.get(path);
-            ProxyShape shape = proxyShape;
-            if (dim == null || shape == null) return false;
-            Object obj = shape.newProxy(path, dim.w(), dim.h());
-            ProxyEntry entry = new ProxyEntry(path, type, dim.w(), dim.h(), obj);
-            ProxyEntry prev = PROXIES.putIfAbsent(path, entry);
-            if (prev != null) return true;
-            PROXY_BY_OBJ.put(obj, entry);
-            PENDING.add(path);
-            if (PROXIES.size() <= 20) {
-                AgentLog.info("lazy: proxy " + path + " " + dim.w() + "x" + dim.h());
+            synchronized (DRAIN_LOCK) {
+                if (PROXIES.containsKey(path)) return true;
+                LazySkipIndex idx = index;
+                LazySkipIndex.Dim dim = idx == null ? null : idx.get(path);
+                ProxyShape shape = proxyShape;
+                if (dim == null || shape == null) return false;
+                Object obj = shape.newProxy(path, dim.w(), dim.h());
+                ProxyEntry entry = new ProxyEntry(path, type, dim.w(), dim.h(), obj);
+                ProxyEntry prev = PROXIES.putIfAbsent(path, entry);
+                if (prev != null) return true;
+                PROXY_BY_OBJ.put(obj, entry);
+                if (drained) {
+                    if (canMaterialize()) {
+                        try {
+                            registerEngineMap(path, obj);
+                            LATE_REGISTERED.incrementAndGet();
+                            return true;
+                        } catch (Throwable t) {
+                            PROXIES.remove(path, entry);
+                            PROXY_BY_OBJ.remove(obj, entry);
+                            AgentLog.fail("lazy: late engine map register failed for " + path, t);
+                            return false;
+                        }
+                    }
+                    PROXIES.remove(path, entry);
+                    PROXY_BY_OBJ.remove(obj, entry);
+                    LATE_LOADED.incrementAndGet();
+                    return false;
+                }
+                PENDING.add(path);
+                if (PROXIES.size() <= 20) {
+                    AgentLog.info("lazy: proxy " + path + " " + dim.w() + "x" + dim.h());
+                }
+                return true;
             }
-            return true;
         } catch (Throwable t) {
             AgentLog.fail("lazy: proxy registration failed for " + path + "; loading normally", t);
             return false;
@@ -266,6 +370,7 @@ public final class LazyTextures {
     }
 
     public static Object lookup(String path) {
+        if (path == null) return null;
         try {
             ProxyEntry e = PROXIES.get(path);
             if (e == null) return null;
@@ -310,46 +415,55 @@ public final class LazyTextures {
      * normal async path, instead of leaving skip paths out of the repository.
      */
     public static void drainPending() {
-        try {
-            if (!enabled || probe || disabled) return;
-            Thread current = Thread.currentThread();
-            Thread loading = loadingThread();
-            if (current != runtimeMain && current != loading) {
-                AgentLog.fail("lazy: drain on " + current.getName()
-                        + " (loading=" + (loading == null ? "none" : loading.getName())
-                        + "); failing open and reloading pending textures", null);
-                failOpenPending();
-                return;
-            }
-            int drained = 0;
-            boolean failed = false;
-            for (String path : PENDING) {
-                ProxyEntry e = PROXIES.get(path);
-                if (e == null) {
-                    PENDING.remove(path);
-                    continue;
+        synchronized (DRAIN_LOCK) {
+            if (drained) return;
+            try {
+                if (!enabled || probe || disabled) {
+                    drained = true;
+                    return;
                 }
-                try {
-                    registerEngineMap(path, e.obj);
-                    if (PENDING.remove(path)) drained++;
-                } catch (Throwable t) {
-                    AgentLog.fail("lazy: engine map register failed for " + path, t);
-                    failed = true;
-                    break;
+                Thread current = Thread.currentThread();
+                Thread loading = loadingThread();
+                if (current != runtimeMain && current != loading) {
+                    AgentLog.fail("lazy: drain on " + current.getName()
+                            + " (loading=" + (loading == null ? "none" : loading.getName())
+                            + "); failing open and reloading pending textures", null);
+                    drained = true;
+                    failOpenPending();
+                    return;
                 }
-            }
-            if (drained > 0) {
-                LAZY_DRAINED.addAndGet(drained);
-                AgentLog.info("lazy: drained " + drained + " proxies into oOoO.new");
-            }
-            if (failed || !PENDING.isEmpty()) {
-                AgentLog.fail("lazy: drain incomplete (pending=" + PENDING.size()
-                        + "); failing open and reloading pending textures", null);
+                int drainedCount = 0;
+                boolean failed = false;
+                for (String path : PENDING) {
+                    ProxyEntry e = PROXIES.get(path);
+                    if (e == null) {
+                        PENDING.remove(path);
+                        continue;
+                    }
+                    try {
+                        registerEngineMap(path, e.obj);
+                        if (PENDING.remove(path)) drainedCount++;
+                    } catch (Throwable t) {
+                        AgentLog.fail("lazy: engine map register failed for " + path, t);
+                        failed = true;
+                        break;
+                    }
+                }
+                if (drainedCount > 0) {
+                    LAZY_DRAINED.addAndGet(drainedCount);
+                    AgentLog.info("lazy: drained " + drainedCount + " proxies into oOoO.new");
+                }
+                drained = true;
+                if (failed || !PENDING.isEmpty()) {
+                    AgentLog.fail("lazy: drain incomplete (pending=" + PENDING.size()
+                            + "); failing open and reloading pending textures", null);
+                    failOpenPending();
+                }
+            } catch (Throwable t) {
+                drained = true;
+                AgentLog.fail("lazy: drain failed; failing open", t);
                 failOpenPending();
             }
-        } catch (Throwable t) {
-            AgentLog.fail("lazy: drain failed; failing open", t);
-            failOpenPending();
         }
     }
 
@@ -472,7 +586,6 @@ public final class LazyTextures {
                 t = (Thread) field.get(instance);
                 if (t != null) {
                     loadingThreadField = t;
-                    loadingThreadResolved = true;
                 } else if (LOADING_WARNED.compareAndSet(false, true)) {
                     AgentLog.info("lazy: FileLoader.mainThread not set yet; will retry");
                 }
@@ -505,19 +618,31 @@ public final class LazyTextures {
                 Object real = syncLoad(e.path);
                 ProxyShape shape = proxyShape;
                 if (shape == null) throw new IllegalStateException("proxy shape unavailable");
+                int realW = shape.imageWidth(real);
+                int realH = shape.imageHeight(real);
+                if (!dimensionsMatch(realW, realH, e.w, e.h)) {
+                    onDimMismatch(e, realW, realH, "materialize");
+                }
                 shape.copy(real, e.obj);
                 e.ready = true;
+                e.glId = shape.glId(real);
+                e.owned = false;
+                e.bytes = 4L * e.w * e.h;
+                e.dds = false;
+                touch(e);
                 putPathCache(e.path, e.obj);
                 long ms = (System.nanoTime() - t0) / 1_000_000L;
                 long n = LAZY_MATERIALIZED.incrementAndGet();
                 if (n <= 20 || ms >= 50) {
-                    AgentLog.info("lazy: materialized " + e.path + " " + e.w + "x" + e.h + " in " + ms + " ms");
+                    AgentLog.info("lazy: materialized " + e.path + " " + e.w + "x" + e.h
+                            + " in " + ms + " ms");
                 }
             } catch (Throwable t) {
                 long attempts = e.attempts.incrementAndGet();
                 if (attempts >= 2) e.failed = true;
                 LAZY_FAILED.incrementAndGet();
-                AgentLog.fail("lazy: materialize failed for " + e.path + " (attempt " + attempts + ")", t);
+                AgentLog.fail("lazy: materialize failed for " + e.path
+                        + " (attempt " + attempts + ")", t);
             }
         }
     }
@@ -590,12 +715,22 @@ public final class LazyTextures {
 
     private static void ensureLoader() throws Exception {
         if (loaderResolved) {
-            if (syncMethod == null || loaderSingleton == null) throw new IllegalStateException("loader shape");
+            if (syncMethod == null || loaderSingleton == null) {
+                throw new IllegalStateException("loader shape");
+            }
+            if (loadAsyncMethod == null) {
+                throw new IllegalStateException("loadTextureAsync shape");
+            }
             return;
         }
         synchronized (LazyTextures.class) {
             if (loaderResolved) {
-                if (syncMethod == null || loaderSingleton == null) throw new IllegalStateException("loader shape");
+                if (syncMethod == null || loaderSingleton == null) {
+                    throw new IllegalStateException("loader shape");
+                }
+                if (loadAsyncMethod == null) {
+                    throw new IllegalStateException("loadTextureAsync shape");
+                }
                 return;
             }
             try {
@@ -606,7 +741,12 @@ public final class LazyTextures {
                 Object loader = getLoader.invoke(null);
                 if (loader == null) throw new IllegalStateException("TextureLoader singleton null");
                 Method sync = null;
+                Method async = null;
                 for (Method method : loader.getClass().getDeclaredMethods()) {
+                    if (isLoadAsync(method)) {
+                        async = method;
+                        continue;
+                    }
                     if (!"o00000".equals(method.getName()) || method.getParameterCount() != 7) continue;
                     Class<?>[] p = method.getParameterTypes();
                     if (p[0] == objClass && p[1] == String.class
@@ -614,11 +754,12 @@ public final class LazyTextures {
                             && p[4] == int.class && p[5] == int.class
                             && p[6] == boolean.class) {
                         sync = method;
-                        break;
                     }
                 }
                 if (sync == null) throw new NoSuchMethodException("TextureLoader.o00000 7-arg");
+                if (async == null) throw new NoSuchMethodException("TextureLoader.loadTextureAsync");
                 sync.setAccessible(true);
+                async.setAccessible(true);
                 try {
                     Field cache = loader.getClass().getDeclaredField("ÔO0000");
                     if (!Map.class.isAssignableFrom(cache.getType())) {
@@ -630,8 +771,9 @@ public final class LazyTextures {
                     AgentLog.info("lazy: TextureLoader path cache unavailable; proxy reuse disabled");
                 }
                 syncMethod = sync;
+                loadAsyncMethod = async;
                 loaderSingleton = loader;
-                AgentLog.info("lazy: sync loader resolved on " + loader.getClass().getName());
+                AgentLog.info("lazy: sync+async loader resolved on " + loader.getClass().getName());
             } finally {
                 loaderResolved = true;
             }
@@ -640,23 +782,9 @@ public final class LazyTextures {
 
     private static boolean loadAsync(Object loader, String type, String path) throws Throwable {
         Method m = loadAsyncMethod;
-        if (m == null && !loadResolved) {
-            synchronized (LazyTextures.class) {
-                m = loadAsyncMethod;
-                if (m == null && !loadResolved) {
-                    try {
-                        m = loader.getClass().getDeclaredMethod("loadTextureAsync", String.class, String.class);
-                        m.setAccessible(true);
-                        loadAsyncMethod = m;
-                        AgentLog.info("lazy probe: loadTextureAsync resolved on " + loader.getClass().getName());
-                    } catch (Throwable t) {
-                        DEGRADED.set(true);
-                        AgentLog.fail("lazy probe: loadTextureAsync missing; queued texture skipped", t);
-                    } finally {
-                        loadResolved = true;
-                    }
-                }
-            }
+        if (m == null) {
+            ensureLoader();
+            m = loadAsyncMethod;
         }
         if (m == null) return false;
         try {
@@ -724,6 +852,7 @@ public final class LazyTextures {
     }
 
     public static void probeLookup(String path) {
+        if (path == null) return;
         try {
             LOOKUP_TOTAL.incrementAndGet();
             LazySkipIndex idx = index;
@@ -766,8 +895,18 @@ public final class LazyTextures {
                 }
                 ProxyShape shape = proxyShape;
                 if (shape == null) return;
+                int realW = shape.imageWidth(value);
+                int realH = shape.imageHeight(value);
+                if (!dimensionsMatch(realW, realH, e.w, e.h)) {
+                    onDimMismatch(e, realW, realH, "register");
+                }
                 shape.copy(value, e.obj);
                 e.ready = true;
+                e.glId = shape.glId(value);
+                e.owned = false;
+                e.bytes = 4L * e.w * e.h;
+                e.dds = false;
+                touch(e);
                 long n = LAZY_MATERIALIZED.incrementAndGet();
                 if (n <= 20) AgentLog.info("lazy: materialized via register " + path);
             }
@@ -790,8 +929,18 @@ public final class LazyTextures {
                 }
                 ProxyShape shape = proxyShape;
                 if (shape == null) return;
+                int realW = shape.imageWidth(value);
+                int realH = shape.imageHeight(value);
+                if (!dimensionsMatch(realW, realH, e.w, e.h)) {
+                    onDimMismatch(e, realW, realH, "engine hit");
+                }
                 shape.copy(value, e.obj);
                 e.ready = true;
+                e.glId = shape.glId(value);
+                e.owned = false;
+                e.bytes = 4L * e.w * e.h;
+                e.dds = false;
+                touch(e);
                 long n = LAZY_MATERIALIZED.incrementAndGet();
                 if (n <= 20) AgentLog.info("lazy: materialized via engine hit " + path);
             }
@@ -817,8 +966,17 @@ public final class LazyTextures {
             throws Exception {
         if (shape == null || e == null || value == null) return false;
         if (value == e.obj || value == e.lastSource) return false;
+        int realW = shape.imageWidth(value);
+        int realH = shape.imageHeight(value);
+        if (!dimensionsMatch(realW, realH, e.w, e.h)) {
+            onDimMismatch(e, realW, realH, source);
+            return false;
+        }
         shape.copy(value, e.obj);
+        e.glId = shape.glId(value);
+        e.owned = false;
         e.lastSource = value;
+        touch(e);
         putPathCache(e.path, e.obj);
         int perPath = ++e.reregistered;
         long total = LAZY_REREGISTERED.incrementAndGet();
@@ -827,6 +985,21 @@ public final class LazyTextures {
                     + " (F3; reregistered=" + total + ", pathReregistered=" + perPath + ")");
         }
         return true;
+    }
+
+    private static void onDimMismatch(ProxyEntry e, int realW, int realH, String source) {
+        long n = DIM_MISMATCH.incrementAndGet();
+        LAZY_FAILED.incrementAndGet();
+        disabled = true;
+        if (n <= 20) {
+            AgentLog.fail("lazy: dimension mismatch for " + e.path + " expected "
+                    + e.w + "x" + e.h + " real " + realW + "x" + realH
+                    + " (" + source + "); lazy disabled", null);
+        }
+    }
+
+    private static void touch(ProxyEntry e) {
+        e.lastUseNanos = System.nanoTime();
     }
 
     private static void summaryLoop() {
@@ -865,7 +1038,10 @@ public final class LazyTextures {
                     + " failed=" + LAZY_FAILED.get()
                     + " disabled=" + (disabled ? 1 : 0)
                     + " main=" + (runtimeMain == null ? "none" : runtimeMain.getName())
-                    + " loading=" + (lt == null ? "none" : lt.getName()));
+                    + " loading=" + (lt == null ? "none" : lt.getName())
+                    + " lateRegistered=" + LATE_REGISTERED.get()
+                    + " lateLoaded=" + LATE_LOADED.get()
+                    + " dimMismatch=" + DIM_MISMATCH.get());
         } catch (Throwable t) {
             AgentLog.fail("lazy probe: summary failed", t);
         }
@@ -894,6 +1070,12 @@ public final class LazyTextures {
         volatile Object lastSource;
         /** How many different real objects this proxy has absorbed (F3). */
         int reregistered;
+        volatile int glId;
+        volatile long bytes;
+        volatile long lastUseNanos;
+        volatile boolean owned;
+        volatile boolean dds;
+        volatile boolean startup;
         final AtomicLong attempts = new AtomicLong();
 
         ProxyEntry(String path, String type, int w, int h, Object obj) {

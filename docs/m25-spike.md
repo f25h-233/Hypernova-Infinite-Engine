@@ -43,7 +43,7 @@
 
 - `queueImage(String,String)` 的第二个参数是 **path**（加入 `knownImages`、用于 commit 缓存键）；第一个参数是 type（日志里常见 `TEXTURE`）。探针日志首个 queue 为 `type=TEXTURE, path=graphics/cursors/cursor_red.png`，与反编译一致。
 - `lambda$queueImage$0` 的真实语义：`loadTextureAsync(arg1,arg2)` → `ResourceLoaderState.renderProgress=true`；catch `Throwable` 时若第三参为 true 则 `knownImages.remove(arg2)`，否则 rethrow。探针注入的方法逐条复刻该语义。
-- `com.fs.graphics.Object`（vanilla 名 `TextureHandler`）字段映射（0.98a-RC8 javap）：`ö00000`=GL target、`ô00000`=GL texture id（默认 -1）、`ÒO0000`/`Ô00000`=像素 width/height、`oO0000`/`Object`=imageWidth/imageHeight、`for`/`ø00000`=texWidth/texHeight 比例、`int`=path、`Ò00000`=stringId、`Ø00000`=deferred 标志。Task 2 的尺寸/UV 与代理实现以此为准。
+- `com.fs.graphics.Object`（vanilla 名 `TextureHandler`）字段映射（0.98a-RC8 javap；2026-11-01 按 final-review m6 修正）：`ö00000`=GL target、`ô00000`=GL texture id（默认 -1）、`Ô00000`=imageWidth、`ÒO0000`=imageHeight、`oO0000`=texture width、`Object`=texture height、`for`=texWidth、`ø00000`=texHeight、`int`=path、`Ò00000`=stringId、`Ø00000`=deferred 标志。Task 2 的尺寸/UV 与代理实现以此为准。
 - `TextureBuilder.readAndAnalyzeImage(BufferedImage, boolean)`（donor）：`doNotModify=true`（FR Blacklist，`graphics/ui/bottomright*`）时把 width/height 向上取到 2 的幂；`false`（普通路径）直接用原图尺寸。**Task 2 的尺寸/UV 依据**：非 Blacklist 纹理不补 POT，必须使用 manifest 里的真实 `w/h`。
 - FileLoader（`com.fs.util.C`）的 `mainThread` 只在 `initResourceLoading()` 设置；它是未来“在输入流层拦截”的候选 hook 点（见 §4.3）。
 
