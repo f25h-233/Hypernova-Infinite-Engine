@@ -28,7 +28,8 @@
 5. **Selftest 走通 materialize → evict → re-materialize**：`selftest=1`、`evicted=1`、`rematerialized=1`、
    `placeholder=15165`、ids **15166→15164**、`dds=1`；只淘汰 1 条不可见纹理，**不等价于战斗/A→B 验收**。
 6. **LRU 默认 off，自动化淘汰证据只有 selftest**：菜单 A/B `evicted=0` 是预期的（启动期物化被 startup
-   闩锁永久保护）；`evictPasses=0`，自动 `evictPass` 未在真实会话中触发过。
+   闩锁永久保护）；`evictPasses=0`，自动 `evictPass` 未在真实会话中触发过；按当前 state 结构，换名切换点
+   结构上不触发（机制与 default-on 门槛见 §7.7）。
 7. **Base gate 通过**：all gates true；`skipped=proxies=2,330`、`ddsHit=21`、`failed=0`、`disabled=0`；
    进程 GPU dedicated 451.6 vs 274.4 MB；菜单 8.5 vs 6.5 s；0 错误。
 8. **默认 off / 回滚不变**：`textures.lazy.enabled=false`、`textures.lazy.eviction.enabled=false`；
@@ -72,9 +73,13 @@
 
 ## 3. 菜单 A/B 原始表
 
-协议：260mods（miko-lite）、warm、DDS on、eviction/selftest off、`--linger 20`、3 轮交错 C/T，
-`build/m26/ab-result.json`。Control 只传 `-Dhypernova.textures.lazy=false`；treatment 传
-`-Dhypernova.textures.lazy=true -Dhypernova.textures.lazy.dds=true`。
+协议：260mods（miko-lite）、warm、DDS on、eviction/selftest off、`--linger 20`、3 轮，每轮固定先 C 后 T
+（未做 counterbalance），`build/m26/ab-result.json`。Control 只传 `-Dhypernova.textures.lazy=false`；
+treatment 传 `-Dhypernova.textures.lazy=true -Dhypernova.textures.lazy.dds=true`。
+
+**顺序偏差（M-2）**：`tools/m26_ab.py` 每轮都是 control 先跑、treatment 第二个跑，因此 treatment 总是
+吃到更暖的 OS 文件缓存；该顺序对 treatment 有利，所以 +2.0 s 不会因此被解释成回归，但也不能据此证明
+收益，且本轮未做隔轮反转（counterbalance）。
 
 | # | C menu | T menu | C WS | T WS | C GPU proc | T GPU proc | C GPU sys | T GPU sys | ddsHit | ddsFallback | materialized |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -181,7 +186,8 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
   `evictOne` 返回 true，即 `GlBridge.deleteTexture(15166)` 成功；`evictSkipped=0` 确认没有删除失败。
   `oldIdDeleted=0` 是计数器缺口（只有 `refreshReady` 增加它，`evictOne` 不增加），不是 id 泄漏。
 - **触发偏差（必须记录）**：brief 原本假设 `noteGameState` 每帧/定时可达；实际本 build 里
-  `BaseGameState.traverse`（唯一 `captureMainThread` 钩子）**每次状态切换只调一次**，diagnostic 只打印
+  `BaseGameState.traverse`（唯一 `captureMainThread` 钩子）**每个 state 入口只执行一次**（该 state 的帧
+  循环，不是每帧回调），diagnostic 只打印
   `call=1`，所以 brief 的 `noteGameState` 计时器在菜单-only 会话永远不会触发。实现把同一条件抽成
   **主线程一次性 `maybeRunSelfTest()`**：由 `noteGameState` + 每帧主线程路径 `onProxyUse`/`lookup` 调用，
   `SELFTEST_DONE` CAS、`Thread.currentThread() == runtimeMain`、capture 后 **≥5 s**；实测在标题屏 capture
@@ -218,20 +224,35 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
 4. **GL context 重建后的占位**（alt-tab/分辨率/显示模式/FR 重启）：未测。`PLACEHOLDER_FAILED` 是会话级
    一次性闩锁；context 重建会一次性作废所有 GL id，占位 id 可能悬空（预期表现为不可见/未定义，不崩溃），
    但没有检测/重解析逻辑。
-5. **第三方按 id 缓存**：mod 若把 `ô00000` 的 GL id 拷进自有结构，淘汰后可能持有已删 id；selftest 选中的
-   纹理在淘汰前从未 ready（没有外部持有者），所以本轮不能覆盖该风险。
+5. **第三方按 id 缓存 + 引擎真实对象（I-2）**：mod 若把 `ô00000` 的 GL id 拷进自有结构，淘汰后可能持有
+   已删 id；selftest 选中的纹理在淘汰前从未 ready（没有外部持有者），所以本轮不能覆盖该风险。**引擎侧
+   变体**：F3/cache-clear 场景下 `onRegister`/`noteEngineHit` 把引擎新建的真实对象字段（含 GL id）拷进
+   代理并置 `owned=false`；而 `selectVictims`/`evictOne` 目前不检查 `owned`，只按
+   `ready/bytes/glId/startup/basic/grace` 选受害者，因此可能删掉一个仍被引擎 map 或 mod 持有的真实对象
+   的 GL id（下一次 bind 得到空纹理/白块），且没有 REQ-R1-10 要求的引用计数/“仍被引用则拒绝并记录”。
+   selftest 只覆盖 `owned=true` 的 DDS 代理。**这是 default-on gate，不是 push blocker（eviction 默认
+   off）。**
 6. **pick→evict 的 TOCTOU**：picker 过滤 `ready/failed/startup/basic`，但 `evictOne(pick, true)` 用
    `force=true` 绕过 startup/basic 的二次检查；pick 与 evict 之间若有并发 off-main 物化，可能淘汰刚被标记
    startup 的代理。菜单期未观察到（`pending=0`、`drained=45,784`、loading 线程空闲）；战斗/加载并发未测。
-7. **自动淘汰未触发**：`evictPasses=0`（A/B 与 selftest 都是）；`runSelfTest` 直接调 `evictOne`，而
-   `evictPass` 只从 `noteGameState` 进入——该钩子在菜单-only 会话是稀疏的（每次状态切换一次），正常游戏
-   是否按时触发未验证。startup 闩锁永久保护 loading 期物化，菜单 A/B 的 `evicted=0` 是预期，不是调度器
-   健康的证据。
+7. **自动 `evictPass` 调度不成立（I-1；default-on gate）**：`evictPass()` 唯一调用点是 `noteGameState`，
+   `noteGameState` 唯一调用点是 `captureMainThread`，钩子只加在 `BaseGameState.traverse` 头部；而
+   `BaseGameState.traverse` 是**每个 state 入口执行一次**的帧循环，不是每帧被外部调用。每个**换名**入口
+   都先重置 `evictDueNanos = now + delay` 再立刻检查 `now >= due`——`delay > 0` 时当次必不执行，下一次
+   换名入口又重置 due，所以**任何换名切换点都不会触发**；唯一能执行的是之后某次 `noteGameState` 与
+   `lastStateName` **同名**且 due 已过的情况。`CombatState`/`ResourceLoaderState` 实现 `AppState` 且
+   **不继承 `BaseGameState`**，根本不进 hook，`isCombatState` 保护是**空转**。菜单-only 会话只有一次
+   BaseGameState 入口，`evictPasses=0` 是**结构性**的，不是“这次没赶上”。`evictPass` 一次最多淘汰 64
+   条，之后即使仍超预算也**不重新 arm**；`drainPendingDeletes` 共用同一稀疏触发。A/B 与 selftest 均
+   `evictPasses=0`，且 selftest 直接调 `evictOne`、绕过 `evictPass`。**结论：自动有界 LRU 调度未被
+   证明**（“每次状态切换触发”不成立），这是 default-on gate，不是 push blocker（eviction 默认 off）。
 8. **逐进程 GPU 是快照，不是 VRAM 账**：OS 逐进程计数，不能逐纹理归因；`ddsBytes` 不含 mip；
    `liveBytes`/`evictedBytes` 是估算值；系统级 `gpu_menu_mb` 只作旁证（Base 单对甚至方向相反：逐进程
    451.6→274.4 MB，系统级 2669→2951 MB）。
-9. **`oldIdDeleted` 计数缺口**：`evictOne` 删除旧 id 但不增加 `OLD_ID_DELETED`，summary 可同时出现
-   `evicted=1 ... oldIdDeleted=0`。删除成功以 `selftest=1` + `evictSkipped=0` 为准。
+9. **淘汰计数语义（M-6）**：`evicted` 是**代理复位成功的条数**（`evictOne` 在 delete 之前就递增
+   `EVICTED/EVICTED_BYTES` 并扣 `LIVE_BYTES`），不是“VRAM 已释放量”；`evictSkipped` 同时混入淘汰删除
+   失败与 `refreshReady` 旧 id 删除失败两类；`evictOne` 成功删除旧 id 也不增加 `oldIdDeleted`，summary
+   可同时出现 `evicted=1 ... oldIdDeleted=0`。删除成功以 `selftest=1` + `evictSkipped=0` 为准。
 10. **每 run 产物互相覆盖**：`tools/m26_ab.py` 硬编码 `build/m26/ab-c{i}.json` / `ab-t{i}.json`，日志写进
     共享 `--log-dir`；selftest 的归档日志被后续 A/B 覆盖、`ab-c1.json` 现在是 Base control 行、
     `selftest.json` 里的日志路径已失效。聚合 JSON（`ab-result.json` / `selftest.json` / `base-ab.json`）
@@ -247,6 +268,14 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
 14. **Selftest 触发偏差**：见 §5；"noteGameState 计时器"在本 build 的菜单-only 会话不成立，实际是
     `maybeRunSelfTest()` 的主线程一次性门。该偏差已由 Task 4 review 复核（runtimeMain/CAS/≥5 s/无 worker
     触发），但战斗/读档下的触发时机未测。
+15. **default-on gates（默认开启 / 对外“可选显存优化”声明前必须修）**：I-1（自动 `evictPass` 触发语义 +
+    部分 pass 重 arm + 单测 + 文档）、I-2（`owned`/引用计数，或显式只淘汰本组件创建的 id；引擎/mod
+    持有者风险文档化）、M-4（安装可复现，见 §8.3）、M2.5 W5/W6（发行包 manifest/skip 与 agent jar
+    新鲜度）、W-2/W-3/W-5/W-10（GL context 重建后的占位、第三方 id 持有者、pick→evict TOCTOU、失败
+    物化 id=0），以及用户完成战斗/读档/分辨率/手动目检、A→B 长会话净 VRAM、>200 ms 卡顿；并明确
+    REQ-R1-10 的引用计数/进出星系 100 次 id 不增长/working set 漂移 ≤200 MB/“仍被引用则拒绝并记录”
+    **未验收**。在这些项关闭前，不得声称 bounded LRU 已在真实会话自动工作，也不得对外称“可选显存
+    优化”。
 
 ---
 
@@ -270,7 +299,17 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
 
 skip v1/v2 可以保留；关闭后不读取、不跳过、不注册代理，行为回到 M2/M2.5。回滚不改存档/设置。
 
-### 8.3 文件与证据
+### 8.3 安装（agent-only 260mods）
+
+- 260mods 的 `hypernova_infinite_engine` **不在** `enabled_mods.json` 里（agent-only 安装），所以
+  `mods/hypernova_infinite_engine/graphics/hypernova/blank.png` 不保证被 FileLoader 扫描。淘汰占位要求
+  `starsector-core/graphics/hypernova/blank.png` 存在且非空（缺失/为空会 latch `PLACEHOLDER_FAILED`，
+  selftest=2、淘汰整会话不可用）。
+- Task 4 是**手工**把 `blank.png` 复制到 `starsector-core/graphics/hypernova/` 才使 `placeholder=15165`
+  成立；`tools/java/install-manifest.sh` 现在会在拷贝 mod `graphics/` 之后自动复制该文件并断言非空，
+  失败时报 `ERROR`。
+
+### 8.4 文件与证据
 
 - 代码：`src/agent/java/hypernova/agent/textures/{LazyTextures,LazySkipIndex,LazyTextureConfig,ProxyShape,DdsCheck,DdsBridge,GlBridge}.java`；
   `graphics/hypernova/blank.png`；`tools/{gen_lazy_skip.py,install_manifest.py,m26_ab.py}`；
@@ -281,7 +320,7 @@ skip v1/v2 可以保留；关闭后不读取、不跳过、不注册代理，行
 - 运行证据（`build/` 不入库）：`build/m26/ab-result.json`、`ab-result-prefix.json`、`selftest.json`、
   `base-ab.json`、`logs/`、`logs-base/`、`probe/`、`ab-run2.log`、`selftest-run.log`、`base-run.log`。
 
-### 8.4 commits
+### 8.5 commits
 
 - 计划/addenda：`0a88714`、`68bb9fb`、`c2fe8ed`、`a2135b8`、`e2b66ae`、`2b66373`
 - 实现：`7fbb9e6`（Task 0）、`f2f3625`（Task 1）、`e5c7fcf`（Task 0 F1/F2）、`5d982e4`（Task 2）、

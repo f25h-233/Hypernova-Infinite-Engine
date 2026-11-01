@@ -26,6 +26,21 @@ if [ -d "$ROOT/graphics" ]; then
   cp -r "$ROOT/graphics/." "$MODDIR/graphics/"
 fi
 
+# agent-only 安装（260mods 的 hypernova_infinite_engine 不在 enabled_mods）时，mod 内的 graphics/
+# 不保证被 FileLoader 扫描；纹理淘汰的占位图必须位于 starsector-core/graphics/hypernova/。
+BLANK_SRC="$ROOT/graphics/hypernova/blank.png"
+CORE_BLANK_DIR="$GAME_ROOT/starsector-core/graphics/hypernova"
+if [ ! -f "$BLANK_SRC" ]; then
+  echo "ERROR: $BLANK_SRC not found; 无法安装纹理占位图" >&2
+  exit 1
+fi
+mkdir -p "$CORE_BLANK_DIR"
+cp "$BLANK_SRC" "$CORE_BLANK_DIR/blank.png"
+if [ ! -s "$CORE_BLANK_DIR/blank.png" ]; then
+  echo "ERROR: $CORE_BLANK_DIR/blank.png is missing or empty" >&2
+  exit 1
+fi
+
 python -I "$ROOT/tools/install_manifest.py" --game-root "$GAME_ROOT"
 echo "installed: $GAME_ROOT/mods/hypernova_infinite_engine/data/config/hypernova/{manifest-v1.json,lazy-skip-v1.txt}"
 
