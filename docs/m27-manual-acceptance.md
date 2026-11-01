@@ -41,7 +41,9 @@
 - 读法：
   - `evictPass` 日志 `live=` 是**可淘汰字节**，不是总 `liveBytes`。
   - `oldIdDeleted` 包含成功的淘汰删除；`evicted` 是代理复位成功条数，不是“VRAM 已释放量”。
-  - `emptyEvictPasses` 不统计 `live <= budget` 的早退。
+  - `emptyEvictPasses` 不统计 `live <= budget` 的早退；但删除失败的 pass（`evictOne` 已复位
+    代理/扣 `LIVE_BYTES`，`GlBridge.deleteTexture` 失败返回 false）也会计为空 pass，尽管已有
+    代理被淘汰。
   - `evictPassMsMax` 只是主线程 pass 耗时，不是逐帧 P99；>200 ms 以主观/帧时间为准。
   - `ddsFallback` 的 sum(`ddsFb*`) 应在最后稳定 summary 相等（瞬时快照可差 1）；
     `BRIDGE` 自 M2.7 起计入总数，和 M2.6 比较时必须 `ddsDisabled=0`。

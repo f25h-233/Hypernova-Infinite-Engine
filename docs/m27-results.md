@@ -13,7 +13,7 @@
 ### R-M27-9（门禁修复，必须和 M2.6 数字分开读）
 
 Task 1 后预算只比较**可淘汰字节**（`live - startup - foreign`）。260mods 菜单的整个可淘汰集合
-约 **0.52–0.65 MiB**（550,084–681,660 B；0.55–0.68 是十进制 MB），因此 `budgetMb=1`
+约 **0.52–0.65 MiB**（549,548–681,660 B；0.55–0.68 是十进制 MB），因此 `budgetMb=1`
 （1 MiB = 1,048,576 B）会让 `evictPass` 在预算内早退，
 `evictPasses=0` 是**结构性正确结果**，不是自动淘汰路径失效。M2.6 的 `evictPasses=69` 是旧
 “总 `LIVE_BYTES`”口径下的 churn，不能与 M2.7 直接比较。
@@ -152,7 +152,9 @@ Task 7（`8e6be81`）新增内部诊断属性
 - `evictPassMsTotal=641 ms` / `Max=7 ms` 是**菜单主线程 pass** 旁证，**不是逐帧 P99**；
   >200 ms 卡顿仍需手动验收。
 - `evictPass` 日志的 `live=` 是 **evictable bytes**（不是总 `liveBytes`）。
-- `emptyEvictPasses` 不统计 `live <= budget` 的早退；本轮 0 表示没有“进入 pass 但 0 victim”。
+- `emptyEvictPasses` 不统计 `live <= budget` 的早退；但它也会把 `evictOne` 已复位代理并扣减
+  `LIVE_BYTES`、而 `GlBridge.deleteTexture` 删除失败（`evictOne` 返回 false）的 pass 计为空
+  pass——此时实际已有代理被淘汰。本轮 0 表示没有进入 pass 但 0 victim 的情况。
 - `ddsFallback=724` 全部 META 是强制 churn 下重复物化“无 DDS 元数据 → PNG 回退”的累积，
   `ddsDisabled=0`，不是淘汰缺陷；不得把它与 M2.6 的 2 直接比较（R-M27-8）。
 
@@ -375,9 +377,10 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
    只在 `ddsDisabled=0` 时可直接比较；`noteDdsFallback` 的 total/per-reason 两次递增非原子，
    **最后一条稳定 summary** 的 sum 校验可接受瞬时 ±1（本轮实测全部相等）。
 8. **计数语义**：`oldIdDeleted` 现在包含成功的淘汰删除；`evictPass` 日志 `live=` 是
-   evictable bytes；`emptyEvictPasses` 不统计 `live <= budget` 的早退；`evicted` 是代理
-   复位成功条数，不是“VRAM 已释放量”。
-9. **1 MiB 结构性 no-pass**：菜单可淘汰集合约 **0.52–0.65 MiB**（550,084–681,660 B；
+   evictable bytes；`emptyEvictPasses` 不统计 `live <= budget` 的早退，但会把 `evictOne`
+   已复位代理/扣减 `LIVE_BYTES`、而 `GlBridge.deleteTexture` 删除失败（返回 false）的 pass
+   计为空 pass（实际已有代理被淘汰）；`evicted` 是代理复位成功条数，不是“VRAM 已释放量”。
+9. **1 MiB 结构性 no-pass**：菜单可淘汰集合约 **0.52–0.65 MiB**（549,548–681,660 B；
    0.55–0.68 是十进制 MB）< 1 MiB；默认 256 MB 预算下
    菜单/linger120 `evictPasses=0` 是预期，不是缺陷。自动 pass 只在 256 KiB 诊断覆盖下验证。
 10. **W-10 残余**：`blank.png` 缺失时，失败代理仍可能绑定 id 0；安装器两侧断言
@@ -388,7 +391,8 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
     全部通过前，保持 experimental / 默认 off。
 13. **“0 errors” 是五类模式门禁**：`Failed to load texture` / `VerifyError` /
     `ClassFormatError` / `AsyncException` / `isStateCorrupted`；检查切片中仍有 297 条
-    GraphicsLib `TextureData` 基线 WARN/ERROR（mod 加载期噪声），两切片相同，不计入。
+    GraphicsLib `TextureData` 基线（292 WARN/ERROR + 5 INFO；mod 加载期噪声），两切片相同，
+    不计入。
 14. **空 pass 30 s backoff 未触发**：所有实机会话 `emptyEvictPasses=0`，backoff 分支只有
     代码/单测；真实长会话的空 pass/backoff 行为仍需用户/压力验收。
 15. **`ab.json` 是手工聚合**：`tools/m26_ab.py` 当前抓取时点无法重新生成它；provenance 是
