@@ -300,13 +300,47 @@ if sys.platform == "win32":
             ("OtherTransferCount", ctypes.c_ulonglong),
         ]
 
+    class _ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    class _MemoryStatusEx(ctypes.Structure):
+        _fields_ = [
+            ("dwLength", wintypes.DWORD),
+            ("dwMemoryLoad", wintypes.DWORD),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+        ]
+
     _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     _k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     _k32.OpenProcess.restype = wintypes.HANDLE
     _k32.GetProcessIoCounters.argtypes = [wintypes.HANDLE, ctypes.POINTER(_IoCounters)]
     _k32.GetProcessIoCounters.restype = wintypes.BOOL
+    _k32.GlobalMemoryStatusEx.argtypes = [ctypes.POINTER(_MemoryStatusEx)]
+    _k32.GlobalMemoryStatusEx.restype = wintypes.BOOL
     _k32.CloseHandle.argtypes = [wintypes.HANDLE]
     _k32.CloseHandle.restype = wintypes.BOOL
+
+    _psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    _psapi.GetProcessMemoryInfo.argtypes = [
+        wintypes.HANDLE, ctypes.POINTER(_ProcessMemoryCounters), wintypes.DWORD]
+    _psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
 
     def io_read_bytes(pid: int) -> int | None:
         # PROCESS_QUERY_LIMITED_INFORMATION works for same-user processes.
@@ -320,9 +354,81 @@ if sys.platform == "win32":
             return int(counters.ReadTransferCount)
         finally:
             _k32.CloseHandle(handle)
+
+    def _process_memory_counters(pid: int) -> "_ProcessMemoryCounters | None":
+        handle = _k32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return None
+        try:
+            counters = _ProcessMemoryCounters()
+            counters.cb = ctypes.sizeof(counters)
+            if not _psapi.GetProcessMemoryInfo(
+                    handle, ctypes.byref(counters), counters.cb):
+                return None
+            return counters
+        finally:
+            _k32.CloseHandle(handle)
+
+    def process_memory_mb(pid: int) -> float | None:
+        """Working set of pid in MiB; None when the process is gone/unreadable."""
+        counters = _process_memory_counters(pid)
+        if counters is None:
+            return None
+        return counters.WorkingSetSize / (1024 * 1024)
+
+    def process_private_mb(pid: int) -> float | None:
+        """Private (pagefile) usage of pid in MiB; None on failure."""
+        counters = _process_memory_counters(pid)
+        if counters is None:
+            return None
+        return counters.PagefileUsage / (1024 * 1024)
+
+    def free_physical_mb() -> float | None:
+        """System-wide available physical memory (ullAvailPhys) in MiB."""
+        status = _MemoryStatusEx()
+        status.dwLength = ctypes.sizeof(status)
+        if not _k32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return None
+        return status.ullAvailPhys / (1024 * 1024)
 else:
     def io_read_bytes(pid: int) -> int | None:
         return None
+
+    def process_memory_mb(pid: int) -> float | None:
+        return None
+
+    def process_private_mb(pid: int) -> float | None:
+        return None
+
+    def free_physical_mb() -> float | None:
+        return None
+
+
+def gpu_memory_mb() -> float | None:
+    """Total used GPU memory in MiB; None when nvidia-smi is unavailable."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    values = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            values.append(float(line))
+        except ValueError:
+            return None
+    return sum(values) if values else None
+
+
+def _round_mb(value: float | None) -> float | None:
+    return None if value is None else round(value, 1)
 
 
 def one_round(cfg: dict, game: Path, args) -> dict:
@@ -365,12 +471,21 @@ def one_round(cfg: dict, game: Path, args) -> dict:
     print(f">>> 主菜单到达：{menu_s:.1f}s（从进程启动算）")
 
     read_menu = io_read_bytes(proc.pid)
+    ws_menu = process_memory_mb(proc.pid)
+    private_menu = process_private_mb(proc.pid)
+    gpu_menu = gpu_memory_mb()
+    free_menu = free_physical_mb()
+    print(f">>> 内存：ws={_round_mb(ws_menu)}MB private={_round_mb(private_menu)}MB "
+          f"gpu={_round_mb(gpu_menu)}MB free={_round_mb(free_menu)}MB")
 
     if args.linger > 0:
         print(f">>> 停留 {args.linger:.0f}s（给 CacheWriter 稳定窗口）")
         time.sleep(args.linger)
 
     read_exit = io_read_bytes(proc.pid)
+    ws_exit = process_memory_mb(proc.pid)
+    private_exit = process_private_mb(proc.pid)
+    free_exit = free_physical_mb()
     how = graceful_stop(proc)
     wall = time.time() - t0
     print(f">>> 退出方式：{how}；总墙钟 {wall:.1f}s")
@@ -383,6 +498,13 @@ def one_round(cfg: dict, game: Path, args) -> dict:
         "stop": how,
         "read_bytes_menu": read_menu,
         "read_bytes_exit": read_exit,
+        "ws_menu_mb": _round_mb(ws_menu),
+        "ws_exit_mb": _round_mb(ws_exit),
+        "private_menu_mb": _round_mb(private_menu),
+        "private_exit_mb": _round_mb(private_exit),
+        "gpu_menu_mb": _round_mb(gpu_menu),
+        "free_mb_menu": _round_mb(free_menu),
+        "free_mb_exit": _round_mb(free_exit),
         "agent": agent_results(game, agent_off),
     }
 
@@ -419,6 +541,12 @@ def summarize(rows: list[dict]) -> None:
             flags.append("textures:MISMATCH")
         print(f"#{i}: menu={r['menu_s']}s wall={r['wall_s']}s preload={pre}({pre_ms}) "
               f"stop={r['stop']} {' '.join(flags)}")
+        if any(r.get(k) is not None for k in
+               ("ws_menu_mb", "gpu_menu_mb", "free_mb_menu")):
+            print(f"     mem: ws={r.get('ws_menu_mb')}MB "
+                  f"private={r.get('private_menu_mb')}MB "
+                  f"gpu={r.get('gpu_menu_mb')}MB free={r.get('free_mb_menu')}MB "
+                  f"(exit ws={r.get('ws_exit_mb')}MB free={r.get('free_mb_exit')}MB)")
         if a.get("file_index"):
             print(f"     {a['file_index'][-1].split('INFO ')[-1]}")
         if "breakdown" in a:

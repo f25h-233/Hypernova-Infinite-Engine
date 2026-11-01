@@ -45,11 +45,14 @@ public final class LazyTextures {
     private static final AtomicLong LAZY_DEFERRED = new AtomicLong();
     private static final AtomicLong LAZY_FAILED = new AtomicLong();
     private static final AtomicLong LAZY_DRAINED = new AtomicLong();
+    private static final AtomicLong LAZY_REREGISTERED = new AtomicLong();
     private static final Map<String, ProxyEntry> PROXIES = new ConcurrentHashMap<>();
     private static final Map<Object, ProxyEntry> PROXY_BY_OBJ = new ConcurrentHashMap<>();
     /** Skip paths whose proxy has not been inserted into oOoO.new yet. */
     private static final Set<String> PENDING = ConcurrentHashMap.newKeySet();
     private static final AtomicBoolean LOADING_WARNED = new AtomicBoolean();
+    /** Fail-open is one-shot: concurrent drain/register failures must not reload twice. */
+    private static final AtomicBoolean FAILING_OPEN = new AtomicBoolean();
 
     // Wiring armed flags: set by the transformers when their hook is actually
     // applied. ensureShape() force-loads every target and refuses to skip if any
@@ -352,13 +355,20 @@ public final class LazyTextures {
 
     /** Stops skipping and restores every still-pending path through loadAsync. */
     private static void failOpenPending() {
+        // Set disabled before the CAS: every other thread must stop skipping
+        // immediately, even if this thread loses the one-shot race.
         disabled = true;
+        if (!FAILING_OPEN.compareAndSet(false, true)) {
+            AgentLog.info("lazy: fail-open already handled; skipping duplicate");
+            return;
+        }
         Object loader = loaderSingleton;
         if (loader == null) {
             AgentLog.fail("lazy: no TextureLoader singleton; cannot reload pending textures", null);
             return;
         }
         int reloaded = 0;
+        int notReloaded = 0;
         for (String path : PENDING) {
             ProxyEntry e = PROXIES.get(path);
             if (e == null) {
@@ -366,14 +376,25 @@ public final class LazyTextures {
                 continue;
             }
             try {
-                loadAsync(loader, e.type, path);
-                PENDING.remove(path);
-                reloaded++;
+                // N4: loadAsync returns false when loadTextureAsync cannot be
+                // resolved; such paths stay pending and are counted as failed
+                // instead of being reported as reloaded.
+                if (loadAsync(loader, e.type, path)) {
+                    PENDING.remove(path);
+                    reloaded++;
+                } else {
+                    LAZY_FAILED.incrementAndGet();
+                    notReloaded++;
+                }
             } catch (Throwable t) {
+                LAZY_FAILED.incrementAndGet();
+                notReloaded++;
                 AgentLog.fail("lazy: pending reload failed for " + path, t);
             }
         }
-        AgentLog.info("lazy: fail-open reloaded " + reloaded + " pending textures");
+        AgentLog.info("lazy: fail-open reloaded " + reloaded + " pending textures"
+                + (notReloaded == 0 ? ""
+                : "; " + notReloaded + " not reloaded (kept pending)"));
     }
 
     private static Method engineRegister() {
@@ -617,7 +638,7 @@ public final class LazyTextures {
         }
     }
 
-    private static void loadAsync(Object loader, String type, String path) throws Throwable {
+    private static boolean loadAsync(Object loader, String type, String path) throws Throwable {
         Method m = loadAsyncMethod;
         if (m == null && !loadResolved) {
             synchronized (LazyTextures.class) {
@@ -637,9 +658,10 @@ public final class LazyTextures {
                 }
             }
         }
-        if (m == null) return;
+        if (m == null) return false;
         try {
             m.invoke(loader, type, path);
+            return true;
         } catch (InvocationTargetException e) {
             Throwable cause = e.getCause();
             throw cause == null ? e : cause;
@@ -735,9 +757,13 @@ public final class LazyTextures {
         try {
             if (path == null || value == null) return;
             ProxyEntry e = PROXIES.get(path);
-            if (e == null || e.ready || e.obj == value) return;
+            if (e == null || e.obj == value) return;
             synchronized (e) {
-                if (e.ready || e.obj == value) return;
+                if (e.obj == value) return;
+                if (e.ready) {
+                    noteReRegister(path);
+                    return;
+                }
                 ProxyShape shape = proxyShape;
                 if (shape == null) return;
                 shape.copy(value, e.obj);
@@ -755,9 +781,13 @@ public final class LazyTextures {
         try {
             if (value == null) return;
             ProxyEntry e = PROXIES.get(path);
-            if (e == null || e.ready || e.obj == value) return;
+            if (e == null || e.obj == value) return;
             synchronized (e) {
-                if (e.ready || e.obj == value) return;
+                if (e.obj == value) return;
+                if (e.ready) {
+                    noteReRegister(path);
+                    return;
+                }
                 ProxyShape shape = proxyShape;
                 if (shape == null) return;
                 shape.copy(value, e.obj);
@@ -768,6 +798,20 @@ public final class LazyTextures {
         } catch (Throwable t) {
             LAZY_FAILED.incrementAndGet();
             AgentLog.fail("lazy: engine-hit copy failed for " + path, t);
+        }
+    }
+
+    /**
+     * F3 diagnostic: a real object arrived for an already-copied proxy. The
+     * proxy is intentionally not refreshed here (deferred to Task 5 until the
+     * manual save-load/battle/resolution check); this counter tells Task 4
+     * whether that lifecycle path is exercised at all.
+     */
+    private static void noteReRegister(String path) {
+        long n = LAZY_REREGISTERED.incrementAndGet();
+        if (n <= 20) {
+            AgentLog.info("lazy: re-register seen for ready proxy " + path
+                    + " (F3 probe; proxy not refreshed)");
         }
     }
 
@@ -803,6 +847,7 @@ public final class LazyTextures {
                     + " deferred=" + LAZY_DEFERRED.get()
                     + " pending=" + PENDING.size()
                     + " drained=" + LAZY_DRAINED.get()
+                    + " reregistered=" + LAZY_REREGISTERED.get()
                     + " failed=" + LAZY_FAILED.get()
                     + " disabled=" + (disabled ? 1 : 0)
                     + " main=" + (runtimeMain == null ? "none" : runtimeMain.getName())

@@ -1,3 +1,4 @@
+import argparse
 import importlib.util
 import os
 import sys
@@ -126,3 +127,72 @@ def test_main_leaves_the_index_alone_without_the_flag(tmp_path, monkeypatch):
                                       "--rounds", "2"])
     assert smoke.main() == 0
     assert events == ["round", "round"], events
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only process memory")
+def test_process_memory_reads_self():
+    value = smoke.process_memory_mb(os.getpid())
+    assert value is not None
+    assert value > 0
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only process memory")
+def test_process_private_reads_self():
+    value = smoke.process_private_mb(os.getpid())
+    assert value is not None
+    assert value > 0
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only physical memory")
+def test_free_physical_mb_reads_self():
+    value = smoke.free_physical_mb()
+    assert value is not None
+    assert value > 0
+
+
+def test_gpu_memory_mb_returns_none_without_command(monkeypatch):
+    def boom(*args, **kwargs):
+        raise FileNotFoundError("nvidia-smi")
+
+    monkeypatch.setattr(smoke.subprocess, "run", boom)
+    assert smoke.gpu_memory_mb() is None
+
+
+def test_gpu_memory_mb_sums_devices(monkeypatch):
+    class Result:
+        returncode = 0
+        stdout = "1024\n512\n"
+
+    monkeypatch.setattr(smoke.subprocess, "run", lambda *a, **k: Result())
+    assert smoke.gpu_memory_mb() == 1536.0
+
+
+def test_one_round_records_memory_samples(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    cfg = {"java": "jre/java", "vmparams": "vm.txt", "cwd": "starsector-core"}
+
+    class FakeProc:
+        pid = 424242
+
+    monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **k: FakeProc())
+    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: 12.5)
+    monkeypatch.setattr(smoke, "io_read_bytes", lambda pid: 7)
+    monkeypatch.setattr(smoke, "process_memory_mb", lambda pid: 1234.56)
+    monkeypatch.setattr(smoke, "process_private_mb", lambda pid: 2345.67)
+    monkeypatch.setattr(smoke, "gpu_memory_mb", lambda: 4096.0)
+    monkeypatch.setattr(smoke, "free_physical_mb", lambda: 15000.0)
+    monkeypatch.setattr(smoke, "graceful_stop", lambda proc: "forced")
+    monkeypatch.setattr(smoke.time, "sleep", lambda seconds: None)
+
+    args = argparse.Namespace(start_res="1707x1067", fullscreen=False,
+                              jvm_arg=[], wait_menu=1, linger=0)
+    row = smoke.one_round(cfg, game, args)
+    assert row["ok"] is True
+    assert row["ws_menu_mb"] == 1234.6
+    assert row["ws_exit_mb"] == 1234.6
+    assert row["private_menu_mb"] == 2345.7
+    assert row["private_exit_mb"] == 2345.7
+    assert row["gpu_menu_mb"] == 4096.0
+    assert row["free_mb_menu"] == 15000.0
+    assert row["free_mb_exit"] == 15000.0
