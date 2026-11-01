@@ -108,7 +108,7 @@ class LazyEvictionTest {
         LazyTextures.ProxyEntry mine = readyWithObj("mine", true);
         assertEquals(List.of(mine), LazyTextures.selectVictims(
                 List.of(engine, mine), 150, 100, 0, 10_000, 10));
-        assertFalse(LazyTextures.evictOneForTest(engine, true));
+        assertFalse(LazyTextures.evictOneForTest(engine));
     }
 
     @Test
@@ -231,5 +231,37 @@ class LazyEvictionTest {
         assertEquals(30, LazyTextures.foreignBytesForTest());
         assertEquals(20, LazyTextures.evictableBytesForTest());
         LazyTextures.resetGateStateForTest();
+    }
+
+    @Test
+    void evictOneRefusesStartupAndBasicEvenWhenReady() {
+        LazyTextures.ProxyEntry startup = readyWithObj("startup", true);
+        startup.startup = true;
+        assertFalse(LazyTextures.evictOneForTest(startup));
+
+        LazyTextures.ProxyEntry ui = readyWithObj("graphics/ui/x.png", true);
+        assertFalse(LazyTextures.evictOneForTest(ui));
+    }
+
+    @Test
+    void parkFailedProxyResetsOnlyUnreadyEntries() {
+        List<Integer> ids = new java.util.ArrayList<>();
+        LazyTextures.ProxyEntry failed = new LazyTextures.ProxyEntry(
+                "failed", "TEXTURE", 10, 10, new Object());
+        assertTrue(LazyTextures.parkFailedProxy(failed, true, 77, (entry, pid) -> {
+            ids.add(pid);
+            entry.glId = pid;
+        }));
+        assertEquals(List.of(77), ids);
+        assertEquals(0, failed.glId);
+        assertTrue(failed.failed);
+        assertEquals(1, LazyTextures.failedParkedForTest());
+
+        LazyTextures.ProxyEntry ready = readyWithObj("ready", true);
+        assertFalse(LazyTextures.parkFailedProxy(ready, true, 77, (e, pid) -> { }));
+        assertFalse(LazyTextures.parkFailedProxy(failed, false, 77, (e, pid) -> { }));
+        assertFalse(LazyTextures.parkFailedProxy(failed, true, 0, (e, pid) -> { }));
+        assertFalse(LazyTextures.parkFailedProxy(
+                failed, true, 77, (e, pid) -> { throw new IllegalStateException("boom"); }));
     }
 }

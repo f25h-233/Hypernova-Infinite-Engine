@@ -86,6 +86,7 @@ public final class LazyTextures {
     private static final AtomicLong EVICT_PASSES = new AtomicLong();
     private static final AtomicLong OLD_ID_DELETED = new AtomicLong();
     private static final AtomicLong OLD_ID_SKIPPED = new AtomicLong();
+    private static final AtomicLong FAILED_PARKED = new AtomicLong();
     private static volatile int placeholderId;
     private static final AtomicBoolean PLACEHOLDER_FAILED = new AtomicBoolean();
     private static volatile long evictDueNanos;
@@ -330,6 +331,7 @@ public final class LazyTextures {
         EVICT_PASS_NANOS_MAX.set(0);
         OLD_ID_DELETED.set(0);
         OLD_ID_SKIPPED.set(0);
+        FAILED_PARKED.set(0);
         evictDueNanos = 0;
         lastStateName = null;
         PENDING_DELETE.clear();
@@ -831,7 +833,10 @@ public final class LazyTextures {
                 materializePng(e, t0);
             } catch (Throwable t) {
                 long attempts = e.attempts.incrementAndGet();
-                if (attempts >= 2) e.failed = true;
+                if (attempts >= 2) {
+                    e.failed = true;
+                    parkFailed(e);
+                }
                 LAZY_FAILED.incrementAndGet();
                 AgentLog.fail("lazy: materialize failed for " + e.path
                         + " (attempt " + attempts + ")", t);
@@ -899,19 +904,27 @@ public final class LazyTextures {
             }
             return false;
         }
-        int id = DdsBridge.commit(data.texData());
-        if (id <= 0) {
+        Object loader = loaderSingleton;
+        if (loader == null) {
             DDS_FALLBACK.incrementAndGet();
             return false;
         }
+        int id;
         Object real;
-        try {
-            real = DdsBridge.newHandler(loaderSingleton, e.path, data.texData(), id);
-        } catch (Throwable t) {
-            deleteTextureSafe(id);
-            long n = DDS_FALLBACK.incrementAndGet();
-            if (n <= 20) AgentLog.fail("lazy: dds handler failed for " + e.path, t);
-            return false;
+        synchronized (loader) {
+            id = DdsBridge.commit(data.texData());
+            if (id <= 0) {
+                DDS_FALLBACK.incrementAndGet();
+                return false;
+            }
+            try {
+                real = DdsBridge.newHandler(loader, e.path, data.texData(), id);
+            } catch (Throwable t) {
+                deleteTextureSafe(id);
+                long n = DDS_FALLBACK.incrementAndGet();
+                if (n <= 20) AgentLog.fail("lazy: dds handler failed for " + e.path, t);
+                return false;
+            }
         }
         if (real == null) {
             deleteTextureSafe(id);
@@ -1005,13 +1018,15 @@ public final class LazyTextures {
         Field field = pathCacheField;
         Object loader = loaderSingleton;
         if (field == null || loader == null) return;
-        try {
-            Object value = field.get(loader);
-            if (value instanceof Map<?, ?>) {
-                ((Map<Object, Object>) value).put(path, obj);
+        synchronized (loader) {
+            try {
+                Object value = field.get(loader);
+                if (value instanceof Map<?, ?>) {
+                    ((Map<Object, Object>) value).put(path, obj);
+                }
+            } catch (Throwable t) {
+                AgentLog.fail("lazy: path cache put failed for " + path, t);
             }
-        } catch (Throwable t) {
-            AgentLog.fail("lazy: path cache put failed for " + path, t);
         }
     }
 
@@ -1448,7 +1463,7 @@ public final class LazyTextures {
         long bytes = 0;
         for (ProxyEntry e : victims) {
             long b = e.bytes;
-            if (evictOne(e, false)) {
+            if (evictOne(e)) {
                 n++;
                 bytes += b;
             }
@@ -1471,15 +1486,21 @@ public final class LazyTextures {
                 evictableBytes(), budget, n);
     }
 
-    private static boolean evictOne(ProxyEntry e, boolean force) {
+    private static boolean evictOne(ProxyEntry e) {
         if (e == null || !e.ready || e.glId <= 0 || e.obj == null) return false;
         if (!e.owned) return false;
-        if (!force && (e.startup || isBasicPath(e.path))) return false;
+        if (e.startup || isBasicPath(e.path)) return false;
         if (Thread.currentThread() != runtimeMain) return false;
         if (!ensurePlaceholder()) return false;
         int id;
         synchronized (e) {
-            if (!e.ready || e.glId <= 0) return false;
+            // W-5: materialize()/refreshReady() hold this same monitor. Re-check
+            // under it so a texture that became startup/engine-owned between
+            // pick and evict is never deleted.
+            if (!e.ready || e.glId <= 0 || !e.owned
+                    || e.startup || isBasicPath(e.path)) {
+                return false;
+            }
             ProxyShape shape = proxyShape;
             if (shape == null) return false;
             id = e.glId;
@@ -1510,17 +1531,52 @@ public final class LazyTextures {
             OLD_ID_SKIPPED.incrementAndGet();
             return false;
         }
+        OLD_ID_DELETED.incrementAndGet();
         return true;
     }
 
-    static boolean evictOneForTest(ProxyEntry e, boolean force) {
-        return evictOne(e, force);
+    static boolean evictOneForTest(ProxyEntry e) {
+        return evictOne(e);
+    }
+
+    @FunctionalInterface
+    interface ProxyReset {
+        void reset(ProxyEntry e, int placeholderId) throws Exception;
+    }
+
+    static boolean parkFailedProxy(ProxyEntry e, boolean placeholderReady, int pid,
+                                   ProxyReset reset) {
+        if (e == null || e.ready || !placeholderReady || pid <= 0 || reset == null) return false;
+        synchronized (e) {
+            if (e.ready) return false;
+            try {
+                reset.reset(e, pid);
+            } catch (Throwable t) {
+                AgentLog.fail("lazy: failed-proxy parking failed for " + e.path, t);
+                return false;
+            }
+            e.glId = 0;
+            e.owned = false;
+            e.dds = false;
+            e.failed = true;
+            FAILED_PARKED.incrementAndGet();
+            return true;
+        }
+    }
+
+    private static void parkFailed(ProxyEntry e) {
+        if (!ensurePlaceholder()) return;
+        ProxyShape shape = proxyShape;
+        if (shape == null) return;
+        parkFailedProxy(e, true, placeholderId, (entry, pid) ->
+                shape.reset(entry.obj, 3553, pid, 1, 1, 1.0f, 1.0f, entry.w, entry.h));
     }
 
     static long liveBytesForTest() { return LIVE_BYTES.get(); }
     static long startupBytesForTest() { return STARTUP_BYTES.get(); }
     static long foreignBytesForTest() { return FOREIGN_BYTES.get(); }
     static long evictableBytesForTest() { return evictableBytes(); }
+    static long failedParkedForTest() { return FAILED_PARKED.get(); }
 
     private static boolean ensurePlaceholder() {
         if (placeholderId > 0) return true;
@@ -1581,7 +1637,7 @@ public final class LazyTextures {
                 return;
             }
             int firstId = pick.glId;
-            if (!evictOne(pick, true) || pick.ready) {
+            if (!evictOne(pick) || pick.ready) {
                 selftestResult = 2;
                 AgentLog.fail("lazy selftest: evict failed for " + pick.path, null);
                 return;
@@ -1704,7 +1760,8 @@ public final class LazyTextures {
                     + " oldIdDeleted=" + OLD_ID_DELETED.get()
                     + " evictSkipped=" + OLD_ID_SKIPPED.get()
                     + " deferredDeletes=" + DEFERRED_DELETES.get()
-                    + " selftest=" + selftestResult);
+                    + " selftest=" + selftestResult
+                    + " failedParked=" + FAILED_PARKED.get());
         } catch (Throwable t) {
             AgentLog.fail("lazy probe: summary failed", t);
         }
