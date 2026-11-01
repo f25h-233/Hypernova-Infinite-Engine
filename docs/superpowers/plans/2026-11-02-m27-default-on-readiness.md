@@ -1445,7 +1445,7 @@ python -I tools/smoke_run.py --profile miko-lite --rounds 1 --linger 30 \
   --json-out build/m27/fix-auto.json
 ```
 
-Expected: `ok=true`；`selftest=1`；`evictPasses>=1`；`evicted>=1`；`rematerialized>=1`；`placeholder>0`；`failed=disabled=dimMismatch=0`；`failedParked=0`（菜单无二次失败）；`evictPassMsMax` 有值；`ddsFb*` 之和 == `ddsFallback`；0 Failed/Verify/Class/Async/Corrupted。若 `evictPasses=0`，**停下报告**。
+Expected: `ok=true`；`selftest=1`；`evictPasses>=1`；`evicted>=1`；`rematerialized>=1`；`placeholder>0`；`failed=disabled=dimMismatch=0`；`failedParked=0`（菜单无二次失败）；`evictPassMsMax` 有值；**最后一条稳定 summary** 的 `ddsFb*` 之和 == `ddsFallback`（瞬时快照可能差 1，不作为失败）；0 Failed/Verify/Class/Async/Corrupted。若 `evictPasses=0`，**停下报告**。
 
 - [ ] **Step 3: 默认预算 selftest 回归**
 
@@ -1503,7 +1503,7 @@ Expected: 0 errors；`evictPasses` 可为 0（默认 256 MB 无压力，符合�
 | 预算口径（startup/foreign 排除） | fixed | Task 1 + `startupBytes`/`foreignBytes`/`evictableBytes` |
 | W-5 pick→evict TOCTOU | fixed | Task 2 单测 + `evictOne` 二次校验 |
 | W-10 失败物化 id=0 | fixed | Task 2 停车 + `failedParked` |
-| W-4 ddsFallback 盲区 | closed（可诊断） | Task 3 原因计数 + 实机分解 |
+| W-4 ddsFallback 盲区 | closed（可诊断） | Task 3 原因计数 + 实机分解；BRIDGE 自 M2.7 起计入总数，M2.6/M2.7 仅在 `ddsDisabled=0` 时可直接比较 |
 | W-7 DDS commit 监视器 | defensive fixed | Task 2 `synchronized(loader)` |
 | M2.5 W5 发行包 mod 集 | documented + fail-open | README + release_check |
 | M2.5 W6 agent jar 新鲜度 | fixed | build-mod 强制重建/新鲜度/release_check |
