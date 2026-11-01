@@ -1,5 +1,7 @@
 import importlib.util
+import io
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -37,16 +39,24 @@ def test_percentile_nearest_rank():
     assert smoke.percentile([3, 1, 2], 99) == 3
 
 
+def _zip_bytes(member: str, data: bytes) -> bytes:
+    """Real zip bytes: jar_provenance hashes entry name+CRC+size, not raw bytes."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(member, data)
+    return buf.getvalue()
+
+
 def test_jar_provenance_detects_mismatch(tmp_path):
     installed = tmp_path / "installed.jar"
     build = tmp_path / "build.jar"
-    installed.write_bytes(b"old")
-    build.write_bytes(b"new")
+    installed.write_bytes(_zip_bytes("hypernova/Plugin.class", b"old"))
+    build.write_bytes(_zip_bytes("hypernova/Plugin.class", b"new"))
     ok, detail = smoke.jar_provenance(installed, build)
     assert not ok and "sha=" in detail
-    build.write_bytes(b"old")
+    build.write_bytes(installed.read_bytes())
     ok, detail = smoke.jar_provenance(installed, build)
-    assert ok and "size=3B" in detail
+    assert ok and "1 entries sha=" in detail
 
 
 def test_jar_provenance_missing_build_output(tmp_path):
@@ -130,7 +140,9 @@ def test_loaded_p99_over_budget_fails(tmp_path, capsys):
 
 
 def test_provenance_mismatch_fails_without_skip(tmp_path, capsys):
-    game = _make_game(tmp_path, log=GOOD_LOG, telemetry=_rows(), installed_jar=b"definitely-not-build")
+    game = _make_game(tmp_path, log=GOOD_LOG, telemetry=_rows(),
+                      installed_jar=_zip_bytes("hypernova/Plugin.class",
+                                               b"definitely-not-build"))
     assert smoke.main(["--game", str(game)]) == 1
     assert "FAIL  installed jar matches build output" in capsys.readouterr().out
 

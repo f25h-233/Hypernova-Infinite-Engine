@@ -32,7 +32,7 @@
 | G3 中立性 | PASS（warm 对照） | warm 补充 1+1 差 +1.0 s；全部 warm 轮差 +0.95 s（≤1.5 s） |
 | G4 正确性 | PASS | 每会话 0 `Failed to load texture` / 0 `VerifyError` / 0 `ClassFormatError`；agent 0 ERROR |
 
-skip 文件：260mods 73,446 行 / 4,427,771 B；Base 3,112 行 / 146,563 B；`skip_fraction=0.8704`（260mods）。
+skip 文件（Task 3 原始）：260mods 73,446 行 / 4,427,771 B；Base 3,112 行 / 146,563 B；`skip_fraction=0.8704`（260mods）。最终安装器输出的 Base skip 为 3,113 行 / 146,641 B（3,112 条记录 + 1 行 generation 头）。
 
 ### 2.2 Task 2：生产实现内部 gate（`-Dhypernova.textures.lazy=true`）
 
@@ -54,10 +54,10 @@ skip 文件：260mods 73,446 行 / 4,427,771 B；Base 3,112 行 / 146,563 B；`s
 ### 2.3 Task 3：安装集成
 
 - `install_manifest.py` 在 manifest 原子写之后、用**裁剪后的 runtime** 生成同代 `lazy-skip-v1.txt`；Critical 时不写 skip。
-- Base：L1/L2/L3 = 185/509/2,612，baked 3,285/3,285，`skip=3,112`（146,563 B，3 列，与 L1 交集 0）；连跑两次 md5 相同。
+- Base：L1/L2/L3 = 185/509/2,612，baked 3,285/3,285，`skip=3,112`（最终文件 3,113 行 / 146,641 B：3,112 条 3 列记录 + 1 行 `# generation=` 头，与 L1 交集 0）；连跑两次 md5 相同。
 - `build-mod.sh` 产出的 zip 同时含 `manifest-v1.json` 与 `lazy-skip-v1.txt`；manifest 185/509/2,612，skip 3,112 行。
-- 目标测试 8 passed（变异移除 skip 写入 → 红后恢复）。
-- 残余（Task 3 review，非阻塞）：manifest/skip 非事务（skip 写失败可能留下跨代 pair）；`build-mod.sh` 的 `dist/` 不主动 `mkdir`；`install-manifest.sh` 静默忽略多余参数。`build-mod.sh` 现在拒绝任何参数（含 `--env`）。
+- 目标测试 13 passed（`test_install_manifest.py` 10 + `test_gen_lazy_skip.py` 3；覆盖 manifest/skip 事务失败路径与 generation 头；变异移除 skip 写入 → 红后恢复）。
+- 残余（Task 3 review，非阻塞）：`install-manifest.sh` 静默忽略多余参数。`build-mod.sh` 现在拒绝任何参数（含 `--env`）。final fix `00f717f` 已修 manifest/skip 事务 + generation 头与 `dist/` mkdir。
 
 ### 2.4 Task 4：同 boot A/B（`tools/m25_ab.py`，warm，交错 C/T）
 
@@ -197,7 +197,7 @@ Warm-up（不计入）：control 62.6 s，`preload=hit`（5 ms / 2,113 条），
 3. **n=5 / 系统级 GPU**：内存结论是定性方向，不是统计显著；GPU 采样含其它进程。
 4. **无淘汰**：M2.5 不设 cap；A 场景物化后在 B 场景不卸载；长会话收益递减（60 s 菜单空闲已见 WS +219.5 MB）。PNG 物化 4 B/px，理论上可反超 BC7 baseline。
 5. **版本耦合**：0.98a-RC8 + FR 0.9.7rc2；`wiring armed` 四钩子/shape gate 失败会 fail-open（disabled），但新版本仍需重新验证。
-6. **Task 3 残余**：manifest/skip 非事务；`build-mod.sh` 不建 `dist/`；`install-manifest.sh` 忽略多余参数；`tests/tools` 两个既有 `test_smoke_check` 失败与本里程碑无关。
+6. **Task 3 残余**：`install-manifest.sh` 忽略多余参数；两个既有 `test_smoke_check` 失败已由 final test fix 修复（stale 夹具）。manifest/skip 事务、generation 头与 `dist/` mkdir 已在 final fix `00f717f` 修复。M2.6 已知限制：generation 头只写不读（运行期不校验 skip 与 manifest 同代），且 skip 替换失败后若删除旧 skip 也失败，仍可能留下跨代 pair。
 7. **Task 4 工具残余**（review M3–M5/W2/W3）：C/T 接线与聚合无测试；`run_round` 的 `check=True` 单轮失败会中止；归档是累积快照不是单会话切片；N4 的 `loadAsync=false` 只在 fail-open 路径检查（正常 `queue()` 仍忽略返回值，版本漂移 residual）。
 8. **环境漂移**：同 boot 内 menu 46–74 s 波动；跨任务/跨 boot 的绝对时间不可直接比较。
 
