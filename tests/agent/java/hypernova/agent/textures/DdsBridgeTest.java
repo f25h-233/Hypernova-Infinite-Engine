@@ -50,10 +50,26 @@ class DdsBridgeTest {
         assertEquals("null|graphics/a.png|9", out);
     }
 
+    @Test
+    void newHandlerHandlesStaticAndInstanceShapes() throws Exception {
+        TextureData td = new TextureData();
+        assertEquals("null|graphics/a.png|9",
+                DdsBridge.newHandler(new FakeLoader(), "graphics/a.png", td, 9));
+        assertEquals("s|null|graphics/a.png|9",
+                DdsBridge.newHandler(new StaticLoader(), "graphics/a.png", td, 9));
+    }
+
     static final class FakeLoader {
-        private static String newVanillaTextureHandler(
+        private String newVanillaTextureHandler(
                 String name, String path, TextureData data, int id) {
             return name + "|" + path + "|" + id;
+        }
+    }
+
+    static final class StaticLoader {
+        private static String newVanillaTextureHandler(
+                String name, String path, TextureData data, int id) {
+            return "s|" + name + "|" + path + "|" + id;
         }
     }
 }

@@ -60,6 +60,14 @@ public final class LazyTextures {
     private static final AtomicLong DDS_FALLBACK = new AtomicLong();
     private static final AtomicLong DDS_DISABLED = new AtomicLong();
     private static final AtomicLong DDS_DIM_MISMATCH = new AtomicLong();
+    /**
+     * R-M26-10: GL deletes are only legal on the runtime main thread. Ids freed
+     * off-main (loading thread DDS cleanup, F3 refresh) wait here for the next
+     * main-thread noteGameState() drain.
+     */
+    private static final java.util.Set<Integer> PENDING_DELETE =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final AtomicLong DEFERRED_DELETES = new AtomicLong();
     // ---- M2.6 eviction state ----
     private static volatile boolean eviction;
     private static volatile int evictionBudgetMb;
@@ -304,6 +312,8 @@ public final class LazyTextures {
         OLD_ID_SKIPPED.set(0);
         evictDueNanos = 0;
         lastStateName = null;
+        PENDING_DELETE.clear();
+        DEFERRED_DELETES.set(0);
     }
 
     // ---- wiring armed flags (set by the transformers when a hook is applied) ----
@@ -675,6 +685,7 @@ public final class LazyTextures {
     }
 
     static void noteGameState(String name) {
+        drainPendingDeletes();
         long now = System.nanoTime();
         if (eviction) {
             String prev = lastStateName;
@@ -752,7 +763,14 @@ public final class LazyTextures {
             DDS_DISABLED.incrementAndGet();
             return false;
         }
-        DdsBridge.Data data = DdsBridge.get(Path.of(meta.absPath()));
+        Path absPath;
+        try {
+            absPath = Path.of(meta.absPath());
+        } catch (Throwable t) {
+            DDS_FALLBACK.incrementAndGet();
+            return false;
+        }
+        DdsBridge.Data data = DdsBridge.get(absPath);
         if (data == null) {
             DDS_FALLBACK.incrementAndGet();
             return false;
@@ -779,19 +797,19 @@ public final class LazyTextures {
         try {
             real = DdsBridge.newHandler(loaderSingleton, e.path, data.texData(), id);
         } catch (Throwable t) {
-            GlBridge.deleteTexture(id);
+            deleteTextureSafe(id);
             long n = DDS_FALLBACK.incrementAndGet();
             if (n <= 20) AgentLog.fail("lazy: dds handler failed for " + e.path, t);
             return false;
         }
         if (real == null) {
-            GlBridge.deleteTexture(id);
+            deleteTextureSafe(id);
             DDS_FALLBACK.incrementAndGet();
             return false;
         }
         ProxyShape shape = proxyShape;
         if (shape == null) {
-            GlBridge.deleteTexture(id);
+            deleteTextureSafe(id);
             DDS_FALLBACK.incrementAndGet();
             return false;
         }
@@ -801,7 +819,7 @@ public final class LazyTextures {
             realW = shape.imageWidth(real);
             realH = shape.imageHeight(real);
         } catch (Throwable t) {
-            GlBridge.deleteTexture(id);
+            deleteTextureSafe(id);
             DDS_FALLBACK.incrementAndGet();
             AgentLog.fail("lazy: dds handler shape failed for " + e.path, t);
             return false;
@@ -813,7 +831,7 @@ public final class LazyTextures {
         try {
             shape.copy(real, e.obj);
         } catch (Throwable t) {
-            GlBridge.deleteTexture(id);
+            deleteTextureSafe(id);
             DDS_FALLBACK.incrementAndGet();
             AgentLog.fail("lazy: dds handler copy failed for " + e.path, t);
             return false;
@@ -838,6 +856,24 @@ public final class LazyTextures {
         // BC7 is 1 byte/pixel for level 0; the DDS may carry mips, but this is a
         // conservative LRU accounting estimate, not a VRAM measurement.
         return Math.max(0L, (long) w * h);
+    }
+
+    /** R-M26-10: GL deletes only on the runtime main thread; off-main ids wait. */
+    private static boolean deleteTextureSafe(int id) {
+        if (id <= 0) return false;
+        if (Thread.currentThread() != runtimeMain) {
+            PENDING_DELETE.add(id);
+            DEFERRED_DELETES.incrementAndGet();
+            return false;
+        }
+        return GlBridge.deleteTexture(id);
+    }
+
+    private static void drainPendingDeletes() {
+        if (Thread.currentThread() != runtimeMain || PENDING_DELETE.isEmpty()) return;
+        for (Integer id : PENDING_DELETE) {
+            if (GlBridge.deleteTexture(id)) PENDING_DELETE.remove(id);
+        }
     }
 
     private static Object syncLoad(String path) throws Throwable {
@@ -1186,14 +1222,19 @@ public final class LazyTextures {
         shape.copy(value, e.obj);
         int newId = shape.glId(value);
         e.glId = newId;
-        if (shouldDeleteOldId(oldOwned, oldId, newId, placeholderId, canMaterialize())) {
+        boolean onMain = Thread.currentThread() == runtimeMain;
+        if (shouldDeleteOldId(oldOwned, oldId, newId, placeholderId, onMain)) {
             if (GlBridge.deleteTexture(oldId)) {
                 OLD_ID_DELETED.incrementAndGet();
             } else {
                 OLD_ID_SKIPPED.incrementAndGet();
             }
+        } else if (oldOwned && oldId > 0 && oldId != newId && oldId != placeholderId) {
+            PENDING_DELETE.add(oldId);
+            DEFERRED_DELETES.incrementAndGet();
         }
         e.owned = false;
+        e.dds = false;
         e.lastSource = value;
         touch(e);
         putPathCache(e.path, e.obj);
@@ -1422,7 +1463,8 @@ public final class LazyTextures {
                     + " liveBytes=" + LIVE_BYTES.get()
                     + " placeholder=" + placeholderId
                     + " oldIdDeleted=" + OLD_ID_DELETED.get()
-                    + " evictSkipped=" + OLD_ID_SKIPPED.get());
+                    + " evictSkipped=" + OLD_ID_SKIPPED.get()
+                    + " deferredDeletes=" + DEFERRED_DELETES.get());
         } catch (Throwable t) {
             AgentLog.fail("lazy probe: summary failed", t);
         }

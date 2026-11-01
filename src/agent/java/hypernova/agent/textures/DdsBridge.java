@@ -4,6 +4,7 @@ import hypernova.agent.AgentLog;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -68,7 +69,9 @@ public final class DdsBridge {
     /**
      * Invokes the FR-private newVanillaTextureHandler(name, path, texData, id)
      * merged into the real com.fs.graphics.TextureLoader class. name is null,
-     * matching FR's synchronous 7-arg path.
+     * matching FR's synchronous 7-arg path. 0.9.7rc2 merges the method as a
+     * private instance method, so the loader is the receiver; a static shape
+     * (if a future FR changes it) is handled too.
      */
     public static Object newHandler(Object loader, String path, Object textureData, int id)
             throws Exception {
@@ -79,7 +82,8 @@ public final class DdsBridge {
             if (p.length == 4 && p[0] == String.class && p[1] == String.class
                     && p[2].isInstance(textureData) && p[3] == int.class) {
                 m.setAccessible(true);
-                return m.invoke(null, null, path, textureData, id);
+                Object receiver = Modifier.isStatic(m.getModifiers()) ? null : loader;
+                return m.invoke(receiver, null, path, textureData, id);
             }
         }
         throw new NoSuchMethodException("TextureLoader.newVanillaTextureHandler"
