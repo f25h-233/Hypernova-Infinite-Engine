@@ -72,6 +72,8 @@ class LazyTransformTest {
         List<String> wrapper = shape.get("lookup" + LOOKUP_DESC);
         assertNotNull(wrapper);
         assertTrue(wrapper.contains("hypernova/agent/textures/LazyTextures#probeLookup"));
+        assertTrue(wrapper.contains("com/fs/graphics/oOoO#hypernova$getOriginal"));
+        assertTrue(wrapper.contains("hypernova/agent/textures/LazyTextures#probeResult"));
         assertTrue(wrapper.contains("hypernova/agent/textures/LazyTextures#lookup"));
     }
 

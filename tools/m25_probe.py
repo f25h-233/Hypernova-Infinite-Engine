@@ -10,6 +10,12 @@ INDEX_RE = re.compile(
     r"lazy probe: index loaded paths=(\d+) invalid=(\d+) in (\d+) ms")
 SUMMARY_RE = re.compile(
     r"lazy probe: summary queue=(\d+) wouldSkip=(\d+) lookups=(\d+) demand=(\d+) index=(\S+)")
+OPERATIONAL_RE = re.compile(
+    r"queuedSkip=(\d+) demandQueued=(\d+) hits=(\d+) misses=(\d+) degraded=(\d+)")
+
+
+def _timestamp(line: str) -> str:
+    return line.split(" ", 1)[0]
 
 
 def parse_agent_log(text: str) -> dict:
@@ -21,6 +27,8 @@ def parse_agent_log(text: str) -> dict:
     session = lines[start:]
     out = {
         "session_lines": len(session),
+        "premain_ts": _timestamp(session[0]) if session else None,
+        "agent_errors": 0,
         "index_paths": 0,
         "index_invalid": 0,
         "index_ms": 0,
@@ -28,10 +36,20 @@ def parse_agent_log(text: str) -> dict:
         "lookup_hook": False,
         "wired": False,
         "summary": None,
+        "summary_series": [],
+        "operational": {
+            "queued_skip": None,
+            "demand_queued": None,
+            "hits": None,
+            "misses": None,
+            "degraded": None,
+        },
         "would_skip_samples": 0,
         "demand_samples": 0,
     }
     for line in session:
+        if " ERROR " in line:
+            out["agent_errors"] += 1
         m = INDEX_RE.search(line)
         if m:
             out["index_paths"] = int(m.group(1))
@@ -49,15 +67,40 @@ def parse_agent_log(text: str) -> dict:
             out["demand_samples"] += 1
         m = SUMMARY_RE.search(line)
         if m:
-            out["summary"] = {
+            raw = {
                 "queue": int(m.group(1)),
                 "would_skip": int(m.group(2)),
                 "lookups": int(m.group(3)),
                 "demand": int(m.group(4)),
                 "index": m.group(5),
             }
+            out["summary"] = raw
+            record = {"ts": _timestamp(line)}
+            record.update(raw)
+            op = OPERATIONAL_RE.search(line)
+            if op:
+                record.update({
+                    "queued_skip": int(op.group(1)),
+                    "demand_queued": int(op.group(2)),
+                    "hits": int(op.group(3)),
+                    "misses": int(op.group(4)),
+                    "degraded": int(op.group(5)),
+                })
+            out["summary_series"].append(record)
     s = out["summary"]
     out["skip_fraction"] = (s["would_skip"] / s["queue"]) if s and s["queue"] else 0.0
+    last = out["summary_series"][-1] if out["summary_series"] else {}
+    out["operational"] = {
+        "queued_skip": last.get("queued_skip"),
+        "demand_queued": last.get("demand_queued"),
+        "hits": last.get("hits"),
+        "misses": last.get("misses"),
+        "degraded": last.get("degraded"),
+    }
+    demand_queued = out["operational"]["demand_queued"]
+    out["operational_fraction"] = (
+        demand_queued / s["would_skip"]
+        if demand_queued is not None and s and s["would_skip"] else 0.0)
     return out
 
 
@@ -78,6 +121,9 @@ def main(argv=None) -> int:
     result["ok"] = bool(
         result["queue_hook"] and result["lookup_hook"] and result["wired"]
         and result["summary"] and result["summary"]["queue"] > 0
+        and result["index_paths"] > 0
+        and result["agent_errors"] == 0
+        and result["operational"]["degraded"] == 0
         and result.get("menu_s") is not None)
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     if args.json_out:

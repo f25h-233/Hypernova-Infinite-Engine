@@ -4,7 +4,7 @@
 - BASE：`a8ebb40`（计划提交）
 - 宿主：Fast Rendering **0.9.7rc2**（`fr.jar` md5 `30db0f340f993fb8e8360f5762088b69`）、Starsector **0.98a-RC8**
 - 环境：Base（启用运行期 mod）与 260mods（agent-only，`hypernova_infinite_engine` 不在 `enabled_mods.json`）
-- 结论：**G1/G3/G4 通过，G2 的 demand 项失败 → 按门禁判 NO-GO（收益结构不成立）**；Task 2+ 不应派发，最终由 controller/用户裁决。
+- 结论：**G1/G3/G4 通过；G2 按门禁字面（raw demand）NO-GO，但按审查修正的 operational 口径 PASS（翻转）**；是否派发 Task 2+ 由 controller/用户裁决。
 
 ---
 
@@ -77,14 +77,15 @@
 ### 2.3 Hook 2：`com/fs/graphics/oOoO`
 
 - 按 descriptor `(Ljava/lang/String;)Lcom/fs/graphics/Object;` + `ACC_STATIC` 精确匹配，必须恰好 1 个候选；0 或 >1 → 不改、记日志（当前 0.98a-RC8 为 `public static Ò00000(String)`，唯一）。
-- 原方法 rename 为 `hypernova$getOriginal`，新增同名 wrapper：先 `LazyTextures.probeLookup(path)`，再调用原方法并**原样返回**；未命中时调用 `LazyTextures.lookup(path)`（Task 1 恒返回 null，即不代理）。
+- 原方法 rename 为 `hypernova$getOriginal`，新增同名 wrapper：`LazyTextures.probeLookup(path)` → 原方法 → `LazyTextures.probeResult(path, value)`（按原查表结果记 hit/miss）→ 原样返回；未命中时调用 `LazyTextures.lookup(path)`（Task 1 恒返回 null，即不代理）。
 - 行为等价性：wrapper 对已存在纹理返回同一个 `com.fs.graphics.Object` 引用；对 miss 仍返回 null（Task 1 的 `lookup` 恒 null）。除计数外无副作用。
 
 ### 2.4 计数与日志
 
-- `queue`：队列总数；`wouldSkip`：path 在 skip index 中（仅当索引已异步加载）；`lookups`：`oOoO` 查表总次数；`demand`：**distinct skip-set lookup**；`types`：type 分布。
-- 索引在 daemon 线程加载（不阻塞加载）；summary 每 10 s + shutdown hook 各写一行；`m25_probe.py` 取最后一个 `premain` 会话的最后一条 summary。
-- fail-open：索引缺失/字段缺失/反射失败都只记 ERROR 日志并继续，绝不因探针让游戏崩溃。
+- `queue`：队列总数；`wouldSkip`：path 在 skip index 中；`queuedSkip`：命中 index 的 distinct 队列路径；`lookups`：`oOoO` 查表总次数；`demand`：raw distinct index-wide lookup（对照）；`demandQueued`：`queuedSkip ∩ lookup` 的 distinct operational demand；`hits`/`misses`：wrapper 原查表结果非 null/null 的 distinct `queuedSkip` 路径（同一路径可两集合都记）；`degraded`：`loadTextureAsync` 反射解析失败标志。
+- 索引在 daemon 线程加载（不阻塞加载）；summary 每 10 s + shutdown hook 各写一行，包含 `queuedSkip/demandQueued/hits/misses/degraded`。
+- `m25_probe.py` 取最后一个 `premain` 会话，输出 raw `summary`、`operational`、`operational_fraction = demandQueued/wouldSkip` 和带时间戳的 `summary_series`；`ok` 要求 `agent_errors==0`、`index_paths>0`、`degraded==0`。
+- fail-open：索引缺失/字段缺失/反射失败都记 ERROR 并继续；`loadTextureAsync` 解析失败额外置 `degraded=1`（`ok` 失败），不再当作正常会话。
 
 ---
 
@@ -117,7 +118,7 @@
 
 日志：`lazy probe: repository lookup hook added to com/fs/graphics/oOoO (method=Ò00000)`、`queue lambda hook added to com/fs/graphics/TextureLoader`、`lambda wired (first queue: type=TEXTURE, path=graphics/cursors/cursor_red.png)`、`loadTextureAsync resolved on com.fs.graphics.TextureLoader`；`starsector.log` 0 个 `VerifyError`/`ClassFormatError`、0 条 `Failed to load texture`；agent 日志 0 条 ERROR。
 
-### 3.3 260mods control/probe（2+2 + 补充 1+1）
+### 3.3 260mods control/probe（2+2 + 补充 1+1；raw 口径）
 
 | 轮次 | 模式 | menu_s | 备注 |
 |---|---|---:|---|
@@ -128,7 +129,7 @@
 | c3 | control | 64.6 | warm（协议规定的补充 1+1） |
 | p3 | probe | 65.6 | warm |
 
-probe JSON（三份一致）：
+probe JSON（旧 jar，raw 口径；三份一致）：
 
 | 指标 | p1 | p2 | p3 |
 |---|---:|---:|---:|
@@ -141,7 +142,32 @@ probe JSON（三份一致）：
 | index_invalid / index_ms | 0 / 57 | 0 / 68 | 0 / 64 |
 | queue_hook / lookup_hook / wired | true | true | true |
 
-demand 的时间演化（p1 的 10 s summary 序列，p2/p3 同型）：队列在约 30 s 内到 52,604 后不再增长；demand 在队列结束后才开始上升（3 → 298 → 8,682 → **14,831（主菜单锚点前后）** → 19,283 → 21,350）。p2/p3 在菜单锚点附近的 tick 同样为 14,831，会话末为 21,353/21,354。**补充观察（不替代门禁口径）**：菜单前 demand ≈ 14,831（20.2% × index），菜单后（主线停留/菜单背景）再增约 6.5k。
+#### 3.3.1 修正后的 operational demand（fix 轮，新 jar）
+
+审查 Finding 1 指出：raw `demand` 对**整个 skip index（73,446）**计数，真正会被跳过的是启动队列命中的 `wouldSkip`（45,785）；两者未求交，且最后一条 summary 含菜单后查表。fix 版探针维护 `queuedSkip`（`queue()` 命中 index 的 distinct 路径），并新增：
+
+- `demandQueued` = distinct `queuedSkip` 路径被 `oOoO` 查表（operational demand）；
+- `hits`/`misses` = 原查表结果非 null / null 的 distinct 路径（同一路径可先 miss 后 hit，两个集合都记）；
+- `degraded` = `loadTextureAsync` 反射解析失败标志；`m25_probe.ok` 同时要求 `agent_errors==0`、`index_paths>0`、`degraded==0`。
+
+重跑（新 jar；两轮均 warm：file index `loaded`、scripts cache `preloaded`）：
+
+| 轮次 | menu_s | queuedSkip | demandQueued(菜单前) | hits/misses(菜单前) | demandQueued(会话末) | operational_fraction(菜单前) | operational_fraction(会话末) | raw demand(会话末) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 260-p4 | 71.6 | 45,785 | **801** | 801 / 0 | 7,317 | **1.75%** | 15.98% | 21,353 |
+| 260-p5 | 69.2 | 45,785 | **798** | 798 / 0 | 7,382 | **1.74%** | 16.12% | 21,418 |
+| Base-fix | 10.0 | 2,331 | 85* | 85 / 0 | 138 | 3.65%* | 5.92% | 155 |
+
+\* Base 的菜单锚点（+9.2 s）早于第一条 summary tick（+10.0 s），没有严格“菜单前”的 tick；85 是菜单后 0.7 s 的第一条，仅作上界参考。
+
+菜单锚点估算：`starsector.log` 创建时间 + 菜单行相对毫秒（p4 71,181 ms、p5 68,908 ms、Base 9,224 ms；与 smoke `menu_s` 差 <0.5 s）。`operational_fraction = demandQueued / wouldSkip`；审查给的阈值为 `0.20 × 45,785 = 9,157`。
+
+关键观察：
+
+- operational demand 在菜单前只有 **798–801**（1.74–1.75%），远低于 20% 阈值；会话末（含菜单后停留/背景）为 7,317–7,382（15.98–16.12%），仍低于 9,157。
+- `hits == demandQueued`、`misses == 0`：所有 operational 查表都发生在纹理 commit 之后并返回非 null；没有“commit 前空查表”抬高 demand。
+- raw `demand` 与 operational 的差距（21,353 vs 7,317）主要来自**未进入启动队列**的 index 路径查表；这些路径不受“跳过队列加载”影响，不应算作 operational demand。
+- raw 的时间演化（p1）：3 → 298 → 8,682 → **14,831（菜单前）** → 19,283 → 21,350；fix 轮 raw 序列同型（p4/p5 菜单前 14,834/14,831，会话末 21,353/21,418）。raw 数字仅作对照。
 
 ### 3.4 菜单对照与偏差
 
@@ -149,6 +175,8 @@ demand 的时间演化（p1 的 10 s summary 序列，p2/p3 同型）：队列�
 - **补充 1+1（c3 vs p3）**：64.6 vs 65.6，差 **+1.0 s**。
 - **全部 warm 轮（c2,c3 vs p2,p3）**：control 中位 64.15 s，probe 中位 65.1 s，差 **+0.95 s**。
 - 绝对菜单时间 63.7–83.6 s，高于计划预期的 48–50 s（M3 基线 48.1 s）。可归因于环境/内容漂移：scripts cache key 从旧 `520b…` 变为 `7ee9…`（mod 脚本集变化）、file index 有待处理的 `__pycache__` 变更、运行期 CPU 负载约 65%（msedgewebview2 / cloudmusic / Steam++ 等后台）。跨 boot 只做同 boot 交错对照。
+- **fix 轮（p4/p5）**：只跑 probe，未跑 control A/B（协调者指示；fix 只改测量，不改变 G3 结论）；两轮均 warm，menu **71.6 / 69.2 s**，仍高于 M3 基线（原因同上）。
+- **日志归档（Finding 4）**：原始 6 轮累计日志归档为 `build/m25/logs/260-starsector-pre-p4.log`（6 个 FR 会话，0 `Failed to load texture` / 0 `VerifyError` / 0 `ClassFormatError`）；fix 轮各有单会话归档 `260-starsector-p4.log` / `260-starsector-p5.log`；Base 为 `base-starsector-fix.log`。逐轮计数见 fix 报告。
 - Escape hatch 记录：
   1. **`LazyTransformTest` 改用 ASM core API**：`build/agent/lib/asm-9.1.jar` 只有 `org/objectweb/asm` + `signature`，**不含 `org.objectweb.asm.tree`**（全仓库与游戏 jar 均无 asm-tree）。原 brief 测试的 tree 代码无法编译；改写为等价的 `ClassReader`+`ClassVisitor`+`MethodVisitor` 断言，5 个测试语义不变（通过）。
   2. **补充 1+1**：按 brief 的 G3 条款，在 2+2 中位差 >1.5 s 且确认 c1 冷轮漂移后补跑 c3/p3。
@@ -162,27 +190,35 @@ demand 的时间演化（p1 的 10 s summary 序列，p2/p3 同型）：队列�
 ### 4.1 逐条
 
 - **G1 接线（必须）— PASS**
-  - Base 与 260mods 的 probe 会话均有 `queue lambda hook added`、`repository lookup hook added`、`lambda wired`；`summary.queue > 0`。
-  - `starsector.log` 无 `VerifyError`/`ClassFormatError`；Base 12.5 s、260mods 63.7–67.6 s 均到主菜单。
-- **G2 结构（必须）— FAIL**
+  - Base（原 12.5 s 轮 + fix 10.0 s 轮）与 260mods（p1/p2/p3 + fix p4/p5）的 probe 会话均有 `queue lambda hook added`、`repository lookup hook added`、`lambda wired`；`summary.queue > 0`；fix 轮 `degraded=0`、`agent_errors=0`。
+  - `starsector.log` 无 `VerifyError`/`ClassFormatError`；所有轮次均到主菜单（Base 10.0–12.5 s；260mods 63.7–83.6 s）。
+- **G2 结构（必须）— 按门禁字面 FAIL；按审查修正的 operational 口径 PASS（翻转）**
   - `skip_fraction = 0.870 ≥ 0.50`（预期 ~0.90）PASS。
-  - `demand = 21,352`（p1；p2/p3 为 21,353/21,354）**> 0.20 × 73,446 = 14,689.2** → FAIL。按门禁定义“菜单/加载期确实需要大量非 L1 纹理，按需补加载会把收益吃回去”。
+  - **字面（raw）**：`demand = 21,353 / 21,418`（fix 轮会话末）> `0.20 × 73,446 = 14,689.2` → 字面 FAIL。raw 口径对全 index 计数、取最后 summary（含菜单后），不是 operational demand。
+  - **operational（审查修正）**：`demandQueued / wouldSkip`，阈值 `0.20 × 45,785 = 9,157`。
+    - 菜单前：801/45,785 = **1.75%**（p4）、798/45,785 = **1.74%**（p5）→ PASS。
+    - 会话末：7,317/45,785 = **15.98%**（p4）、7,382/45,785 = **16.12%**（p5）→ PASS（仍 < 9,157）。
+    - `hits == demandQueued`，`misses = 0`；operational 查表全部在 commit 后返回非 null。
   - `wouldSkip` 结构与 manifest 相符：queue 52,604，wouldSkip 45,785，并非“只看到部分队列”。
-  - 补充：菜单锚点前的 demand 约 14,831，也略高于 14,689；菜单后约 6.5k 的增量属于停留/菜单背景期。该拆分只作诊断，不改变 `m25_probe.py` 的官方口径（最后一条 summary）。
+  - 结论：**字面 NO-GO；operational 口径翻转 PASS**；最终 GO/NO-GO 呈 controller/用户裁决。撤回旧版本“超阈值约 45% / 收益结构不成立”的表述。
 - **G3 中立性（必须）— PASS（warm 对照）**
   - 协议 2+2 的 −7.55 s 由 c1 冷轮解释；warm 补充 1+1 差 +1.0 s；全部 warm 轮差 +0.95 s，均 ≤1.5 s。
 - **G4 正确性（必须）— PASS**
-  - 6 个 260mods 会话（c1/p1/c2/p2/c3/p3）的 `starsector.log`：0 `VerifyError`/`ClassFormatError`、0 `Failed to load texture`；agent 日志 0 ERROR。
-  - Base：0 `VerifyError`/`ClassFormatError`、0 `Failed to load texture`，菜单正常。
+  - 原始 6 轮（c1/p1/c2/p2/c3/p3）的累计日志已归档为 `build/m25/logs/260-starsector-pre-p4.log`：6 个 FR 会话，每会话 0 `Failed to load texture` / 0 `VerifyError` / 0 `ClassFormatError`；agent 日志 0 ERROR。
+  - fix 轮 p4/p5 各有单会话归档：`260-starsector-p4.log`、`260-starsector-p5.log`，均 0/0/0；agent 快照 `260-agent-p4.log` / `260-agent-p5.log` 均 0 ERROR、`degraded=0`。
+  - Base：`base-starsector-fix.log` 0/0/0，`base-agent-fix.log` 0 ERROR；菜单正常（10.0 s）。
+  - 可复核 artifacts 均在 `build/m25/logs/`。
 
 ### 4.2 裁决建议
 
-**按门禁：NO-GO（收益结构不成立）**，G2 的 demand 超阈值约 45%。G1/G3/G4 的通过只说明“钩子可用且探针中立”，不能抵消 G2。Task 2+ 不应派发。
-
-边界说明（供 controller/用户裁决，不自行扩大范围）：
-
-- demand 的口径是“distinct skip-set lookups”，**不区分查表时纹理是否已 commit、也不区分查表是否返回非 null**。当前实现下许多 `new Sprite(id)` 在 commit 前查表会得到 null（A10：之后注册不会自动恢复已构造的 Sprite）。因此 21,352 可能高估“必须按需补加载”的数量；菜单前 14,831 也仅比阈值高 142（0.2% × index）。
-- 若用户希望继续，建议先做一个**只读的细化探针**（不改生产路径）：在 wrapper 里记录“查表返回非 null”的 distinct skip-set 路径数，并按 10 s 窗口输出，以区分“真正被消费”的纹理与“早于 commit 的空查表”。这属于范围扩展，需用户裁决；本 Task 1 不自行修改口径。
+- **字面门禁**：G2 raw demand（21,353/21,418 > 14,689.2）仍为 NO-GO；这是计划原文的写法，本次不修改 GO 标准。
+- **operational 口径**（审查 Finding 1 的修正，分母 wouldSkip，阈值 9,157）：菜单前 798–801（1.74–1.75%），会话末 7,317–7,382（15.98–16.12%）→ **PASS**。G2 在 operational 口径下**翻转**。
+- **建议**：不自行裁决 GO/NO-GO。证据已从“收益结构不成立”修正为“按字面 NO-GO、按 operational PASS 的边界”；是否派发 Task 2+ 由 controller/用户裁决。裁决前不实现生产跳过/代理。
+- 仍需注意的边界：
+  - 分母选择：operational 用 wouldSkip（审查建议）而非 index；若改用 index 分母，菜单前 801/73,446 = 1.09%，会话末 7,317/73,446 = 9.96%，同样低于 20%。
+  - 菜单锚点是“log 创建时间 + 菜单行相对毫秒”的估算（与 smoke `menu_s` 差 <0.5 s）；Base 没有严格菜单前 tick，用 +0.7 s 的首条作上界。
+  - 菜单后 operational demand 仍会增长到 7.3k（15.98–16.12% of wouldSkip）；若生产实现把按需加载全部放在主线程，菜单停留期可能变卡，Task 2 需异步/占位。
+  - 本轮未跑 control A/B（协调者指示；fix 只改测量，G3 结论不受影响）；Task 4 仍需按原 A/B 方案验证。
 
 ### 4.3 若转其它方向（限制与候选）
 
@@ -192,7 +228,7 @@ demand 的时间演化（p1 的 10 s summary 序列，p2/p3 同型）：队列�
 
 ---
 
-## 5. Task 2–5 草案（仅在 GO 后写 addendum；当前 NO-GO，不执行）
+## 5. Task 2–5 草案（仅在 GO 后写 addendum；当前按字面 NO-GO / operational PASS，待 controller 裁决，不执行）
 
 > 以下只列验收与边界，完整代码在 `docs/superpowers/plans/2026-11-01-m25-lazy-textures-addendum.md`（GO 后才写；addendum 优先）。
 
@@ -210,7 +246,7 @@ demand 的时间演化（p1 的 10 s summary 序列，p2/p3 同型）：队列�
 ### Task 4：A/B + VRAM + 正确性
 
 - 范围：同 boot warm 交错 control/probe 2+2（必要时补 1+1）；记录 menu_s、`loadTextureAsync` 次数、VRAM（FR/驱动计数）、失败纹理与异常。
-- 验收：warm 中位差 ≤1.5 s；VRAM 降幅与 skip 比例同量级；Base 运行期 mod 正确性（载入/战斗/存档读档）；260mods 菜单冒烟；无新增 `Failed to load texture`。
+- 验收：warm 中位差 ≤1.5 s；VRAM 降幅与 skip 比例同量级；`operational_fraction` 与本次 menu-before 基线（≈1.7%）同量级或不恶化；Base 运行期 mod 正确性（载入/战斗/存档读档）；260mods 菜单冒烟；无新增 `Failed to load texture`。
 - 边界：冷轮/全量 file index 轮不得混入 A/B 中位数；环境漂移必须记录。
 
 ### Task 5：结果、规格、回滚、记忆、终审

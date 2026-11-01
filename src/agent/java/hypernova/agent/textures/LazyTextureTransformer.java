@@ -163,6 +163,10 @@ public final class LazyTextureTransformer implements ClassFileTransformer {
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, REPOSITORY, RENAMED_LOOKUP,
                 LOOKUP_DESC, false);
         mv.visitVarInsn(Opcodes.ASTORE, 1);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, HOOK, "probeResult",
+                "(Ljava/lang/String;Ljava/lang/Object;)V", false);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitJumpInsn(Opcodes.IFNULL, miss);
         mv.visitVarInsn(Opcodes.ALOAD, 1);

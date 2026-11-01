@@ -27,6 +27,16 @@ public final class LazyTextures {
     private static final Map<String, Long> DEMAND_FIRST = new ConcurrentHashMap<>();
     private static final AtomicBoolean WIRED = new AtomicBoolean();
     private static final AtomicBoolean SUMMARY_STARTED = new AtomicBoolean();
+    private static final AtomicBoolean DEGRADED = new AtomicBoolean();
+
+    /** Paths that were both queued and present in the skip index. */
+    private static final Set<String> QUEUED_SKIP = ConcurrentHashMap.newKeySet();
+    /** Distinct queued-skip paths looked up after they entered the queue. */
+    private static final Set<String> DEMAND_QUEUED = ConcurrentHashMap.newKeySet();
+    /** Distinct queued-skip paths whose wrapped lookup returned non-null. */
+    private static final Set<String> DEMAND_HIT = ConcurrentHashMap.newKeySet();
+    /** Distinct queued-skip paths whose wrapped lookup returned null. */
+    private static final Set<String> DEMAND_MISS = ConcurrentHashMap.newKeySet();
 
     private static volatile LazySkipIndex index;
     private static volatile Path skipFile;
@@ -93,6 +103,7 @@ public final class LazyTextures {
             }
             LazySkipIndex idx = index;
             if (idx != null && idx.contains(path)) {
+                QUEUED_SKIP.add(path);
                 long n = QUEUE_WOULD_SKIP.incrementAndGet();
                 if (n <= 20) AgentLog.info("lazy probe: would-skip " + path);
             }
@@ -116,6 +127,7 @@ public final class LazyTextures {
                         AgentLog.info("lazy probe: loadTextureAsync resolved on "
                                 + loader.getClass().getName());
                     } catch (Throwable t) {
+                        DEGRADED.set(true);
                         AgentLog.fail("lazy probe: loadTextureAsync missing; queued texture skipped", t);
                     } finally {
                         loadResolved = true;
@@ -197,8 +209,27 @@ public final class LazyTextures {
                 long n = DEMAND_DISTINCT.incrementAndGet();
                 if (n <= 20) AgentLog.info("lazy probe: demand " + path);
             }
+            if (QUEUED_SKIP.contains(path)) DEMAND_QUEUED.add(path);
         } catch (Throwable t) {
             AgentLog.fail("lazy probe: lookup counter failed; continuing", t);
+        }
+    }
+
+    /**
+     * Result accounting for the wrapped oOoO lookup, called after the original
+     * lookup. Only queued-skip paths are classified; a path may be counted as
+     * both a miss (before commit) and a hit (after commit).
+     */
+    public static void probeResult(String path, Object value) {
+        try {
+            if (path == null || !QUEUED_SKIP.contains(path)) return;
+            if (value != null) {
+                DEMAND_HIT.add(path);
+            } else {
+                DEMAND_MISS.add(path);
+            }
+        } catch (Throwable t) {
+            AgentLog.fail("lazy probe: result counter failed; continuing", t);
         }
     }
 
@@ -226,7 +257,12 @@ public final class LazyTextures {
                     + " lookups=" + LOOKUP_TOTAL.get()
                     + " demand=" + DEMAND_DISTINCT.get()
                     + " index=" + (idx == null ? "none" : idx.size())
-                    + " types=" + types());
+                    + " types=" + types()
+                    + " queuedSkip=" + QUEUED_SKIP.size()
+                    + " demandQueued=" + DEMAND_QUEUED.size()
+                    + " hits=" + DEMAND_HIT.size()
+                    + " misses=" + DEMAND_MISS.size()
+                    + " degraded=" + (DEGRADED.get() ? 1 : 0));
         } catch (Throwable t) {
             AgentLog.fail("lazy probe: summary failed", t);
         }
