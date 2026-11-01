@@ -31,12 +31,14 @@
 5. **Selftest 走通 materialize → evict → re-materialize**：修后默认预算（`build/m26/selftest-fix.json`）
    `selftest=1`、`evicted=1`、`rematerialized=1`、`placeholder=15165`、`evictPasses=0`（默认 256 MB
    预算无压力，符合预期）、`ddsHit=24`、`ddsFallback=2`、0 错误；budget=1 smoke（`fix-auto.json`）另见
-   §5：`evictPasses=69`、`evicted=455`、`rematerialized=447`。selftest 只淘汰 1 条不可见纹理，
-   **不等价于战斗/A→B 验收**。
+   §5：最后 10 s summary `evictPasses=69`（退出时 ≥136）、`evicted=455`、`rematerialized=447`。
+   selftest 只淘汰 1 条不可见纹理，**不等价于战斗/A→B 验收**。
 6. **LRU 默认 off；自动 trigger 已在真实进程证明**：`fix-auto.json`（budget=1、grace=0、
-   sceneDelay=100 ms、selftest=1）得到 `evictPasses=69`、`evicted=455`、`rematerialized=447`、
-   `selftest=1`、`placeholder=15165`、0 错误；菜单 A/B（eviction off）`evicted=0/evictPasses=0` 仍是
-   预期。自动 `evictPass` 调度（I-1）已证明；**真实自动 victim（战斗/长会话）仍需用户验收**。
+   sceneDelay=100 ms、selftest=1）最后一条 10 s summary 快照为 `evictPasses=69`（agent log 共
+   135 条 `eviction pass`，最后快照后另有 67 条，退出时 **≥136**；forced exit 无 shutdown
+   summary）、`evicted=455`、`rematerialized=447`、`selftest=1`、`placeholder=15165`、0 错误
+   （`starsector.log` 会话切片扫描见 §6）；菜单 A/B（eviction off）`evicted=0/evictPasses=0` 仍是预期。
+   自动 `evictPass` 调度（I-1）已证明；**真实自动 victim（战斗/长会话）仍需用户验收**。
 7. **Base gate 通过（Task 4；Task 2 未重跑）**：all gates true；`skipped=proxies=2,330`、`ddsHit=21`、
    `failed=0`、`disabled=0`；进程 GPU dedicated 451.6 vs 274.4 MB；菜单 8.5 vs 6.5 s；0 错误。
 8. **默认 off / 回滚不变**：`textures.lazy.enabled=false`、`textures.lazy.eviction.enabled=false`；
@@ -213,14 +215,19 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
   `placeholder=15165`、`ddsHit=24`、`ddsFallback=2`、`failed=disabled=dimMismatch=0`；C/T 菜单
   66.1/68.1 s；两侧 0 Failed/Verify/Class/Async/Corrupted；gates 全 true。
 - `build/m26/fix-auto.json`（budget=1、grace=0、sceneDelay=100 ms、selftest=1，单轮 smoke）：
-  `evictPasses=69`、`evicted=455`、`evictedBytes=25,666,296`、`rematerialized=447`、
+  最后一条 10 s summary 快照 `evictPasses=69`；agent log 共 **135 条** `lazy: eviction pass`
+  日志，最后快照后另有 67 条，因此 forced exit 时 `EVICT_PASSES` **≥136**（无 shutdown summary，
+  不能读最终精确值）。`evicted=455`、`evictedBytes=25,666,296`、`rematerialized=447`、
   `materialized=545`、`ddsHit=342`、`ddsFallback=138`、`placeholder=15165`、`selftest=1`、
-  `failed=disabled=dimMismatch=0`，0 Failed/Verify/Class/Async/Corrupted。菜单 73.6 s 是低 free
-  内存（2,962 MB）下的单次 smoke，不作时间口径。**自动 `evictPass` 触发已证明**（agent log：
-  `lazy: eviction pass evicted=14 ... budget=1048576` 等 69 次）。
-- 观察项：budget=1 时 `ddsFallback=138`（平时为 2），说明淘汰后的重新物化有一部分走了 PNG 回退；
-  不影响失败门禁，但会削弱淘汰后的 DDS 内存收益；具体原因未诊断（可能为 FR DDS TextureData
-  不可重取），留给 default-on 验收。
+  `failed=disabled=dimMismatch=0`，0 Failed/Verify/Class/Async/Corrupted（会话切片扫描见 §6）。
+  菜单 73.6 s 是低 free 内存（2,962 MB）下的单次 smoke，不作时间口径。**自动 `evictPass`
+  触发已证明**（首条 `lazy: eviction pass evicted=14 ... budget=1048576` 在 17:03:46）。
+- **压力 vs 默认**：默认预算 selftest **不产生淘汰压力**（`evictPasses=0`，仅 selftest 强制
+  1 次 evict/re-materialize）；budget=1 是**压力门禁**，短时 455 evicted / 447 rematerialized 的
+  churn 只用于证明自动 trigger，不代表生产配置行为。
+- 观察项：budget=1 时 `ddsFallback=138`（平时为 2）是 545 次物化（含大量重复物化）中的
+  非 DDS/PNG 回退混合计数（normal/UI/未烘焙等），**不能证明是淘汰缺陷**；具体构成未诊断，
+  列为观察项（详见 §7.12）。
 
 修前（Task 4）：
 
@@ -264,9 +271,13 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
   `Failed to load texture` / 0 `VerifyError` / 0 `ClassFormatError` / 0 `AsyncException` /
   0 `isStateCorrupted`。错误计数来自聚合 JSON（`ab-result.json` / `selftest.json` / `base-ab.json`）与
   live agent log；selftest 的归档日志被后续 run 覆盖（§7.10），不能作为独立切片复核。
-- Task 2 修后另有 **9 个会话**（fix-auto 1 + selftest-fix 2 + ab-fix 6），同样每会话 0
+- Task 2 修后另有 **9 个会话**（fix-auto 1 + selftest-fix 2 + ab-fix 6）。fix-auto 的
+  `starsector.log` 会话切片已补扫并落盘：`build/m26/fix-auto-session.log`（第 16 个
+  `Fast Rendering` anchor，menu anchor 73,100 ms，2,128,915 B，sha256
+  `31a170dc7b4acb32aca3bc2576ebaff4228a1e8d94aef8e7a4553c46b184eff6`），0
   `Failed to load texture` / 0 `VerifyError` / 0 `ClassFormatError` / 0 `AsyncException` /
-  0 `isStateCorrupted`（`fix-auto.json` / `selftest-fix.json` / `ab-fix.json` 归档切片）。
+  0 `isStateCorrupted`；其余 8 个会话的错误计数来自 `selftest-fix.json` / `ab-fix.json`
+  归档切片。9/9 均按切片验证 0 错误。
 - agent：260mods `failed=0`、`disabled=0`、`pending=0`、`drained=45,784`；Base `failed=0`、`disabled=0`、
   `drained=2,330`；两侧 `dimMismatch=0`、`lateRegistered=lateLoaded=0`、`deferredDeletes=0`。
 - Live 日志确认 bridge 形状：`lazy: GL delete bridge resolved on com.genir.renderer.bridge.opengl.GL11`；
@@ -305,7 +316,8 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
    `isCombatState`；`evictPass` 结束按 `nextDueAfterPass` 重 arm（部分 pass 继续，空 pass 30 s
    backoff）；`noteMaterialized` 在 due==0 且 live>budget 时预算 arm。**真实进程证据**
    （`build/m26/fix-auto.json` + agent log，budget=1/grace=0/sceneDelay=100 ms）：
-   `evictPasses=69`、`evicted=455`、`rematerialized=447`、`selftest=1`、`placeholder=15165`、
+   最后一条 10 s summary 快照 `evictPasses=69`、agent log 135 条 pass（最后快照后 67 条，
+   退出时 ≥136）、`evicted=455`、`rematerialized=447`、`selftest=1`、`placeholder=15165`、
    `failed=disabled=dimMismatch=0`、0 Failed/Verify/Class/Async/Corrupted。自动 trigger 已证明；
    战斗/长会话中的真实自动 victim 选择、stutter、长会话净 VRAM 仍需用户验收（selftest 仍直接调
    `evictOne`、不增加 `evictPasses`）。
@@ -323,8 +335,10 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
 11. **工具门禁缺口**：缺 `starsector.log` 时 `archive_round` 返回全零，`no_texture_errors` 可空过（不是
     fail-closed）；`--no-dds` 因无条件要求 `ddsHit>0` 永远无法 exit 0；单轮 `TimeoutExpired` 会中止整个
     A/B 且不落聚合 JSON（Minor，留给 final review triage）。
-12. **`ddsFallback=2` 是常量且静默**：分支（缺 DDS 元数据/桥接 miss）不逐条记日志，原因未诊断；按设计
-    回退 PNG，不是失败，但属于盲区。
+12. **`ddsFallback` 常态 2、budget=1 压力下 138**：该计数是“DDS 物化未走通 → PNG 回退”的混合
+    计数（normal/UI/未烘焙、缺 DDS 元数据/桥接 miss 等），不逐条记日志，原因未诊断；138 出现在
+    545 次物化（含大量重复物化）的压力场景，**不能证明是淘汰缺陷**。按设计回退 PNG，不是失败，
+    但属于盲区。
 13. **版本耦合**：FR 0.9.7rc2 内部形状（`DDSIntegration` / `TextureData` / private 实例
     `newVanillaTextureHandler` / GL11 bridge）；FR 升级需重新 javap/shape gate。fail-open 路径有单元测试和
     代码审查，但只在 rc2 运行时实际跑过。
@@ -333,13 +347,15 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
     触发），但战斗/读档下的触发时机未测。
 15. **default-on gates（默认开启 / 对外“可选显存优化”声明前必须修）**：**I-1（自动 `evictPass`
     调度）与 I-2（owned-only）已在 `35fc768` + `01cf3e1` 修复**，budget=1 真实进程 smoke 已见
-    `evictPasses=69`（§5/§7.7）。仍余：refcount/REQ-R1-10（“仍被引用则拒绝并记录”）、第三方按 id
-    缓存、M2.5 W5/W6（发行包 manifest/skip 与 agent jar 新鲜度）、W-2/W-3/W-5/W-10（GL context
-    重建后的占位、第三方 id 持有者、pick→evict TOCTOU、失败物化 id=0），以及用户完成战斗/读档/
-    分辨率/手动目检、A→B 长会话净 VRAM、>200 ms 卡顿（M-4 安装可复现已由 `install-manifest.sh`
-    的 blank 断言 + §8.3 命令记录覆盖）。在这些项关闭前，不得声称 bounded LRU 已在
-    真实会话自动工作（自动 trigger 已证明，真实自动 victim/长会话未验收），也不得对外称“可选显存
-    优化”。
+    自动 pass（最后 10 s summary 快照 `evictPasses=69`，退出时 ≥136；§5/§7.7）。仍余：
+    refcount/REQ-R1-10（“仍被引用则拒绝并记录”）、第三方按 id 缓存、**预算口径**（`liveBytes`
+    含 startup 物化字节，这些字节被 `markStartup` 永久排除，可能造成预算不可达/空 pass）与
+    **空 pass 30 s backoff** 的真实会话行为、M2.5 W5/W6（发行包 manifest/skip 与 agent jar
+    新鲜度）、W-2/W-3/W-5/W-10（GL context 重建后的占位、第三方 id 持有者、pick→evict TOCTOU、
+    失败物化 id=0），以及用户完成战斗/读档/分辨率/手动目检、A→B 长会话净 VRAM、>200 ms 卡顿
+    （M-4 安装可复现已由 `install-manifest.sh` 的 blank 断言 + §8.3 命令记录覆盖）。在这些项
+    关闭前，不得声称 bounded LRU 已在真实会话自动工作（自动 trigger 已证明，真实自动 victim/
+    长会话未验收），也不得对外称“可选显存优化”。
 
 ---
 
@@ -375,9 +391,11 @@ skip v1/v2 可以保留；关闭后不读取、不跳过、不注册代理，行
 - **Task 2（修后重装，2026-11-02）**：`run-agent-tests.sh` → `build-mod.sh` → 两侧
   `install_manifest.py --game-root <game>` → 两侧 `install_agent.py --game <game> --env <260mods-lite|base>`
   → `cp -r graphics/. <mod>/graphics/` 与 `cp graphics/hypernova/blank.png
-  <game>/starsector-core/graphics/hypernova/`。随后校验：两侧 `hypernova.agent.jar` 与
+  <game>/starsector-core/graphics/hypernova/`。安装时校验：两侧 `hypernova.agent.jar` 与当次
   `build/agent/hypernova.agent.jar` `cmp` 一致；manifest/skip 非空；两侧 core `blank.png` 非空；
-  两次 `install_agent.py` 均报 `no vmparams change`（仅刷新 jar）。
+  两次 `install_agent.py` 均报 `no vmparams change`（仅刷新 jar）。Step 6 再次
+  `run-agent-tests.sh` 重建 jar 后 zip 时间戳变化，但 class entry 的 CRC/大小与安装件完全一致
+  （内容相同；sha256 会因 zip 时间戳不同而不同，不能用于跨构建比较）。
 
 ### 8.4 文件与证据
 
@@ -389,7 +407,8 @@ skip v1/v2 可以保留；关闭后不读取、不跳过、不注册代理，行
   0 fail；Task 2 fix 后 172 found / 171 pass / 1 known symlink abort / 0 fail；pytest 287 passed）。
 - 运行证据（`build/` 不入库）：`build/m26/ab-result.json`、`ab-result-prefix.json`、`selftest.json`、
   `base-ab.json`、`logs/`、`logs-base/`、`probe/`、`ab-run2.log`、`selftest-run.log`、`base-run.log`；
-  修后证据：`build/m26/fix-auto.json`、`selftest-fix.json`、`ab-fix.json`、`ab-fix-run.log`。
+  修后证据：`build/m26/fix-auto.json`、`fix-auto-session.log`（starsector.log 会话切片）、
+  `selftest-fix.json`、`ab-fix.json`、`ab-fix-run.log`。
 
 ### 8.5 commits
 
