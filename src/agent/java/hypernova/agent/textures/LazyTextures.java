@@ -52,6 +52,11 @@ public final class LazyTextures {
     private static final AtomicLong DIM_MISMATCH = new AtomicLong();
     private static final AtomicLong LATE_REGISTERED = new AtomicLong();
     private static final AtomicLong LATE_LOADED = new AtomicLong();
+    private static volatile boolean dds;
+    private static final AtomicLong DDS_HIT = new AtomicLong();
+    private static final AtomicLong DDS_FALLBACK = new AtomicLong();
+    private static final AtomicLong DDS_DISABLED = new AtomicLong();
+    private static final AtomicLong DDS_DIM_MISMATCH = new AtomicLong();
     private static final AtomicBoolean LOAD_ASYNC_FAILED = new AtomicBoolean();
     private static final Map<String, ProxyEntry> PROXIES = new ConcurrentHashMap<>();
     private static final Map<Object, ProxyEntry> PROXY_BY_OBJ = new ConcurrentHashMap<>();
@@ -107,6 +112,7 @@ public final class LazyTextures {
         enabled = config.enabled();
         probe = config.probe();
         if (!enabled && !probe) return;
+        dds = config.dds();
         skipFile = config.skipFile();
         manifestFile = config.manifestFile();
         Thread loader = new Thread(LazyTextures::loadIndex, "Hypernova-Lazy-Index");
@@ -257,6 +263,10 @@ public final class LazyTextures {
         FAILING_OPEN.set(false);
         loadAsyncMethod = null;
         DEGRADED.set(false);
+        DDS_HIT.set(0);
+        DDS_FALLBACK.set(0);
+        DDS_DISABLED.set(0);
+        DDS_DIM_MISMATCH.set(0);
     }
 
     // ---- wiring armed flags (set by the transformers when a hook is applied) ----
@@ -627,28 +637,10 @@ public final class LazyTextures {
             if (e.ready || e.failed) return;
             long t0 = System.nanoTime();
             try {
-                Object real = syncLoad(e.path);
-                ProxyShape shape = proxyShape;
-                if (shape == null) throw new IllegalStateException("proxy shape unavailable");
-                int realW = shape.imageWidth(real);
-                int realH = shape.imageHeight(real);
-                if (!dimensionsMatch(realW, realH, e.w, e.h)) {
-                    onDimMismatch(e, realW, realH, "materialize");
+                if (dds && materializeDds(e)) {
+                    return;
                 }
-                shape.copy(real, e.obj);
-                e.ready = true;
-                e.glId = shape.glId(real);
-                e.owned = false;
-                e.bytes = 4L * e.w * e.h;
-                e.dds = false;
-                touch(e);
-                putPathCache(e.path, e.obj);
-                long ms = (System.nanoTime() - t0) / 1_000_000L;
-                long n = LAZY_MATERIALIZED.incrementAndGet();
-                if (n <= 20 || ms >= 50) {
-                    AgentLog.info("lazy: materialized " + e.path + " " + e.w + "x" + e.h
-                            + " in " + ms + " ms");
-                }
+                materializePng(e, t0);
             } catch (Throwable t) {
                 long attempts = e.attempts.incrementAndGet();
                 if (attempts >= 2) e.failed = true;
@@ -657,6 +649,129 @@ public final class LazyTextures {
                         + " (attempt " + attempts + ")", t);
             }
         }
+    }
+
+    private static void materializePng(ProxyEntry e, long t0) throws Throwable {
+        Object real = syncLoad(e.path);
+        ProxyShape shape = proxyShape;
+        if (shape == null) throw new IllegalStateException("proxy shape unavailable");
+        int realW = shape.imageWidth(real);
+        int realH = shape.imageHeight(real);
+        if (!dimensionsMatch(realW, realH, e.w, e.h)) {
+            onDimMismatch(e, realW, realH, "materialize");
+        }
+        shape.copy(real, e.obj);
+        e.ready = true;
+        e.glId = shape.glId(real);
+        e.owned = false;
+        e.bytes = 4L * e.w * e.h;
+        e.dds = false;
+        touch(e);
+        putPathCache(e.path, e.obj);
+        long ms = (System.nanoTime() - t0) / 1_000_000L;
+        long n = LAZY_MATERIALIZED.incrementAndGet();
+        if (n <= 20 || ms >= 50) {
+            AgentLog.info("lazy: materialized " + e.path + " " + e.w + "x" + e.h
+                    + " in " + ms + " ms");
+        }
+    }
+
+    private static boolean materializeDds(ProxyEntry e) {
+        LazySkipIndex.Entry meta = index == null ? null : index.get(e.path);
+        if (meta == null || meta.absPath() == null || meta.ddsPath() == null) {
+            DDS_FALLBACK.incrementAndGet();
+            return false;
+        }
+        if (!DdsBridge.available()) {
+            DDS_DISABLED.incrementAndGet();
+            return false;
+        }
+        DdsBridge.Data data = DdsBridge.get(Path.of(meta.absPath()));
+        if (data == null) {
+            DDS_FALLBACK.incrementAndGet();
+            return false;
+        }
+        if (!dimensionsMatch(data.imageWidth(), data.imageHeight(), e.w, e.h)) {
+            DDS_DIM_MISMATCH.incrementAndGet();
+            onDimMismatch(e, data.imageWidth(), data.imageHeight(), "dds metadata");
+            return false;
+        }
+        DdsCheck.Result check = DdsCheck.check(data.ddsPath(), e.w, e.h);
+        if (!check.ok()) {
+            long n = DDS_FALLBACK.incrementAndGet();
+            if (n <= 20) {
+                AgentLog.info("lazy: dds fallback " + e.path + " (" + check.reason() + ")");
+            }
+            return false;
+        }
+        int id = DdsBridge.commit(data.texData());
+        if (id <= 0) {
+            DDS_FALLBACK.incrementAndGet();
+            return false;
+        }
+        Object real;
+        try {
+            real = DdsBridge.newHandler(loaderSingleton, e.path, data.texData(), id);
+        } catch (Throwable t) {
+            GlBridge.deleteTexture(id);
+            long n = DDS_FALLBACK.incrementAndGet();
+            if (n <= 20) AgentLog.fail("lazy: dds handler failed for " + e.path, t);
+            return false;
+        }
+        if (real == null) {
+            GlBridge.deleteTexture(id);
+            DDS_FALLBACK.incrementAndGet();
+            return false;
+        }
+        ProxyShape shape = proxyShape;
+        if (shape == null) {
+            GlBridge.deleteTexture(id);
+            DDS_FALLBACK.incrementAndGet();
+            return false;
+        }
+        int realW;
+        int realH;
+        try {
+            realW = shape.imageWidth(real);
+            realH = shape.imageHeight(real);
+        } catch (Throwable t) {
+            GlBridge.deleteTexture(id);
+            DDS_FALLBACK.incrementAndGet();
+            AgentLog.fail("lazy: dds handler shape failed for " + e.path, t);
+            return false;
+        }
+        if (!dimensionsMatch(realW, realH, e.w, e.h)) {
+            DDS_DIM_MISMATCH.incrementAndGet();
+            onDimMismatch(e, realW, realH, "dds handler");
+        }
+        try {
+            shape.copy(real, e.obj);
+        } catch (Throwable t) {
+            GlBridge.deleteTexture(id);
+            DDS_FALLBACK.incrementAndGet();
+            AgentLog.fail("lazy: dds handler copy failed for " + e.path, t);
+            return false;
+        }
+        e.ready = true;
+        e.dds = true;
+        e.glId = id;
+        e.owned = true;
+        e.bytes = ddsBytes(data.width(), data.height());
+        touch(e);
+        putPathCache(e.path, e.obj);
+        long n = DDS_HIT.incrementAndGet();
+        LAZY_MATERIALIZED.incrementAndGet();
+        if (n <= 20) {
+            AgentLog.info("lazy: dds materialized " + e.path + " " + e.w + "x" + e.h
+                    + " id=" + id + " bytes=" + e.bytes);
+        }
+        return true;
+    }
+
+    static long ddsBytes(int w, int h) {
+        // BC7 is 1 byte/pixel for level 0; the DDS may carry mips, but this is a
+        // conservative LRU accounting estimate, not a VRAM measurement.
+        return Math.max(0L, (long) w * h);
     }
 
     private static Object syncLoad(String path) throws Throwable {
@@ -1069,7 +1184,12 @@ public final class LazyTextures {
                     + " loading=" + (lt == null ? "none" : lt.getName())
                     + " lateRegistered=" + LATE_REGISTERED.get()
                     + " lateLoaded=" + LATE_LOADED.get()
-                    + " dimMismatch=" + DIM_MISMATCH.get());
+                    + " dimMismatch=" + DIM_MISMATCH.get()
+                    + " dds=" + (dds ? 1 : 0)
+                    + " ddsHit=" + DDS_HIT.get()
+                    + " ddsFallback=" + DDS_FALLBACK.get()
+                    + " ddsDisabled=" + (dds && !DdsBridge.available() ? 1 : 0)
+                    + " ddsDimMismatch=" + DDS_DIM_MISMATCH.get());
         } catch (Throwable t) {
             AgentLog.fail("lazy probe: summary failed", t);
         }
