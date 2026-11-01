@@ -1,4 +1,6 @@
+import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -74,11 +76,74 @@ def test_install_writes_lazy_skip_file(mini_game):
     assert result.skip_file == result.out.parent / "lazy-skip-v1.txt"
     assert result.skip_file.is_file()
     lines = result.skip_file.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == result.skip_count
-    assert all(len(line.split("\t")) == 3 for line in lines)
+    header = [line for line in lines if line.startswith("#")]
+    assert len(header) == 1, "skip file must carry exactly one generation header"
+    digest = hashlib.sha256(result.out.read_bytes()).hexdigest()
+    assert header[0] == f"# generation={digest}"
+    records = [line for line in lines if line and not line.startswith("#")]
+    # m9：锁住 skip 真的非空，避免 build_skip 回归为 [] 时下面的断言全部空转。
+    assert result.skip_count > 0
+    assert len(records) == result.skip_count
+    assert all(len(line.split("\t")) == 3 for line in records)
     # L1 path must not be in the skip file
     l1 = {e["path"] for e in result.runtime["layers"]["L1"]}
-    assert all(line.split("\t")[0] not in l1 for line in lines)
+    assert all(line.split("\t")[0] not in l1 for line in records)
+
+
+def test_install_skip_replace_failure_deletes_old_skip(mini_game, monkeypatch):
+    _seed_core(mini_game)
+    out = mini_game / "runtime.json"
+    first = install(mini_game, out=out)
+    skip_target = first.skip_file
+    assert skip_target.is_file()
+
+    new_runtime = {
+        "schema": "hypernova-runtime-1",
+        "layers": {"L1": [], "L2": [], "L3": []},
+    }
+    monkeypatch.setattr(install_module, "trim", lambda manifest: new_runtime)
+    real_replace = install_module.os.replace
+
+    def flaky_replace(src, dst):
+        if Path(dst) == skip_target:
+            raise OSError("simulated skip replace failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(install_module.os, "replace", flaky_replace)
+    with pytest.raises(OSError, match="simulated skip replace failure"):
+        install(mini_game, out=out)
+    # manifest 已换新；旧 skip 被删除，运行期走“skip 缺失 → lazy disabled”，
+    # 绝不留下新 manifest + 旧 skip 的跨代 pair。
+    assert json.loads(out.read_text(encoding="utf-8")) == new_runtime
+    assert not skip_target.exists()
+    assert not out.with_name(out.name + ".tmp").exists()
+    assert not skip_target.with_name(skip_target.name + ".tmp").exists()
+
+
+def test_install_skip_write_failure_keeps_old_pair(mini_game, monkeypatch):
+    _seed_core(mini_game)
+    out = mini_game / "runtime.json"
+    first = install(mini_game, out=out)
+    old_manifest = out.read_bytes()
+    old_skip = first.skip_file.read_bytes()
+
+    new_runtime = {
+        "schema": "hypernova-runtime-1",
+        "layers": {"L1": [], "L2": [], "L3": []},
+    }
+
+    def boom(*args, **kwargs):
+        raise OSError("simulated skip write failure")
+
+    monkeypatch.setattr(install_module, "trim", lambda manifest: new_runtime)
+    monkeypatch.setattr(install_module, "write_skip", boom)
+    with pytest.raises(OSError, match="simulated skip write failure"):
+        install(mini_game, out=out)
+    # skip 写入失败发生在任何 replace 之前：旧 manifest 与旧 skip 都保持不变。
+    assert out.read_bytes() == old_manifest
+    assert first.skip_file.read_bytes() == old_skip
+    assert not out.with_name(out.name + ".tmp").exists()
+    assert not first.skip_file.with_name(first.skip_file.name + ".tmp").exists()
 
 
 def test_critical_install_does_not_write_skip_file(mini_game):

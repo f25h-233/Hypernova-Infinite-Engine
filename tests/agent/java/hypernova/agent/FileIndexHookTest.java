@@ -346,7 +346,11 @@ class FileIndexHookTest {
         assertTrue(FileIndexHook.supportedFrVersion("V0.9.7RC2"));
         assertTrue(FileIndexHook.supportedFrVersion("0.9.7"));
         assertTrue(FileIndexHook.supportedFrVersion("v0.9.7"));
+        // fr.version.txt is read with its trailing newline; lazy textures reuse
+        // the same pinned gate, so the normalization must survive it.
+        assertTrue(FileIndexHook.supportedFrVersion(" 0.9.7rc2\n"));
         assertFalse(FileIndexHook.supportedFrVersion("0.9.5"));
+        assertFalse(FileIndexHook.supportedFrVersion("0.9.6"));
         assertFalse(FileIndexHook.supportedFrVersion("0.9.8"));
         assertFalse(FileIndexHook.supportedFrVersion("unknown"));
         assertFalse(FileIndexHook.supportedFrVersion(""));

@@ -36,6 +36,8 @@ python -I "$ROOT_W/tools/install_manifest.py" --game-root "$BASE_GAME" | tail -5
 MANIFEST_INSTALLED="$BASE_GAME/mods/hypernova_infinite_engine/data/config/hypernova/manifest-v1.json"
 SKIP_INSTALLED="$BASE_GAME/mods/hypernova_infinite_engine/data/config/hypernova/lazy-skip-v1.txt"
 MANIFEST_DIST="$ROOT/dist/manifest-v1.json"
+# dist/ 被 .gitignore 忽略，干净 checkout 下不存在；先建目录再复制。
+mkdir -p "$ROOT/dist"
 cp "$MANIFEST_INSTALLED" "$MANIFEST_DIST"
 cp "$MANIFEST_INSTALLED" "$OUT/hypernova-manifest-v1.json"
 

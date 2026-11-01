@@ -42,6 +42,11 @@ public final class HypernovaAgent {
                 if (lazy.enabled() || lazy.probe()) {
                     if (!frPresent()) {
                         AgentLog.info("lazy: FR missing; lazy textures disabled");
+                    } else if (!FileIndexHook.supportedFrVersion()) {
+                        // 注入的 lambda/thread 语义按 0.9.7rc2 复刻；其它 FR 版本
+                        // 只靠 shape gate 不足以保证线程语义（REQ-R2-04）。
+                        AgentLog.info("lazy: unsupported FR version "
+                                + FileIndexHook.frVersion() + "; lazy textures disabled");
                     } else {
                         instrumentation.addTransformer(new LazyTextureTransformer(), false);
                         instrumentation.addTransformer(new LazyGameThreadTransformer(), false);

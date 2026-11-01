@@ -49,7 +49,7 @@ skip 文件：260mods 73,446 行 / 4,427,771 B；Base 3,112 行 / 146,563 B；`s
 | captures | 1（TitleScreenState） | 1（TitleScreenState） |
 | starsector `Failed` / `Verify` / `Class` | 0 / 0 / 0 | 0 / 0 / 0 |
 
-更早一轮 gate：Base menu 12.0 s、260mods menu 78.2 s、materialized 25 / 85；结论相同。Task 2 期间修复了 review F1（wiring gate + drain fail-open）、F2（`loadingThread` 不再缓存 null）、F4（错误路径硬 fail-open）；F3 当时只加诊断计数，Task 5 修复。内部 gate 的一次 260mods 起跑空闲内存为 11.48 GB（低于 12 GB guard，无 OOM）；后续轮次 12.36 / 12.50 GB。
+更早一轮 gate：Base menu 12.0 s、260mods menu 78.2 s、materialized 25 / 85；结论相同。Task 2 期间修复了 review F1（wiring gate + drain fail-open）、F2（`loadingThread` 不再缓存 null）、F4（错误路径硬 fail-open）；F3 当时只加诊断计数，Task 5 修复。内部 gate 的一次 260mods 起跑空闲内存为 11.48 GB（低于 12 GB guard，无 OOM）；后续轮次 12.36 / 12.50 GB 仅为报告声明（未归档，不能作为独立证据）。
 
 ### 2.3 Task 3：安装集成
 

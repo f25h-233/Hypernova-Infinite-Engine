@@ -60,14 +60,29 @@ def build_skip(manifest: dict) -> tuple[list[tuple[str, int, int]], dict]:
     return out, stats
 
 
-def write_atomic(path: Path, rows: list[tuple[str, int, int]]) -> None:
+def write_skip(path: Path, rows: list[tuple[str, int, int]],
+               header: str | None = None) -> None:
+    """Write an optional header line plus one ``<path>\\t<w>\\t<h>`` per row.
+
+    No staging: the caller owns atomicity. Multi-file installs (manifest +
+    skip) stage every file first and only then ``os.replace`` them, so this
+    helper writes straight to the path it is given.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("w", encoding="utf-8", newline="\n") as f:
+    with path.open("w", encoding="utf-8", newline="\n") as f:
+        if header is not None:
+            f.write(header.rstrip("\n") + "\n")
         for p, w, h in rows:
             f.write(f"{p}\t{w}\t{h}\n")
         f.flush()
         os.fsync(f.fileno())
+
+
+def write_atomic(path: Path, rows: list[tuple[str, int, int]],
+                 header: str | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    write_skip(tmp, rows, header)
     os.replace(tmp, path)
 
 

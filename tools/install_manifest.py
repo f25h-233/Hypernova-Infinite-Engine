@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 # `python -I` 不会把脚本目录加入 sys.path；工具内部自行补上。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gen_lazy_skip import build_skip, write_atomic  # noqa: E402
+from gen_lazy_skip import build_skip, write_skip  # noqa: E402
 from manifest_builder import build_manifest, load_tier_overrides  # noqa: E402
 from trim_manifest import trim  # noqa: E402
 from validate_manifest import Finding, validate  # noqa: E402
@@ -64,22 +65,35 @@ def install(
     if not critical:
         runtime = trim(built.manifest)
         target.parent.mkdir(parents=True, exist_ok=True)
-        # 原子写：先写同目录 sibling 临时文件，成功后再替换目标；任何异常都
-        # 删除临时文件并保留旧 manifest（这是运行时唯一的 manifest 写点）。
+        skip_target = target.parent / "lazy-skip-v1.txt"
+        # manifest 与 skip 必须同代：先把两者都算好、都写到同目录 .tmp，再按
+        # 顺序替换。任何一步失败都不能留下“新 manifest + 旧 skip”的跨代 pair
+        # （旧 skip 可能跳过新 manifest 提升为 L1 的 path，违反硬不变量）。
+        skip_rows, _skip_stats = build_skip(runtime)
         tmp = target.with_name(target.name + ".tmp")
+        skip_tmp = skip_target.with_name(skip_target.name + ".tmp")
         try:
+            # 原子写：先写同目录 sibling 临时文件，成功后再替换目标；任何异常
+            # 都删除临时文件并保留旧 manifest（这是运行时唯一的 manifest 写点）。
             with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
                 json.dump(runtime, fh, ensure_ascii=False, separators=(",", ":"))
                 fh.flush()
+            # skip 头记录它所配对的那份 manifest 的 sha256（agent 读取时跳过
+            # # 行），便于事后核对两者是不是同一代。
+            generation = hashlib.sha256(tmp.read_bytes()).hexdigest()
+            write_skip(skip_tmp, skip_rows, header=f"# generation={generation}")
             os.replace(tmp, target)
+            try:
+                os.replace(skip_tmp, skip_target)
+            except BaseException:
+                # manifest 已换新而 skip 还是旧代：删除旧 skip，让 agent 走
+                # “skip 缺失 → lazy disabled → 正常加载”，绝不留下跨代 pair。
+                skip_target.unlink(missing_ok=True)
+                raise
         except BaseException:
             tmp.unlink(missing_ok=True)
+            skip_tmp.unlink(missing_ok=True)
             raise
-        # skip 文件与运行时 manifest 同代生成：必须用裁剪后的 manifest，
-        # 且与 manifest 同目录，避免两者版本错配。
-        skip_rows, _skip_stats = build_skip(runtime)
-        skip_target = target.parent / "lazy-skip-v1.txt"
-        write_atomic(skip_target, skip_rows)
         skip_file = skip_target
         skip_count = len(skip_rows)
     return InstallResult(
