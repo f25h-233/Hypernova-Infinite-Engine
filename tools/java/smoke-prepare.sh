@@ -20,11 +20,8 @@ json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 print("startup_probe_paths = 8")
 PY
 
-echo "== 3. 安装到游戏目录 =="
-bash "$ROOT/tools/java/install-manifest.sh" "$GAME_ROOT" --env base | tail -3
-
-echo "== 3b. 恢复 M2 运行时 manifest（install-manifest.sh 装的是 M0） =="
-python -I "$ROOT/tools/install_manifest.py" --game-root "$GAME_ROOT" | tail -3
+echo "== 3. 安装到游戏目录（M2 manifest + lazy-skip） =="
+bash "$ROOT/tools/java/install-manifest.sh" "$GAME_ROOT" | tail -3
 
 echo "== 4. 清上一轮证据 =="
 mv "$GAME_ROOT/starsector-core/starsector.log" \
@@ -40,12 +37,14 @@ g = Path(sys.argv[1])
 en = json.loads((g / "mods/enabled_mods.json").read_text(encoding="utf-8"))["enabledMods"]
 assert "hypernova_infinite_engine" in en, "hypernova not enabled"
 mod = g / "mods/hypernova_infinite_engine"
-for rel in ("data/config/hypernova/manifest-v1.json", "jars/hypernova.jar",
+for rel in ("data/config/hypernova/manifest-v1.json",
+            "data/config/hypernova/lazy-skip-v1.txt",
+            "jars/hypernova.jar",
             "data/config/hypernova/hypernova.json"):
     assert (mod / rel).is_file(), f"missing {rel}"
 cfg = json.loads((mod / "data/config/hypernova/hypernova.json").read_text(encoding="utf-8"))
 assert cfg["startup_probe_paths"] == 8, f"probe not set: {cfg}"
-print(f"ok: enabled={len(en)} mods, manifest+jar+config present, probe={cfg['startup_probe_paths']}")
+print(f"ok: enabled={len(en)} mods, manifest+skip+jar+config present, probe={cfg['startup_probe_paths']}")
 PY
 
 echo

@@ -17,6 +17,7 @@ from pathlib import Path
 # `python -I` 不会把脚本目录加入 sys.path；工具内部自行补上。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from gen_lazy_skip import build_skip, write_atomic  # noqa: E402
 from manifest_builder import build_manifest, load_tier_overrides  # noqa: E402
 from trim_manifest import trim  # noqa: E402
 from validate_manifest import Finding, validate  # noqa: E402
@@ -32,6 +33,8 @@ class InstallResult:
     runtime: dict
     out: Path
     findings: list[Finding]
+    skip_file: Path | None = None
+    skip_count: int = 0
 
 
 def install(
@@ -56,6 +59,8 @@ def install(
     findings = validate(built.manifest, root, max_l1=max_l1)
     critical = any(f.severity == "Critical" for f in findings)
     runtime: dict = {}
+    skip_file: Path | None = None
+    skip_count = 0
     if not critical:
         runtime = trim(built.manifest)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -70,7 +75,21 @@ def install(
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
-    return InstallResult(built.manifest, runtime, target, findings)
+        # skip 文件与运行时 manifest 同代生成：必须用裁剪后的 manifest，
+        # 且与 manifest 同目录，避免两者版本错配。
+        skip_rows, _skip_stats = build_skip(runtime)
+        skip_target = target.parent / "lazy-skip-v1.txt"
+        write_atomic(skip_target, skip_rows)
+        skip_file = skip_target
+        skip_count = len(skip_rows)
+    return InstallResult(
+        built.manifest,
+        runtime,
+        target,
+        findings,
+        skip_file=skip_file,
+        skip_count=skip_count,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -113,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         print("FATAL: manifest not written (Critical findings)", file=sys.stderr)
         return 1
     print(f"installed: {result.out}")
+    print(f"skip={result.skip_count} skip_file={result.skip_file}")
     return 0
 
 
