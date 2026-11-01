@@ -301,4 +301,22 @@ class LazyEvictionTest {
         assertEquals(0, LazyTextures.ddsFallbackCount(
                 LazyTextures.DdsFallbackReason.META));
     }
+
+    @Test
+    void ddsFallbackTotalAndSummaryKeys() {
+        LazyTextures.resetGateStateForTest();
+        LazyTextures.noteDdsFallback(
+                LazyTextures.DdsFallbackReason.META, "graphics/a.png", null);
+        LazyTextures.noteDdsFallback(
+                LazyTextures.DdsFallbackReason.CHECK, "graphics/b.png", "dxgi 1");
+        assertEquals(2, LazyTextures.ddsFallbackTotalForTest());
+        String summary = LazyTextures.ddsFallbackSummary();
+        for (String key : List.of("ddsFbMeta=1", "ddsFbBridge=0", "ddsFbPath=0",
+                "ddsFbGet=0", "ddsFbCheck=1", "ddsFbCommit=0", "ddsFbHandler=0",
+                "ddsFbNull=0", "ddsFbShape=0", "ddsFbCopy=0")) {
+            assertTrue(summary.contains(key), key);
+        }
+        LazyTextures.resetGateStateForTest();
+        assertEquals(0, LazyTextures.ddsFallbackTotalForTest());
+    }
 }

@@ -1005,6 +1005,10 @@ public final class LazyTextures {
         return n == null ? 0 : n.get();
     }
 
+    static long ddsFallbackTotalForTest() {
+        return DDS_FALLBACK.get();
+    }
+
     /** R-M26-10: GL deletes only on the runtime main thread; off-main ids wait. */
     private static boolean deleteTextureSafe(int id) {
         if (id <= 0) return false;
@@ -1733,7 +1737,7 @@ public final class LazyTextures {
         }
     }
 
-    private static String ddsFallbackSummary() {
+    static String ddsFallbackSummary() {
         StringBuilder sb = new StringBuilder();
         for (DdsFallbackReason r : DdsFallbackReason.values()) {
             sb.append(" ddsFb").append(reasonKey(r)).append('=')
