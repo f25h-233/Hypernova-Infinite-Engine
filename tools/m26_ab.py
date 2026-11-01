@@ -71,7 +71,10 @@ def run_round(profile: str, lazy: bool, dds: bool, eviction: bool,
            "--linger", str(linger), "--json-out", str(out.resolve())]
     for arg in _flags(lazy, dds, eviction, selftest):
         cmd.append("--jvm-arg=" + arg)
-    proc = subprocess.run(cmd, check=False, cwd=str(ROOT), timeout=SMOKE_TIMEOUT_S)
+    try:
+        proc = subprocess.run(cmd, check=False, cwd=str(ROOT), timeout=SMOKE_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "reason": "timeout", "returncode": None}
     try:
         row = json.loads(out.read_text(encoding="utf-8"))[0]
     except Exception as exc:
@@ -83,15 +86,18 @@ def run_round(profile: str, lazy: bool, dds: bool, eviction: bool,
 
 
 def archive_round(profile: str, tag: str, index: int, out_dir: Path) -> dict:
-    result = {"log": None, "failed": 0, "verify": 0, "class_errors": 0,
-              "async_errors": 0, "corrupted": 0}
+    result = {"log": None, "log_present": False, "failed": 0, "verify": 0,
+              "class_errors": 0, "async_errors": 0, "corrupted": 0}
     game = ROOT / PROFILES[profile]["game"]
     log = game / "starsector-core" / "starsector.log"
     if not log.is_file():
         return result
     data = log.read_bytes()
     idx = data.rfind(SESSION_ANCHOR)
-    session = data[idx:] if idx >= 0 else data
+    if idx < 0:
+        return result
+    session = data[idx:]
+    result["log_present"] = True
     dst = out_dir / f"ab-{tag}{index}.log"
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_bytes(session)
@@ -122,6 +128,7 @@ def main(argv=None) -> int:
     ap.add_argument("--log-dir", default="build/m26/logs")
     ap.add_argument("--eviction", action="store_true")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--counterbalance", action="store_true")
     ap.add_argument("--dds", action="store_true", default=True)
     ap.add_argument("--no-dds", dest="dds", action="store_false")
     ap.add_argument("--out", required=True)
@@ -143,21 +150,35 @@ def main(argv=None) -> int:
 
     rows = []
     for i in range(1, args.rounds + 1):
-        label = f"#{i}/{args.rounds}"
-        print(f"\n[ab] {label} control", flush=True)
-        c = run_round(args.profile, False, False, False, False,
-                      Path(f"build/m26/ab-c{i}.json"), args.wait_menu, args.linger)
-        c.update(archive_round(args.profile, "c", i, log_dir))
-        print(f"[ab] {label} treatment", flush=True)
-        t = run_round(args.profile, True, args.dds, args.eviction, args.selftest,
-                      Path(f"build/m26/ab-t{i}.json"), args.wait_menu, args.linger)
-        t.update(archive_round(args.profile, "t", i, log_dir))
+        order = [("control", False), ("treatment", True)]
+        if args.counterbalance and i % 2 == 0:
+            order.reverse()
+        side_rows = {}
+        for side, treatment in order:
+            label = f"#{i}/{args.rounds} {side}"
+            print(f"\n[ab] {label}", flush=True)
+            round_dir = Path(args.out).parent
+            out_path = round_dir / (
+                f"{Path(args.out).stem}-{'t' if treatment else 'c'}{i}.json")
+            row = run_round(args.profile, treatment,
+                            args.dds if treatment else False,
+                            args.eviction if treatment else False,
+                            args.selftest if treatment else False,
+                            out_path, args.wait_menu, args.linger)
+            row.update(archive_round(args.profile,
+                                     "t" if treatment else "c", i, log_dir))
+            side_rows[side] = row
+            print(f"[ab] {label}: menu={row.get('menu_s')}s "
+                  f"err={row['failed']}/{row['verify']}/{row['class_errors']}",
+                  flush=True)
+        c = side_rows["control"]
+        t = side_rows["treatment"]
         stats = stats_from_text(agent.read_text(encoding="utf-8", errors="replace")) \
             if agent.is_file() else {}
-        rows.append({"control": c, "treatment": t, "lazy": stats})
-        print(f"[ab] {label}: control={c.get('menu_s')}s treatment={t.get('menu_s')}s "
-              f"err={c['failed']}/{c['verify']}/{c['class_errors']}|"
-              f"{t['failed']}/{t['verify']}/{t['class_errors']} lazy={stats}", flush=True)
+        rows.append({"control": c, "treatment": t, "lazy": stats,
+                     "order": [side for side, _ in order]})
+        print(f"[ab] #{i}: control={c.get('menu_s')}s treatment={t.get('menu_s')}s "
+              f"lazy={stats}", flush=True)
 
     c_med = median([r["control"].get("menu_s") for r in rows])
     t_med = median([r["treatment"].get("menu_s") for r in rows])
@@ -175,10 +196,14 @@ def main(argv=None) -> int:
     gates = {
         "all_rounds_ok": all(r["control"].get("ok") and r["treatment"].get("ok")
                              for r in rows),
+        "logs_present": all(
+            r[side].get("log_present", False)
+            for r in rows for side in ("control", "treatment")),
         "no_texture_errors": all(
-            (r[side]["failed"] == 0 and r[side]["verify"] == 0
-             and r[side]["class_errors"] == 0 and r[side]["async_errors"] == 0
-             and r[side]["corrupted"] == 0)
+            r[side].get("log_present", False)
+            and r[side]["failed"] == 0 and r[side]["verify"] == 0
+            and r[side]["class_errors"] == 0 and r[side]["async_errors"] == 0
+            and r[side]["corrupted"] == 0
             for r in rows for side in ("control", "treatment")),
         "treatment_failed_zero": all(r["lazy"].get("failed", 0) == 0 for r in rows),
         "treatment_disabled_zero": all(r["lazy"].get("disabled", 0) == 0 for r in rows),
@@ -186,7 +211,8 @@ def main(argv=None) -> int:
             r["lazy"].get("dimMismatch", 0) == 0 for r in rows),
         "treatment_dds_disabled_zero": all(
             r["lazy"].get("ddsDisabled", 0) == 0 for r in rows),
-        "treatment_dds_hit_positive": (lazy_median.get("ddsHit") or 0) > 0,
+        "treatment_dds_hit_positive": (not args.dds)
+            or (lazy_median.get("ddsHit") or 0) > 0,
         "selftest_ok": (not args.selftest) or all(
             r["lazy"].get("selftest") == 1 for r in rows),
     }

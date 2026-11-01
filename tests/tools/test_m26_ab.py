@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -85,8 +86,8 @@ def test_main_pairs_and_gates(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ab, "run_round", fake_run)
     monkeypatch.setattr(ab, "archive_round", lambda *a, **k: {
-        "log": None, "failed": 0, "verify": 0, "class_errors": 0,
-        "async_errors": 0, "corrupted": 0})
+        "log": None, "log_present": True, "failed": 0, "verify": 0,
+        "class_errors": 0, "async_errors": 0, "corrupted": 0})
     monkeypatch.setattr(ab, "stats_from_text", lambda text: {
         "skipped": 45784, "failed": 0, "disabled": 0, "dimMismatch": 0,
         "ddsDisabled": 0, "ddsHit": 80, "selftest": 1})
@@ -104,3 +105,85 @@ def test_main_pairs_and_gates(tmp_path, monkeypatch):
     assert result["gates"]["treatment_dds_hit_positive"] is True
     assert calls == [(False, False, False, False), (True, True, False, False),
                      (False, False, False, False), (True, True, False, False)]
+
+
+def test_run_round_timeout_is_a_row(monkeypatch, tmp_path):
+    def boom(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="smoke", timeout=1)
+    monkeypatch.setattr(ab.subprocess, "run", boom)
+    row = ab.run_round("miko-lite", True, True, False, False,
+                       tmp_path / "x.json", 1, 1)
+    assert row["ok"] is False
+    assert row["reason"] == "timeout"
+
+
+def test_missing_anchor_fails_closed(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    core = game / "starsector-core"
+    core.mkdir(parents=True)
+    (core / "starsector.log").write_bytes(b"no anchor here\n")
+    monkeypatch.setattr(ab, "ROOT", tmp_path)
+    monkeypatch.setattr(ab, "PROFILES", {"fake": {"game": "game"}})
+    row = ab.archive_round("fake", "c", 1, tmp_path / "out")
+    assert row["log_present"] is False
+    assert row["log"] is None
+
+
+def test_missing_log_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setattr(ab, "run_round", lambda *a, **k: _row(50.0))
+    monkeypatch.setattr(ab, "archive_round", lambda *a, **k: {
+        "log": None, "log_present": False, "failed": 0, "verify": 0,
+        "class_errors": 0, "async_errors": 0, "corrupted": 0})
+    monkeypatch.setattr(ab, "stats_from_text", lambda text: {
+        "skipped": 1, "failed": 0, "disabled": 0, "dimMismatch": 0,
+        "ddsDisabled": 0, "ddsHit": 1, "selftest": 0})
+    monkeypatch.setattr(ab, "free_physical_mb", lambda: 20_000.0)
+    agent = tmp_path / "agent.log"
+    agent.write_text("premain\n", encoding="utf-8")
+    out = tmp_path / "ab.json"
+    assert ab.main(["--rounds", "1", "--agent-log", str(agent),
+                    "--out", str(out)]) == 1
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["gates"]["logs_present"] is False
+    assert result["gates"]["no_texture_errors"] is False
+
+
+def test_no_dds_skips_hit_gate(tmp_path, monkeypatch):
+    monkeypatch.setattr(ab, "run_round", lambda *a, **k: _row(50.0))
+    monkeypatch.setattr(ab, "archive_round", lambda *a, **k: {
+        "log": None, "log_present": True, "failed": 0, "verify": 0,
+        "class_errors": 0, "async_errors": 0, "corrupted": 0})
+    monkeypatch.setattr(ab, "stats_from_text", lambda text: {
+        "skipped": 1, "failed": 0, "disabled": 0, "dimMismatch": 0,
+        "ddsDisabled": 0, "ddsHit": 0, "selftest": 0})
+    monkeypatch.setattr(ab, "free_physical_mb", lambda: 20_000.0)
+    agent = tmp_path / "agent.log"
+    agent.write_text("premain\n", encoding="utf-8")
+    out = tmp_path / "ab.json"
+    assert ab.main(["--rounds", "1", "--no-dds", "--agent-log", str(agent),
+                    "--out", str(out)]) == 0
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["gates"]["treatment_dds_hit_positive"] is True
+
+
+def test_counterbalance_reverses_even_rounds(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(profile, lazy, dds, eviction, selftest, out, wait, linger):
+        calls.append(lazy)
+        return _row(50.0)
+
+    monkeypatch.setattr(ab, "run_round", fake_run)
+    monkeypatch.setattr(ab, "archive_round", lambda *a, **k: {
+        "log": None, "log_present": True, "failed": 0, "verify": 0,
+        "class_errors": 0, "async_errors": 0, "corrupted": 0})
+    monkeypatch.setattr(ab, "stats_from_text", lambda text: {
+        "skipped": 1, "failed": 0, "disabled": 0, "dimMismatch": 0,
+        "ddsDisabled": 0, "ddsHit": 1, "selftest": 0})
+    monkeypatch.setattr(ab, "free_physical_mb", lambda: 20_000.0)
+    agent = tmp_path / "agent.log"
+    agent.write_text("premain\n", encoding="utf-8")
+    out = tmp_path / "ab.json"
+    assert ab.main(["--rounds", "2", "--counterbalance", "--agent-log", str(agent),
+                    "--out", str(out)]) == 0
+    assert calls == [False, True, True, False]
