@@ -57,6 +57,27 @@ class LazyEvictionTest {
     }
 
     @Test
+    void markStartupLatchesOnlyOffMain() {
+        LazyTextures.ProxyEntry offMain = entry("offMain", 10, 100);
+        LazyTextures.markStartup(offMain, false);
+        assertTrue(offMain.startup);
+
+        LazyTextures.ProxyEntry onMain = entry("onMain", 10, 100);
+        LazyTextures.markStartup(onMain, true);
+        assertFalse(onMain.startup);
+
+        LazyTextures.ProxyEntry latch = entry("latch", 10, 100);
+        LazyTextures.markStartup(latch, false);
+        LazyTextures.markStartup(latch, true);
+        assertTrue(latch.startup, "startup latch must never be cleared");
+
+        assertTrue(LazyTextures.selectVictims(
+                List.of(offMain), 150, 100, 0, 10_000, 10).isEmpty());
+        assertEquals(List.of(onMain), LazyTextures.selectVictims(
+                List.of(onMain), 150, 100, 0, 10_000, 10));
+    }
+
+    @Test
     void ddsBytesIsOneBytePerPixel() {
         assertEquals(810L * 500L, LazyTextures.ddsBytes(810, 500));
         assertEquals(0L, LazyTextures.ddsBytes(-1, 10));

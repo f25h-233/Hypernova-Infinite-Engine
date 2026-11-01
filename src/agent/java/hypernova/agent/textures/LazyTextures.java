@@ -1395,7 +1395,17 @@ public final class LazyTextures {
         }
     }
 
+    /**
+     * I2: textures first materialized off the runtime main thread (including
+     * anything while {@code runtimeMain} is still null during loading) are
+     * startup textures and are excluded from eviction. One-way latch.
+     */
+    static void markStartup(ProxyEntry e, boolean onMain) {
+        if (!e.startup && !onMain) e.startup = true;
+    }
+
     private static void noteMaterialized(ProxyEntry e, long bytes) {
+        markStartup(e, Thread.currentThread() == runtimeMain);
         if (e.bytes == 0 && bytes > 0) {
             e.bytes = bytes;
             LIVE_BYTES.addAndGet(bytes);
