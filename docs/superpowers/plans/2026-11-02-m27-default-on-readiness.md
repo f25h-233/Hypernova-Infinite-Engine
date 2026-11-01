@@ -574,7 +574,7 @@ bash tools/java/run-agent-tests.sh LazyRefresh
 bash tools/java/run-agent-tests.sh
 python -I -m pytest tests/tools -q
 ```
-Expected: `LazyEviction` 19/19（17 + 2 新）；`LazyRefresh` 6/6；full agent 178 found / 177 pass / 1 known symlink abort / 0 fail；pytest 287 passed。实际计数以报告为准。
+Expected: `LazyEviction` 20/20（17 + 2 新 + R-M27-6 mutation-test addendum）；`LazyRefresh` 6/6；full agent 179 found / 178 pass / 1 known symlink abort / 0 fail；pytest 287 passed。实际计数以报告为准。
 
 - [ ] **Step 5: 提交**
 
@@ -826,7 +826,7 @@ bash tools/java/run-agent-tests.sh LazyEviction
 bash tools/java/run-agent-tests.sh
 python -I -m pytest tests/tools -q
 ```
-Expected: `LazyEviction` 20/20（19 + 1 新）；full agent 179 found / 178 pass / 1 known symlink abort / 0 fail；pytest 287 passed。
+Expected: `LazyEviction` 21/21（20 + 1 新）；full agent 180 found / 179 pass / 1 known symlink abort / 0 fail；pytest 287 passed。
 
 - [ ] **Step 5: 提交**
 
