@@ -81,6 +81,7 @@ public final class LazyTextures {
     private static volatile long evictionGraceNanos;
     private static volatile long evictionSceneDelayNanos;
     private static volatile int evictionMaxPerPass;
+    private static volatile long budgetBytesOverride = -1L;
     private static final AtomicLong LIVE_BYTES = new AtomicLong();
     private static final AtomicLong STARTUP_BYTES = new AtomicLong();
     private static final AtomicLong FOREIGN_BYTES = new AtomicLong();
@@ -172,6 +173,8 @@ public final class LazyTextures {
         evictionGraceNanos = Math.max(0, config.evictionGraceMs()) * 1_000_000L;
         evictionSceneDelayNanos = Math.max(0, config.evictionSceneDelayMs()) * 1_000_000L;
         evictionMaxPerPass = Math.max(1, config.evictionMaxPerPass());
+        budgetBytesOverride = Long.getLong(
+                "hypernova.textures.lazy.eviction.budgetBytes", -1L);
         skipFile = config.skipFile();
         manifestFile = config.manifestFile();
         Thread loader = new Thread(LazyTextures::loadIndex, "Hypernova-Lazy-Index");
@@ -341,6 +344,7 @@ public final class LazyTextures {
         OLD_ID_DELETED.set(0);
         OLD_ID_SKIPPED.set(0);
         FAILED_PARKED.set(0);
+        budgetBytesOverride = -1L;
         evictDueNanos = 0;
         lastStateName = null;
         PENDING_DELETE.clear();
@@ -1476,8 +1480,13 @@ public final class LazyTextures {
         return evictableBytes(LIVE_BYTES.get(), STARTUP_BYTES.get(), FOREIGN_BYTES.get());
     }
 
+    static long budgetBytes(long budgetMb, long override) {
+        if (override > 0) return override;
+        return budgetMb <= 0 ? Long.MAX_VALUE : budgetMb * 1024L * 1024L;
+    }
+
     private static long budgetBytes() {
-        return evictionBudgetMb <= 0 ? Long.MAX_VALUE : evictionBudgetMb * 1024L * 1024L;
+        return budgetBytes(evictionBudgetMb, budgetBytesOverride);
     }
 
     private static void evictPass(long now) {
@@ -1805,6 +1814,7 @@ public final class LazyTextures {
                     + " startupBytes=" + STARTUP_BYTES.get()
                     + " foreignBytes=" + FOREIGN_BYTES.get()
                     + " evictableBytes=" + evictableBytes()
+                    + " budgetBytes=" + budgetBytes()
                     + " emptyEvictPasses=" + EVICT_PASS_EMPTY.get()
                     + " evictPassMsTotal=" + (EVICT_PASS_NANOS_TOTAL.get() / 1_000_000L)
                     + " evictPassMsMax=" + (EVICT_PASS_NANOS_MAX.get() / 1_000_000L)

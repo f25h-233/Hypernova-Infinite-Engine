@@ -319,4 +319,13 @@ class LazyEvictionTest {
         LazyTextures.resetGateStateForTest();
         assertEquals(0, LazyTextures.ddsFallbackTotalForTest());
     }
+
+    @Test
+    void budgetBytesOverrideWins() {
+        assertEquals(1024L * 1024L, LazyTextures.budgetBytes(1, -1));
+        assertEquals(262_144L, LazyTextures.budgetBytes(1, 262_144));
+        assertEquals(Long.MAX_VALUE, LazyTextures.budgetBytes(0, -1));
+        assertEquals(262_144L, LazyTextures.budgetBytes(0, 262_144));
+        assertEquals(Long.MAX_VALUE, LazyTextures.budgetBytes(-1, 0));
+    }
 }
