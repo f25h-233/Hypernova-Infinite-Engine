@@ -133,6 +133,10 @@ final class TextureObjectFixture {
         set("public", c);
     }
 
+    void setStringId(String v) {
+        set("Ò00000", v);
+    }
+
     private Object get(String name) {
         try {
             Field f = SUPER.getDeclaredField(name);

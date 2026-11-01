@@ -761,7 +761,7 @@ public final class LazyTextures {
             synchronized (e) {
                 if (e.obj == value) return;
                 if (e.ready) {
-                    noteReRegister(path);
+                    refreshReady(proxyShape, e, value, "register");
                     return;
                 }
                 ProxyShape shape = proxyShape;
@@ -785,7 +785,7 @@ public final class LazyTextures {
             synchronized (e) {
                 if (e.obj == value) return;
                 if (e.ready) {
-                    noteReRegister(path);
+                    refreshReady(proxyShape, e, value, "engine hit");
                     return;
                 }
                 ProxyShape shape = proxyShape;
@@ -802,17 +802,31 @@ public final class LazyTextures {
     }
 
     /**
-     * F3 diagnostic: a real object arrived for an already-copied proxy. The
-     * proxy is intentionally not refreshed here (deferred to Task 5 until the
-     * manual save-load/battle/resolution check); this counter tells Task 4
-     * whether that lifecycle path is exercised at all.
+     * F3 fix: a real object arrived for an already-materialized proxy (cache
+     * clear/reload, resolution change). Copy the new fields — including the new
+     * GL id — into the proxy and point TextureLoader.ÔO0000 at the proxy, so
+     * Sprite instances that already hold the proxy see the new texture. The
+     * same source object is absorbed once: if the engine map keeps returning
+     * that real object on every lookup, the per-lookup path stays a reference
+     * comparison instead of 14 reflective field copies.
+     *
+     * <p>Called under {@code synchronized (e)}. Returns true when a refresh
+     * happened (test seam; production callers ignore the result).
      */
-    private static void noteReRegister(String path) {
-        long n = LAZY_REREGISTERED.incrementAndGet();
-        if (n <= 20) {
-            AgentLog.info("lazy: re-register seen for ready proxy " + path
-                    + " (F3 probe; proxy not refreshed)");
+    static boolean refreshReady(ProxyShape shape, ProxyEntry e, Object value, String source)
+            throws Exception {
+        if (shape == null || e == null || value == null) return false;
+        if (value == e.obj || value == e.lastSource) return false;
+        shape.copy(value, e.obj);
+        e.lastSource = value;
+        putPathCache(e.path, e.obj);
+        int perPath = ++e.reregistered;
+        long total = LAZY_REREGISTERED.incrementAndGet();
+        if (perPath <= 3) {
+            AgentLog.info("lazy: refreshed ready proxy " + e.path + " from " + source
+                    + " (F3; reregistered=" + total + ", pathReregistered=" + perPath + ")");
         }
+        return true;
     }
 
     private static void summaryLoop() {
@@ -868,7 +882,7 @@ public final class LazyTextures {
         return sb.append('}').toString();
     }
 
-    private static final class ProxyEntry {
+    static final class ProxyEntry {
         final String path;
         final String type;
         final int w;
@@ -876,6 +890,10 @@ public final class LazyTextures {
         final Object obj;
         volatile boolean ready;
         volatile boolean failed;
+        /** Last real object absorbed by {@link #refreshReady}; dedups hot lookups. */
+        volatile Object lastSource;
+        /** How many different real objects this proxy has absorbed (F3). */
+        int reregistered;
         final AtomicLong attempts = new AtomicLong();
 
         ProxyEntry(String path, String type, int w, int h, Object obj) {
