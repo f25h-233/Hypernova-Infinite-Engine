@@ -60,6 +60,13 @@ public final class LazyTextures {
     private static final AtomicLong DDS_FALLBACK = new AtomicLong();
     private static final AtomicLong DDS_DISABLED = new AtomicLong();
     private static final AtomicLong DDS_DIM_MISMATCH = new AtomicLong();
+    enum DdsFallbackReason {
+        META, BRIDGE, PATH, GET, CHECK, COMMIT, HANDLER, NULL, SHAPE, COPY
+    }
+    private static final Map<DdsFallbackReason, AtomicLong> DDS_FB =
+            new ConcurrentHashMap<>();
+    private static final Map<DdsFallbackReason, AtomicBoolean> DDS_FB_LOGGED =
+            new ConcurrentHashMap<>();
     /**
      * R-M26-10: GL deletes are only legal on the runtime main thread. Ids freed
      * off-main (loading thread DDS cleanup, F3 refresh) wait here for the next
@@ -319,6 +326,8 @@ public final class LazyTextures {
         DDS_FALLBACK.set(0);
         DDS_DISABLED.set(0);
         DDS_DIM_MISMATCH.set(0);
+        DDS_FB.clear();
+        DDS_FB_LOGGED.clear();
         EVICTED.set(0);
         EVICTED_BYTES.set(0);
         REMATERIALIZED.set(0);
@@ -872,23 +881,24 @@ public final class LazyTextures {
     private static boolean materializeDds(ProxyEntry e) {
         LazySkipIndex.Entry meta = index == null ? null : index.get(e.path);
         if (meta == null || meta.absPath() == null || meta.ddsPath() == null) {
-            DDS_FALLBACK.incrementAndGet();
+            noteDdsFallback(DdsFallbackReason.META, e.path, "no metadata");
             return false;
         }
         if (!DdsBridge.available()) {
             DDS_DISABLED.incrementAndGet();
+            noteDdsFallback(DdsFallbackReason.BRIDGE, e.path, "bridge unavailable");
             return false;
         }
         Path absPath;
         try {
             absPath = Path.of(meta.absPath());
         } catch (Throwable t) {
-            DDS_FALLBACK.incrementAndGet();
+            noteDdsFallback(DdsFallbackReason.PATH, e.path, String.valueOf(t));
             return false;
         }
         DdsBridge.Data data = DdsBridge.get(absPath);
         if (data == null) {
-            DDS_FALLBACK.incrementAndGet();
+            noteDdsFallback(DdsFallbackReason.GET, e.path, "getTexture null");
             return false;
         }
         if (!dimensionsMatch(data.imageWidth(), data.imageHeight(), e.w, e.h)) {
@@ -898,15 +908,12 @@ public final class LazyTextures {
         }
         DdsCheck.Result check = DdsCheck.check(data.ddsPath(), e.w, e.h);
         if (!check.ok()) {
-            long n = DDS_FALLBACK.incrementAndGet();
-            if (n <= 20) {
-                AgentLog.info("lazy: dds fallback " + e.path + " (" + check.reason() + ")");
-            }
+            noteDdsFallback(DdsFallbackReason.CHECK, e.path, check.reason());
             return false;
         }
         Object loader = loaderSingleton;
         if (loader == null) {
-            DDS_FALLBACK.incrementAndGet();
+            noteDdsFallback(DdsFallbackReason.HANDLER, e.path, "loader null");
             return false;
         }
         int id;
@@ -914,27 +921,27 @@ public final class LazyTextures {
         synchronized (loader) {
             id = DdsBridge.commit(data.texData());
             if (id <= 0) {
-                DDS_FALLBACK.incrementAndGet();
+                noteDdsFallback(DdsFallbackReason.COMMIT, e.path, "id=" + id);
                 return false;
             }
             try {
                 real = DdsBridge.newHandler(loader, e.path, data.texData(), id);
             } catch (Throwable t) {
                 deleteTextureSafe(id);
-                long n = DDS_FALLBACK.incrementAndGet();
-                if (n <= 20) AgentLog.fail("lazy: dds handler failed for " + e.path, t);
+                noteDdsFallback(DdsFallbackReason.HANDLER, e.path, "handler failed");
+                AgentLog.fail("lazy: dds handler failed for " + e.path, t);
                 return false;
             }
         }
         if (real == null) {
             deleteTextureSafe(id);
-            DDS_FALLBACK.incrementAndGet();
+            noteDdsFallback(DdsFallbackReason.NULL, e.path, "handler null");
             return false;
         }
         ProxyShape shape = proxyShape;
         if (shape == null) {
             deleteTextureSafe(id);
-            DDS_FALLBACK.incrementAndGet();
+            noteDdsFallback(DdsFallbackReason.SHAPE, e.path, "shape unavailable");
             return false;
         }
         int realW;
@@ -944,7 +951,7 @@ public final class LazyTextures {
             realH = shape.imageHeight(real);
         } catch (Throwable t) {
             deleteTextureSafe(id);
-            DDS_FALLBACK.incrementAndGet();
+            noteDdsFallback(DdsFallbackReason.SHAPE, e.path, "shape read failed");
             AgentLog.fail("lazy: dds handler shape failed for " + e.path, t);
             return false;
         }
@@ -956,7 +963,7 @@ public final class LazyTextures {
             shape.copy(real, e.obj);
         } catch (Throwable t) {
             deleteTextureSafe(id);
-            DDS_FALLBACK.incrementAndGet();
+            noteDdsFallback(DdsFallbackReason.COPY, e.path, "copy failed");
             AgentLog.fail("lazy: dds handler copy failed for " + e.path, t);
             return false;
         }
@@ -980,6 +987,22 @@ public final class LazyTextures {
         // BC7 is 1 byte/pixel for level 0; the DDS may carry mips, but this is a
         // conservative LRU accounting estimate, not a VRAM measurement.
         return Math.max(0L, (long) w * h);
+    }
+
+    static void noteDdsFallback(DdsFallbackReason reason, String path, String detail) {
+        if (reason == null) return;
+        DDS_FALLBACK.incrementAndGet();
+        DDS_FB.computeIfAbsent(reason, r -> new AtomicLong()).incrementAndGet();
+        if (DDS_FB_LOGGED.computeIfAbsent(reason, r -> new AtomicBoolean())
+                .compareAndSet(false, true)) {
+            AgentLog.info("lazy: dds fallback " + reason + " path=" + path
+                    + (detail == null || detail.isBlank() ? "" : " detail=" + detail));
+        }
+    }
+
+    static long ddsFallbackCount(DdsFallbackReason reason) {
+        AtomicLong n = DDS_FB.get(reason);
+        return n == null ? 0 : n.get();
     }
 
     /** R-M26-10: GL deletes only on the runtime main thread; off-main ids wait. */
@@ -1710,6 +1733,30 @@ public final class LazyTextures {
         }
     }
 
+    private static String ddsFallbackSummary() {
+        StringBuilder sb = new StringBuilder();
+        for (DdsFallbackReason r : DdsFallbackReason.values()) {
+            sb.append(" ddsFb").append(reasonKey(r)).append('=')
+              .append(ddsFallbackCount(r));
+        }
+        return sb.toString();
+    }
+
+    private static String reasonKey(DdsFallbackReason r) {
+        return switch (r) {
+            case META -> "Meta";
+            case BRIDGE -> "Bridge";
+            case PATH -> "Path";
+            case GET -> "Get";
+            case CHECK -> "Check";
+            case COMMIT -> "Commit";
+            case HANDLER -> "Handler";
+            case NULL -> "Null";
+            case SHAPE -> "Shape";
+            case COPY -> "Copy";
+        };
+    }
+
     public static void summary() {
         try {
             LazySkipIndex idx = index;
@@ -1742,6 +1789,7 @@ public final class LazyTextures {
                     + " dds=" + (dds ? 1 : 0)
                     + " ddsHit=" + DDS_HIT.get()
                     + " ddsFallback=" + DDS_FALLBACK.get()
+                    + ddsFallbackSummary()
                     + " ddsDisabled=" + (dds && !DdsBridge.available() ? 1 : 0)
                     + " ddsDimMismatch=" + DDS_DIM_MISMATCH.get()
                     + " eviction=" + (eviction ? 1 : 0)

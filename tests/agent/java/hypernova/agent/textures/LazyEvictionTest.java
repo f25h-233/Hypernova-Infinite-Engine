@@ -281,4 +281,24 @@ class LazyEvictionTest {
         notReady.ready = false;
         assertFalse(LazyTextures.canEvict(notReady, true));
     }
+
+    @Test
+    void ddsFallbackReasonsCountAndReset() {
+        LazyTextures.resetGateStateForTest();
+        LazyTextures.noteDdsFallback(
+                LazyTextures.DdsFallbackReason.META, "graphics/a.png", "no metadata");
+        LazyTextures.noteDdsFallback(
+                LazyTextures.DdsFallbackReason.META, "graphics/b.png", null);
+        LazyTextures.noteDdsFallback(
+                LazyTextures.DdsFallbackReason.CHECK, "graphics/c.png", "dxgi 1");
+        assertEquals(2, LazyTextures.ddsFallbackCount(
+                LazyTextures.DdsFallbackReason.META));
+        assertEquals(1, LazyTextures.ddsFallbackCount(
+                LazyTextures.DdsFallbackReason.CHECK));
+        assertEquals(0, LazyTextures.ddsFallbackCount(
+                LazyTextures.DdsFallbackReason.COPY));
+        LazyTextures.resetGateStateForTest();
+        assertEquals(0, LazyTextures.ddsFallbackCount(
+                LazyTextures.DdsFallbackReason.META));
+    }
 }
