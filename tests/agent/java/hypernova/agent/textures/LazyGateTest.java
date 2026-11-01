@@ -75,6 +75,24 @@ class LazyGateTest {
                 Fake.class.getMethod("loadTextureAsync", String.class, String.class)));
     }
 
+    @Test
+    void failOpenOnDisabledDrain() {
+        assertTrue(LazyTextures.shouldFailOpenDisabledDrain(true, false, true, 1));
+        assertTrue(LazyTextures.shouldFailOpenDisabledDrain(false, false, false, 1));
+        assertFalse(LazyTextures.shouldFailOpenDisabledDrain(true, false, true, 0));
+        assertFalse(LazyTextures.shouldFailOpenDisabledDrain(true, false, false, 5));
+    }
+
+    @Test
+    void resolvesLoadAsyncIndependently() {
+        class WithAsync {
+            public void loadTextureAsync(String type, String path) {
+            }
+        }
+        assertNotNull(LazyTextures.resolveLoadAsync(new WithAsync()));
+        assertNull(LazyTextures.resolveLoadAsync(new Object()));
+    }
+
     private static LazySkipIndex indexWith(String path) {
         try {
             Path dir = Files.createTempDirectory("lazy-gate");

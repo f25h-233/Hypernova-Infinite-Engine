@@ -203,6 +203,11 @@ public final class LazyTextures {
         return !drainedNow && eligible(enabled, probe, disabled, index, type, path);
     }
 
+    static boolean shouldFailOpenDisabledDrain(boolean enabled, boolean probe,
+                                               boolean disabled, int pending) {
+        return (!enabled || probe || disabled) && pending > 0;
+    }
+
     static boolean dimensionsMatch(int realW, int realH, int expectedW, int expectedH) {
         return realW > 0 && realH > 0 && realW == expectedW && realH == expectedH;
     }
@@ -250,6 +255,8 @@ public final class LazyTextures {
         LAZY_FAILED.set(0);
         LOAD_ASYNC_FAILED.set(false);
         FAILING_OPEN.set(false);
+        loadAsyncMethod = null;
+        DEGRADED.set(false);
     }
 
     // ---- wiring armed flags (set by the transformers when a hook is applied) ----
@@ -420,6 +427,11 @@ public final class LazyTextures {
             try {
                 if (!enabled || probe || disabled) {
                     drained = true;
+                    if (shouldFailOpenDisabledDrain(enabled, probe, disabled, PENDING.size())) {
+                        AgentLog.fail("lazy: drain skipped because lazy is disabled with "
+                                + PENDING.size() + " pending proxies; failing open", null);
+                        failOpenPending();
+                    }
                     return;
                 }
                 Thread current = Thread.currentThread();
@@ -756,10 +768,11 @@ public final class LazyTextures {
                         sync = method;
                     }
                 }
-                if (sync == null) throw new NoSuchMethodException("TextureLoader.o00000 7-arg");
                 if (async == null) throw new NoSuchMethodException("TextureLoader.loadTextureAsync");
-                sync.setAccessible(true);
                 async.setAccessible(true);
+                loadAsyncMethod = async;
+                if (sync == null) throw new NoSuchMethodException("TextureLoader.o00000 7-arg");
+                sync.setAccessible(true);
                 try {
                     Field cache = loader.getClass().getDeclaredField("ÔO0000");
                     if (!Map.class.isAssignableFrom(cache.getType())) {
@@ -771,7 +784,6 @@ public final class LazyTextures {
                     AgentLog.info("lazy: TextureLoader path cache unavailable; proxy reuse disabled");
                 }
                 syncMethod = sync;
-                loadAsyncMethod = async;
                 loaderSingleton = loader;
                 AgentLog.info("lazy: sync+async loader resolved on " + loader.getClass().getName());
             } finally {
@@ -783,8 +795,7 @@ public final class LazyTextures {
     private static boolean loadAsync(Object loader, String type, String path) throws Throwable {
         Method m = loadAsyncMethod;
         if (m == null) {
-            ensureLoader();
-            m = loadAsyncMethod;
+            m = resolveLoadAsync(loader);
         }
         if (m == null) return false;
         try {
@@ -793,6 +804,23 @@ public final class LazyTextures {
         } catch (InvocationTargetException e) {
             Throwable cause = e.getCause();
             throw cause == null ? e : cause;
+        }
+    }
+
+    static Method resolveLoadAsync(Object loader) {
+        if (loader == null) return null;
+        try {
+            Method m = loader.getClass().getDeclaredMethod(
+                    "loadTextureAsync", String.class, String.class);
+            m.setAccessible(true);
+            loadAsyncMethod = m;
+            return m;
+        } catch (Throwable t) {
+            if (DEGRADED.compareAndSet(false, true)) {
+                AgentLog.fail("lazy: loadTextureAsync missing on "
+                        + loader.getClass().getName(), t);
+            }
+            return null;
         }
     }
 
