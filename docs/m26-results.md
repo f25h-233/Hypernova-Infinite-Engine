@@ -374,7 +374,8 @@ WS/GPU 同一瞬间的采样；字符串字段 `types/main/loading` 在中位里
     - M2.5 W6 agent jar 新鲜度 → **fixed**（Task 4 `40dd39c`）。
 
     仍 **open**：refcount/REQ-R1-10（无全局注册表，not implementable）、第三方 id 缓存
-    （W-3，residual）、GL context 重建（W-2，user gate）、战斗/读档/分辨率/手动目检、
+    （W-3，residual）、GL context 重建（W-2，user gate）、空 pass 30 s backoff（M2.7 所有实机
+    `emptyEvictPasses=0`，未触发；仅代码/单测存在）、战斗/读档/分辨率/手动目检、
     A→B 长会话净 VRAM、>200 ms 卡顿（user gates）。
 
 ---

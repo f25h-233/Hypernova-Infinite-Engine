@@ -13,7 +13,8 @@
 ### R-M27-9（门禁修复，必须和 M2.6 数字分开读）
 
 Task 1 后预算只比较**可淘汰字节**（`live - startup - foreign`）。260mods 菜单的整个可淘汰集合
-约 **0.55–0.68 MiB**，因此 `budgetMb=1`（1 MiB = 1,048,576 B）会让 `evictPass` 在预算内早退，
+约 **0.52–0.65 MiB**（550,084–681,660 B；0.55–0.68 是十进制 MB），因此 `budgetMb=1`
+（1 MiB = 1,048,576 B）会让 `evictPass` 在预算内早退，
 `evictPasses=0` 是**结构性正确结果**，不是自动淘汰路径失效。M2.6 的 `evictPasses=69` 是旧
 “总 `LIVE_BYTES`”口径下的 churn，不能与 M2.7 直接比较。
 
@@ -117,7 +118,12 @@ Task 7（`8e6be81`）新增内部诊断属性
 `-Dhypernova.textures.lazy.eviction.budgetBytes=262144` 替代 `budgetMb=1`；其余不变。
 
 证据：`build/m27/fix-auto.json`、agent log 最后 session（11 条 summary）、
-`starsector.log` 会话切片（跨旋转的两段合计 2,264,095 B）。
+`starsector.log` 会话切片（跨旋转的两段合计 **2,264,147 B**，≈2.26 MB；与 2,264,095 B 的
+52 B 差来自提取边界/换行处理）。
+
+下表是 **最后 10 s summary 快照**（20:37:55.647），不是进程退出总计。进程为强制退出，
+没有 shutdown summary；全会话 log 在该快照后另有 25 条 `lazy: eviction pass` 行
+（+147 evictions / +8,173,976 B），因此退出时约 **386 passes / ~1,950 evictions**。
 
 | Counter | 值 |
 |---|---:|
@@ -137,7 +143,7 @@ Task 7（`8e6be81`）新增内部诊断属性
 | `ddsHit` / `ddsFallback` | 1,110 / 724（**全部 META**；`ddsDisabled=0`） |
 | `oldIdDeleted` / `evictSkipped` | 1,803 / 0（成功淘汰删除全部计数） |
 | 0 Failed/Verify/Class/Async/Corrupted | 0/0/0/0/0 |
-| `lazy: eviction pass` log 行 | **386** |
+| `lazy: eviction pass` log 行 | **386**（全会话 log 行数，不是 summary 值；快照 361 + 之后 25） |
 
 读法：
 
@@ -291,6 +297,7 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
 | W-10 失败物化 id=0 | **fixed** | Task 2 `parkFailedProxy` + `failedParked`；实机 0；残余：`blank.png` 缺失时失败代理仍可能绑定 id 0（安装器断言 blank.png） |
 | W-4 ddsFallback 盲区 | **closed（可诊断）** | Task 3 `37899bf`/`bc886c8`；10 个 `ddsFb*`，sum == `ddsFallback`；R-M27-8：`BRIDGE` 计入总数，M2.6/M2.7 仅在 `ddsDisabled=0` 时可直接比较 |
 | W-7 DDS commit 监视器 | **defensive fixed** | Task 2 `synchronized(loader)`；**R-M27-7：仍存在潜在 loader→e 反向路径**（FR `commitAndCacheTexture` → `oOoO.super` → `onRegister`），不得声称“无反向锁路径” |
+| 30 s empty-pass backoff | **open/unexercised** | 所有实机 emptyEvictPasses=0；Task 1 预算口径消除了 startup-bytes 空转根因；真实长会话空 pass/backoff 行为仍需用户/压力验收 |
 | M2.5 W5 发行包 mod 集 | **documented + fail-open** | Task 4 `40dd39c`；`README-install.txt` + `release_check`；generation/尺寸不符 fail-open |
 | M2.5 W6 agent jar 新鲜度 | **fixed** | Task 4 `40dd39c`；`build-mod.sh` 强制重建/新鲜度/release_check；`install_agent.py` 先复制 jar 再早退 |
 | refcount / REQ-R1-10 | **not implementable**（无全局注册表） | owned-only + 失败停车 + 文档；本轮不实现 |
@@ -370,7 +377,8 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
 8. **计数语义**：`oldIdDeleted` 现在包含成功的淘汰删除；`evictPass` 日志 `live=` 是
    evictable bytes；`emptyEvictPasses` 不统计 `live <= budget` 的早退；`evicted` 是代理
    复位成功条数，不是“VRAM 已释放量”。
-9. **1 MiB 结构性 no-pass**：菜单可淘汰集合约 0.55–0.68 MiB < 1 MiB；默认 256 MB 预算下
+9. **1 MiB 结构性 no-pass**：菜单可淘汰集合约 **0.52–0.65 MiB**（550,084–681,660 B；
+   0.55–0.68 是十进制 MB）< 1 MiB；默认 256 MB 预算下
    菜单/linger120 `evictPasses=0` 是预期，不是缺陷。自动 pass 只在 256 KiB 诊断覆盖下验证。
 10. **W-10 残余**：`blank.png` 缺失时，失败代理仍可能绑定 id 0；安装器两侧断言
     `blank.png` 非空（70 B），但运行期缺失仍是 residual。
@@ -378,3 +386,13 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
     重建仍是 residual/user gate。
 12. **不开默认、不对外称“可选显存优化”**：在用户战斗/读档/分辨率/手动、A→B、stutter
     全部通过前，保持 experimental / 默认 off。
+13. **“0 errors” 是五类模式门禁**：`Failed to load texture` / `VerifyError` /
+    `ClassFormatError` / `AsyncException` / `isStateCorrupted`；检查切片中仍有 297 条
+    GraphicsLib `TextureData` 基线 WARN/ERROR（mod 加载期噪声），两切片相同，不计入。
+14. **空 pass 30 s backoff 未触发**：所有实机会话 `emptyEvictPasses=0`，backoff 分支只有
+    代码/单测；真实长会话的空 pass/backoff 行为仍需用户/压力验收。
+15. **`ab.json` 是手工聚合**：`tools/m26_ab.py` 当前抓取时点无法重新生成它；provenance 是
+    `ab-part1.json` / `ab-part2.json` 原始 JSON + 三个 treatment summary（见 §4.3）。
+16. **M-6 `parkFailed` 线程边界**：`parkFailed` 可由 loading thread 进入（materialize catch）；
+    `shape.reset` 是反射调用，`syncLoad` 本就是 loading-thread 路径，但这偏离 plan 的
+    “placeholder reset only on runtimeMain” 措辞；风险 latent，未加 main-thread gate。

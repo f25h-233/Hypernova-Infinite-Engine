@@ -24,6 +24,12 @@
    - `starsector-core/starsector.log` 的最后 session 切片；
    - 逐进程 GPU dedicated/shared（任务管理器或 `nvidia-smi` 旁证）。
 
+## 可选诊断淘汰（战斗步骤前）
+
+可选诊断淘汰：启动参数加内部诊断 `-Dhypernova.textures.lazy.eviction.budgetBytes=262144`
+（**不是用户配置**），确认 `budgetBytes=262144`、`evictPasses>0`、`evicted>0`、
+`failedParked=0`。默认 256 MB 下 `evictPasses=0` 是预期；只跑默认预算不能判定淘汰路径已验证。
+
 ## 1. 战斗（5–10 分钟）
 
 - 进入一场 5–10 分钟战斗；观察并记录：
