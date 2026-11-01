@@ -55,7 +55,7 @@ skip 文件（Task 3 原始）：260mods 73,446 行 / 4,427,771 B；Base 3,112 �
 
 - `install_manifest.py` 在 manifest 原子写之后、用**裁剪后的 runtime** 生成同代 `lazy-skip-v1.txt`；Critical 时不写 skip。
 - Base：L1/L2/L3 = 185/509/2,612，baked 3,285/3,285，`skip=3,112`（最终文件 3,113 行 / 146,641 B：3,112 条 3 列记录 + 1 行 `# generation=` 头，与 L1 交集 0）；连跑两次 md5 相同。
-- `build-mod.sh` 产出的 zip 同时含 `manifest-v1.json` 与 `lazy-skip-v1.txt`；manifest 185/509/2,612，skip 3,112 行。
+- `build-mod.sh` 产出的 zip 同时含 `manifest-v1.json` 与 `lazy-skip-v1.txt`；manifest 185/509/2,612，skip 当前文件 3,113 行 / 3,112 条记录（generation 头多 1 行；Task 3 原始为 3,112 行）。
 - 目标测试 13 passed（`test_install_manifest.py` 10 + `test_gen_lazy_skip.py` 3；覆盖 manifest/skip 事务失败路径与 generation 头；变异移除 skip 写入 → 红后恢复）。
 - 残余（Task 3 review，非阻塞）：`install-manifest.sh` 静默忽略多余参数。`build-mod.sh` 现在拒绝任何参数（含 `--env`）。final fix `00f717f` 已修 manifest/skip 事务 + generation 头与 `dist/` mkdir。
 
@@ -207,7 +207,7 @@ Warm-up（不计入）：control 62.6 s，`preload=hit`（5 ms / 2,113 条），
 
 - Task 1：`docs/m25-spike.md`、`build/m25/probe-260-p{1..7}.json`、`build/m25/logs/260-*-p*.log`
 - Task 2：`build/m25/internal-{base,260}-lazy3.json`、`build/m25/logs/{base,260}-*-lazy3.log`、`.superpowers/sdd/2026-11-01-m25-lazy-textures-addendum/task-2-report.md`、`task-2-review.md`、`task-2-fix-review.md`
-- Task 3：`.superpowers/sdd/.../task-3-report.md`、`task-3-review.md`；`tests/tools/test_install_manifest.py`（8 passed）
+- Task 3：`.superpowers/sdd/.../task-3-report.md`、`task-3-review.md`；`tests/tools/test_install_manifest.py`（当前 10 passed；连同 `test_gen_lazy_skip.py` 的 3 个共 13）
 - Task 4：`build/m25/ab-result.json`、`build/m25/ab-{c,t}{1..3}.json`、`build/m25/extra-{c,t}{4,5}.json`、`build/m25/logs/ab-*.log`、`build/m25/correctness-base-lazy.json`、`.superpowers/sdd/.../task-4-report.md`、`task-4-review.md`
 - Task 5：`build/m25/post-menu-t-lazy.json`、`build/m25/post-menu-gpu-series.txt`、`build/m25/post-menu-smoke.out`、`build/m25/post-menu-agent.offset`、`build/m25/installed-backup/`、`.superpowers/sdd/.../task-5-report.md`
 - 测试：agent `run-agent-tests.sh`（133 found / 132 pass / 1 symlink assumption abort / 0 fail）；mod `run-tests.sh`（103/103）
