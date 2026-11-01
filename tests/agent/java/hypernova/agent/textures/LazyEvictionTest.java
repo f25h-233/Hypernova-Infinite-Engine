@@ -191,4 +191,45 @@ class LazyEvictionTest {
         assertNull(LazyTextures.pickSelfTestEntry(List.of(ready, ui), idx, true));
         assertSame(b, LazyTextures.pickSelfTestEntry(List.of(b), idx, false));
     }
+
+    @Test
+    void evictableBytesExcludeStartupAndForeign() {
+        assertEquals(50, LazyTextures.evictableBytes(150, 100, 0));
+        assertEquals(20, LazyTextures.evictableBytes(150, 100, 30));
+        assertEquals(0, LazyTextures.evictableBytes(100, 80, 40));
+    }
+
+    @Test
+    void byteClassTruthTable() {
+        assertEquals(LazyTextures.ByteClass.STARTUP,
+                LazyTextures.byteClass(true, true));
+        assertEquals(LazyTextures.ByteClass.STARTUP,
+                LazyTextures.byteClass(true, false));
+        assertEquals(LazyTextures.ByteClass.FOREIGN,
+                LazyTextures.byteClass(false, false));
+        assertEquals(LazyTextures.ByteClass.EVICTABLE,
+                LazyTextures.byteClass(false, true));
+    }
+
+    @Test
+    void noteMaterializedClassifiesBytes() {
+        LazyTextures.resetGateStateForTest();
+        LazyTextures.ProxyEntry startup = new LazyTextures.ProxyEntry(
+                "startup", "TEXTURE", 10, 10, new Object());
+        LazyTextures.noteMaterialized(startup, 100, false);
+        assertTrue(startup.startup);
+        LazyTextures.ProxyEntry foreign = new LazyTextures.ProxyEntry(
+                "foreign", "TEXTURE", 10, 10, new Object());
+        foreign.owned = false;
+        LazyTextures.noteMaterialized(foreign, 30, true);
+        LazyTextures.ProxyEntry mine = new LazyTextures.ProxyEntry(
+                "mine", "TEXTURE", 10, 10, new Object());
+        mine.owned = true;
+        LazyTextures.noteMaterialized(mine, 20, true);
+        assertEquals(150, LazyTextures.liveBytesForTest());
+        assertEquals(100, LazyTextures.startupBytesForTest());
+        assertEquals(30, LazyTextures.foreignBytesForTest());
+        assertEquals(20, LazyTextures.evictableBytesForTest());
+        LazyTextures.resetGateStateForTest();
+    }
 }

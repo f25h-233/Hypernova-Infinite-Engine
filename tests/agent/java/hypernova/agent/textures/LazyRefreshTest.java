@@ -121,4 +121,21 @@ class LazyRefreshTest {
             LazyTextures.resetGateStateForTest();
         }
     }
+
+    @Test
+    void refreshMovesOwnedBytesToForeign() throws Exception {
+        LazyTextures.resetGateStateForTest();
+        ProxyShape shape = shape();
+        LazyTextures.ProxyEntry e = readyEntry(shape);
+        e.owned = true;
+        LazyTextures.noteMaterialized(e, 40, true);
+        assertEquals(40, LazyTextures.evictableBytesForTest());
+
+        assertTrue(LazyTextures.refreshReady(shape, e, real(77).raw(), "register"));
+
+        assertEquals(40, LazyTextures.liveBytesForTest());
+        assertEquals(40, LazyTextures.foreignBytesForTest());
+        assertEquals(0, LazyTextures.evictableBytesForTest());
+        LazyTextures.resetGateStateForTest();
+    }
 }

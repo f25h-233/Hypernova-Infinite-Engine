@@ -75,6 +75,11 @@ public final class LazyTextures {
     private static volatile long evictionSceneDelayNanos;
     private static volatile int evictionMaxPerPass;
     private static final AtomicLong LIVE_BYTES = new AtomicLong();
+    private static final AtomicLong STARTUP_BYTES = new AtomicLong();
+    private static final AtomicLong FOREIGN_BYTES = new AtomicLong();
+    private static final AtomicLong EVICT_PASS_EMPTY = new AtomicLong();
+    private static final AtomicLong EVICT_PASS_NANOS_TOTAL = new AtomicLong();
+    private static final AtomicLong EVICT_PASS_NANOS_MAX = new AtomicLong();
     private static final AtomicLong EVICTED = new AtomicLong();
     private static final AtomicLong EVICTED_BYTES = new AtomicLong();
     private static final AtomicLong REMATERIALIZED = new AtomicLong();
@@ -318,6 +323,11 @@ public final class LazyTextures {
         REMATERIALIZED.set(0);
         EVICT_PASSES.set(0);
         LIVE_BYTES.set(0);
+        STARTUP_BYTES.set(0);
+        FOREIGN_BYTES.set(0);
+        EVICT_PASS_EMPTY.set(0);
+        EVICT_PASS_NANOS_TOTAL.set(0);
+        EVICT_PASS_NANOS_MAX.set(0);
         OLD_ID_DELETED.set(0);
         OLD_ID_SKIPPED.set(0);
         evictDueNanos = 0;
@@ -1335,6 +1345,9 @@ public final class LazyTextures {
             DEFERRED_DELETES.incrementAndGet();
         }
         e.owned = false;
+        if (oldOwned && !e.startup && e.bytes > 0) {
+            FOREIGN_BYTES.addAndGet(e.bytes);
+        }
         e.dds = false;
         e.lastSource = value;
         touch(e);
@@ -1400,13 +1413,29 @@ public final class LazyTextures {
                 && oldId != placeholder;
     }
 
+    enum ByteClass { EVICTABLE, STARTUP, FOREIGN }
+
+    static ByteClass byteClass(boolean startup, boolean owned) {
+        if (startup) return ByteClass.STARTUP;
+        return owned ? ByteClass.EVICTABLE : ByteClass.FOREIGN;
+    }
+
+    static long evictableBytes(long live, long startup, long foreign) {
+        return Math.max(0L, live - startup - foreign);
+    }
+
+    private static long evictableBytes() {
+        return evictableBytes(LIVE_BYTES.get(), STARTUP_BYTES.get(), FOREIGN_BYTES.get());
+    }
+
     private static long budgetBytes() {
         return evictionBudgetMb <= 0 ? Long.MAX_VALUE : evictionBudgetMb * 1024L * 1024L;
     }
 
     private static void evictPass(long now) {
         if (!eviction || disabled || Thread.currentThread() != runtimeMain) return;
-        long live = LIVE_BYTES.get();
+        long t0 = System.nanoTime();
+        long live = evictableBytes();
         long budget = budgetBytes();
         if (live <= budget) return;
         List<ProxyEntry> ready = new ArrayList<>();
@@ -1425,12 +1454,21 @@ public final class LazyTextures {
             }
         }
         EVICT_PASSES.incrementAndGet();
+        long elapsed = System.nanoTime() - t0;
+        EVICT_PASS_NANOS_TOTAL.addAndGet(elapsed);
+        EVICT_PASS_NANOS_MAX.accumulateAndGet(elapsed, (a, b) -> Math.max(a, b));
+        if (n == 0) EVICT_PASS_EMPTY.incrementAndGet();
         if (n > 0) {
             AgentLog.info("lazy: eviction pass evicted=" + n + " bytes=" + bytes
-                    + " live=" + LIVE_BYTES.get() + " budget=" + budget);
+                    + " live=" + evictableBytes() + " budget=" + budget);
+        }
+        if (elapsed >= 50_000_000L) {
+            AgentLog.info("lazy: eviction pass slow " + (elapsed / 1_000_000L)
+                    + " ms evicted=" + n + " live=" + evictableBytes()
+                    + " budget=" + budget);
         }
         evictDueNanos = nextDueAfterPass(now, evictionSceneDelayNanos,
-                LIVE_BYTES.get(), budget, n);
+                evictableBytes(), budget, n);
     }
 
     private static boolean evictOne(ProxyEntry e, boolean force) {
@@ -1478,6 +1516,11 @@ public final class LazyTextures {
     static boolean evictOneForTest(ProxyEntry e, boolean force) {
         return evictOne(e, force);
     }
+
+    static long liveBytesForTest() { return LIVE_BYTES.get(); }
+    static long startupBytesForTest() { return STARTUP_BYTES.get(); }
+    static long foreignBytesForTest() { return FOREIGN_BYTES.get(); }
+    static long evictableBytesForTest() { return evictableBytes(); }
 
     private static boolean ensurePlaceholder() {
         if (placeholderId > 0) return true;
@@ -1576,17 +1619,26 @@ public final class LazyTextures {
     }
 
     private static void noteMaterialized(ProxyEntry e, long bytes) {
-        markStartup(e, Thread.currentThread() == runtimeMain);
+        noteMaterialized(e, bytes, Thread.currentThread() == runtimeMain);
+    }
+
+    static void noteMaterialized(ProxyEntry e, long bytes, boolean onMain) {
+        markStartup(e, onMain);
         if (e.bytes == 0 && bytes > 0) {
             e.bytes = bytes;
             LIVE_BYTES.addAndGet(bytes);
+            switch (byteClass(e.startup, e.owned)) {
+                case STARTUP -> STARTUP_BYTES.addAndGet(bytes);
+                case FOREIGN -> FOREIGN_BYTES.addAndGet(bytes);
+                case EVICTABLE -> { }
+            }
         }
         if (e.evicted > 0) {
             e.rematerialized++;
             REMATERIALIZED.incrementAndGet();
         }
         if (eviction && budgetBytes() != Long.MAX_VALUE
-                && shouldArmOnBudget(evictDueNanos, LIVE_BYTES.get(), budgetBytes())) {
+                && shouldArmOnBudget(evictDueNanos, evictableBytes(), budgetBytes())) {
             evictDueNanos = System.nanoTime() + evictionSceneDelayNanos;
         }
     }
@@ -1642,6 +1694,12 @@ public final class LazyTextures {
                     + " rematerialized=" + REMATERIALIZED.get()
                     + " evictPasses=" + EVICT_PASSES.get()
                     + " liveBytes=" + LIVE_BYTES.get()
+                    + " startupBytes=" + STARTUP_BYTES.get()
+                    + " foreignBytes=" + FOREIGN_BYTES.get()
+                    + " evictableBytes=" + evictableBytes()
+                    + " emptyEvictPasses=" + EVICT_PASS_EMPTY.get()
+                    + " evictPassMsTotal=" + (EVICT_PASS_NANOS_TOTAL.get() / 1_000_000L)
+                    + " evictPassMsMax=" + (EVICT_PASS_NANOS_MAX.get() / 1_000_000L)
                     + " placeholder=" + placeholderId
                     + " oldIdDeleted=" + OLD_ID_DELETED.get()
                     + " evictSkipped=" + OLD_ID_SKIPPED.get()
