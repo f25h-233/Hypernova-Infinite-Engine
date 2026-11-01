@@ -1437,12 +1437,14 @@ python -I tools/smoke_run.py --profile miko-lite --rounds 1 --linger 30 \
   --jvm-arg=-Dhypernova.textures.lazy=true \
   --jvm-arg=-Dhypernova.textures.lazy.dds=true \
   --jvm-arg=-Dhypernova.textures.lazy.eviction=true \
-  --jvm-arg=-Dhypernova.textures.lazy.eviction.budgetMb=1 \
+  --jvm-arg=-Dhypernova.textures.lazy.eviction.budgetBytes=262144 \
   --jvm-arg=-Dhypernova.textures.lazy.eviction.graceMs=0 \
   --jvm-arg=-Dhypernova.textures.lazy.eviction.sceneDelayMs=100 \
   --jvm-arg=-Dhypernova.textures.lazy.selftest=true \
   --json-out build/m27/fix-auto.json
 ```
+
+> **Gate 修复（R-M27-9）**：Task 1 后预算只比较可淘汰字节；260mods 菜单 `evictableBytes` 约 0.6 MiB，`budgetMb=1` 会让 `evictPass` 在预算内早退，`evictPasses` 结构性为 0。Step 2 改用诊断用 `budgetBytes` 覆盖（256 KiB < 0.6 MiB），自动 pass 才可达。
 
 Expected: `ok=true`；`selftest=1`；`evictPasses>=1`；`evicted>=1`；`rematerialized>=1`；`placeholder>0`；`failed=disabled=dimMismatch=0`；`failedParked=0`（菜单无二次失败）；`evictPassMsMax` 有值；**最后一条稳定 summary** 的 `ddsFb*` 之和 == `ddsFallback`（瞬时快照可能差 1，不作为失败）；0 Failed/Verify/Class/Async/Corrupted。若 `evictPasses=0`，**停下报告**。
 
@@ -1558,12 +1560,107 @@ Commit message append `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthr
 
 ---
 
+## Task 7: 诊断用 budget-bytes 覆盖（gate 修复）
+
+**Files:**
+- Modify: `src/agent/java/hypernova/agent/textures/LazyTextures.java`
+- Modify: `tests/agent/java/hypernova/agent/textures/LazyEvictionTest.java`
+
+**Interfaces:**
+- Consumes: `evictionBudgetMb`/`budgetBytes()`/`start()`/`resetGateStateForTest()`/`summary()`。
+- Produces:
+  - `LazyTextures.budgetBytes(long budgetMb, long override)`（package-private 纯函数）
+  - 系统属性 `hypernova.textures.lazy.eviction.budgetBytes`（内部诊断旋钮，不是用户配置）
+  - summary 新键 `budgetBytes`
+
+**Constraints:** 不新增用户配置项；默认行为不变（未设属性时仍用 `budgetMb`）；不改 `evictionBudgetMb` 语义。
+
+- [ ] **Step 1: 写失败测试**
+
+`LazyEvictionTest.java` 追加：
+
+```java
+    @Test
+    void budgetBytesOverrideWins() {
+        assertEquals(1024L * 1024L, LazyTextures.budgetBytes(1, -1));
+        assertEquals(262_144L, LazyTextures.budgetBytes(1, 262_144));
+        assertEquals(Long.MAX_VALUE, LazyTextures.budgetBytes(0, -1));
+        assertEquals(262_144L, LazyTextures.budgetBytes(0, 262_144));
+        assertEquals(Long.MAX_VALUE, LazyTextures.budgetBytes(-1, 0));
+    }
+```
+
+- [ ] **Step 2: 跑测试确认失败**
+
+Run: `bash tools/java/run-agent-tests.sh LazyEviction`
+Expected: 编译失败（`budgetBytes(long,long)` 不存在）。
+
+- [ ] **Step 3: 实现覆盖**
+
+3a. Field（与 eviction 状态同块）：
+
+```java
+    private static volatile long budgetBytesOverride = -1L;
+```
+
+3b. `start()` 在 `evictionMaxPerPass = ...` 后：
+
+```java
+        budgetBytesOverride = Long.getLong(
+                "hypernova.textures.lazy.eviction.budgetBytes", -1L);
+```
+
+3c. `resetGateStateForTest()` 追加：
+
+```java
+        budgetBytesOverride = -1L;
+```
+
+3d. 替换 `budgetBytes()`：
+
+```java
+    static long budgetBytes(long budgetMb, long override) {
+        if (override > 0) return override;
+        return budgetMb <= 0 ? Long.MAX_VALUE : budgetMb * 1024L * 1024L;
+    }
+
+    private static long budgetBytes() {
+        return budgetBytes(evictionBudgetMb, budgetBytesOverride);
+    }
+```
+
+3e. `summary()` 在 `evictableBytes` 后追加：
+
+```java
+                    + " budgetBytes=" + budgetBytes()
+```
+
+- [ ] **Step 4: 跑测试通过**
+
+Run:
+```bash
+bash tools/java/run-agent-tests.sh LazyEviction
+bash tools/java/run-agent-tests.sh
+python -I -m pytest tests/tools -q
+```
+Expected: `LazyEviction` 23/23；full agent 182 found / 181 pass / 1 known abort；pytest 299 passed。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add src/agent/java/hypernova/agent/textures/LazyTextures.java         tests/agent/java/hypernova/agent/textures/LazyEvictionTest.java
+git commit -m "fix(m27): add diagnostic budget-bytes override"
+```
+Commit message append `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`。
+
+---
+
 ## Self-review
 
-- **Spec coverage**：预算口径 → Task 1；W-5/W-10/oldId/W-7 → Task 2；W-4 → Task 3；M2.5 W5/W6 → Task 4；工具 fail-closed/counterbalance → Task 5；实机门禁/文档/用户清单 → Task 6。refcount/第三方 id/W-2/user gates 明确记为 residual（R-M27-2/3/5），不是漏项。
+- **Spec coverage**：预算口径 → Task 1；W-5/W-10/oldId/W-7 → Task 2；W-4 → Task 3；M2.5 W5/W6 → Task 4；工具 fail-closed/counterbalance → Task 5；实机门禁/文档/用户清单 → Task 6；预算 gate 修复 → Task 7。refcount/第三方 id/W-2/user gates 明确记为 residual（R-M27-2/3/5），不是漏项。
 - **Step scan**：每个 Step 有测试/代码/命令/预期；无 TBD。CHECK 分支的双重计数在 Task 3 Step 3d 里明确要求删除裸计数。
 - **Type consistency**：Task 1 `evictableBytes(long,long,long)` 与 Task 2 `evictOne(ProxyEntry)`；Task 2 `parkFailedProxy(ProxyEntry,boolean,int,ProxyReset)`；Task 3 `DdsFallbackReason`/`noteDdsFallback`；Task 4 `check_zip(Path, Path|None)`；Task 5 `--counterbalance` 与 `log_present`。测试名与实现签名一致。
 - **Review Focus**：每类风险都有任务测试：预算分类/refresh 迁移、TOCTOU/停车、原因计数、release zip、工具 fail-closed、实机 gate。
 - **Proportion**：计划只含改动的方法/测试/命令，不是整文件转录。
 
-**Known residual**：refcount/REQ-R1-10 无全局注册表不可实现；第三方 id 缓存与 GL context 重建仍是用户/后续门禁；`ddsBytes` 仍是 1 B/px 估算；`evictPassMsMax` 只覆盖菜单/长停留，不是逐帧 P99。
+**Known residual**：`budgetBytes` 是内部诊断旋钮，不写进用户配置；refcount/REQ-R1-10 无全局注册表不可实现；第三方 id 缓存与 GL context 重建仍是用户/后续门禁；`ddsBytes` 仍是 1 B/px 估算；`evictPassMsMax` 只覆盖菜单/长停留，不是逐帧 P99。
