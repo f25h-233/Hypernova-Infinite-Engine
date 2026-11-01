@@ -1219,8 +1219,7 @@ def test_missing_anchor_fails_closed(tmp_path, monkeypatch):
     game = tmp_path / "game"
     core = game / "starsector-core"
     core.mkdir(parents=True)
-    (core / "starsector.log").write_bytes(b"no anchor here
-")
+    (core / "starsector.log").write_bytes(b"no anchor here\n")
     monkeypatch.setattr(ab, "ROOT", tmp_path)
     monkeypatch.setattr(ab, "PROFILES", {"fake": {"game": "game"}})
     row = ab.archive_round("fake", "c", 1, tmp_path / "out")
