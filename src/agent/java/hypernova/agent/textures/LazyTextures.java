@@ -87,6 +87,11 @@ public final class LazyTextures {
     private static volatile String lastStateName;
     private static volatile long stateTransitions;
     private static volatile long mainCapturedNanos;
+    // ---- M2.6 default-on fix: deterministic eviction + real combat signal ----
+    private static volatile Method gameStateMethod;
+    private static volatile boolean gameStateResolved;
+    private static final AtomicBoolean GAME_STATE_FAIL_LOGGED = new AtomicBoolean();
+    static final long EVICT_EMPTY_BACKOFF_NANOS = 30_000_000_000L;
     // ---- M2.6 selftest state ----
     private static volatile boolean selftest;
     private static volatile int selftestResult;
@@ -321,6 +326,9 @@ public final class LazyTextures {
         DEFERRED_DELETES.set(0);
         selftestResult = 0;
         SELFTEST_DONE.set(false);
+        gameStateMethod = null;
+        gameStateResolved = false;
+        GAME_STATE_FAIL_LOGGED.set(false);
     }
 
     // ---- wiring armed flags (set by the transformers when a hook is applied) ----
@@ -443,7 +451,9 @@ public final class LazyTextures {
     public static Object lookup(String path) {
         if (path == null) return null;
         try {
-            if (selftest) maybeRunSelfTest(System.nanoTime());
+            long now = System.nanoTime();
+            maybeRunEviction(now);
+            if (selftest) maybeRunSelfTest(now);
             ProxyEntry e = PROXIES.get(path);
             if (e == null) return null;
             if (!e.ready) {
@@ -466,7 +476,9 @@ public final class LazyTextures {
      */
     public static void onProxyUse(Object proxy) {
         try {
-            if (selftest) maybeRunSelfTest(System.nanoTime());
+            long now = System.nanoTime();
+            maybeRunEviction(now);
+            if (selftest) maybeRunSelfTest(now);
             if (proxy == null) return;
             ProxyEntry e = PROXY_BY_OBJ.get(proxy);
             if (e == null || e.ready) return;
@@ -694,11 +706,10 @@ public final class LazyTextures {
     }
 
     static void noteGameState(String name) {
-        drainPendingDeletes();
         long now = System.nanoTime();
         if (eviction) {
             String prev = lastStateName;
-            if (prev != null && !prev.equals(name)) {
+            if (shouldArmOnTransition(prev, name)) {
                 evictDueNanos = now + evictionSceneDelayNanos;
                 long n = ++stateTransitions;
                 if (n <= 20) {
@@ -707,12 +718,76 @@ public final class LazyTextures {
                 }
             }
             lastStateName = name;
-            if (evictDueNanos != 0 && now >= evictDueNanos) {
-                evictDueNanos = 0;
-                if (!isCombatState(name)) evictPass();
-            }
         }
+        maybeRunEviction(now);
         maybeRunSelfTest(now);
+    }
+
+    static boolean shouldArmOnTransition(String prev, String name) {
+        return prev != null && name != null && !prev.equals(name);
+    }
+
+    static boolean shouldRunEviction(boolean eviction, boolean disabled, long dueNanos,
+                                     long now, boolean inCombat) {
+        return eviction && !disabled && dueNanos != 0 && now >= dueNanos && !inCombat;
+    }
+
+    static long nextDueAfterPass(long now, long delay, long liveBytes, long budget, int evicted) {
+        if (liveBytes <= budget) return 0;
+        if (evicted > 0) return now + delay;
+        return now + Math.max(delay, EVICT_EMPTY_BACKOFF_NANOS);
+    }
+
+    static boolean shouldArmOnBudget(long dueNanos, long liveBytes, long budget) {
+        return dueNanos == 0 && liveBytes > budget;
+    }
+
+    static void maybeRunEviction(long now) {
+        if (Thread.currentThread() != runtimeMain) return;
+        if (!PENDING_DELETE.isEmpty()) drainPendingDeletes();
+        if (!eviction || disabled) return;
+        long due = evictDueNanos;
+        if (due == 0 || now < due) return;
+        boolean combat = isInCombat();
+        if (!shouldRunEviction(eviction, disabled, due, now, combat)) {
+            if (combat) {
+                evictDueNanos = now + evictionSceneDelayNanos;
+            }
+            return;
+        }
+        evictDueNanos = 0;
+        evictPass(now);
+    }
+
+    static boolean isInCombat() {
+        Method m = resolveGameStateMethod();
+        if (m == null) return true; // conservative: unknown -> do not evict
+        try {
+            Object state = m.invoke(null);
+            return state != null && "COMBAT".equals(String.valueOf(state));
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
+    private static Method resolveGameStateMethod() {
+        Method m = gameStateMethod;
+        if (m != null || gameStateResolved) return m;
+        synchronized (LazyTextures.class) {
+            if (gameStateResolved) return gameStateMethod;
+            try {
+                Class<?> global = Class.forName("com.fs.starfarer.api.Global", false,
+                        LazyTextures.class.getClassLoader());
+                gameStateMethod = global.getMethod("getCurrentState");
+            } catch (Throwable t) {
+                if (GAME_STATE_FAIL_LOGGED.compareAndSet(false, true)) {
+                    AgentLog.fail("lazy: game state probe unavailable; eviction disabled", t);
+                }
+            } finally {
+                gameStateResolved = true;
+            }
+            return gameStateMethod;
+        }
     }
 
     /**
@@ -730,10 +805,6 @@ public final class LazyTextures {
         if (SELFTEST_DONE.compareAndSet(false, true)) {
             runSelfTest();
         }
-    }
-
-    static boolean isCombatState(String name) {
-        return name != null && name.contains("Combat");
     }
 
     private static void materialize(ProxyEntry e) {
@@ -767,7 +838,7 @@ public final class LazyTextures {
         shape.copy(real, e.obj);
         e.ready = true;
         e.glId = shape.glId(real);
-        e.owned = false;
+        e.owned = true;
         noteMaterialized(e, 4L * e.w * e.h);
         e.dds = false;
         touch(e);
@@ -1297,6 +1368,7 @@ public final class LazyTextures {
         List<ProxyEntry> candidates = new ArrayList<>();
         for (ProxyEntry e : ready) {
             if (e == null || !e.ready || e.bytes <= 0 || e.glId <= 0) continue;
+            if (!e.owned) continue;
             if (e.startup || isBasicPath(e.path)) continue;
             if (e.lastUseNanos == 0 || now - e.lastUseNanos < graceNanos) continue;
             candidates.add(e);
@@ -1329,7 +1401,7 @@ public final class LazyTextures {
         return evictionBudgetMb <= 0 ? Long.MAX_VALUE : evictionBudgetMb * 1024L * 1024L;
     }
 
-    private static void evictPass() {
+    private static void evictPass(long now) {
         if (!eviction || disabled || Thread.currentThread() != runtimeMain) return;
         long live = LIVE_BYTES.get();
         long budget = budgetBytes();
@@ -1339,7 +1411,7 @@ public final class LazyTextures {
             if (e.ready) ready.add(e);
         }
         List<ProxyEntry> victims = selectVictims(ready, live, budget,
-                evictionGraceNanos, System.nanoTime(), evictionMaxPerPass);
+                evictionGraceNanos, now, evictionMaxPerPass);
         int n = 0;
         long bytes = 0;
         for (ProxyEntry e : victims) {
@@ -1354,10 +1426,13 @@ public final class LazyTextures {
             AgentLog.info("lazy: eviction pass evicted=" + n + " bytes=" + bytes
                     + " live=" + LIVE_BYTES.get() + " budget=" + budget);
         }
+        evictDueNanos = nextDueAfterPass(now, evictionSceneDelayNanos,
+                LIVE_BYTES.get(), budget, n);
     }
 
     private static boolean evictOne(ProxyEntry e, boolean force) {
         if (e == null || !e.ready || e.glId <= 0 || e.obj == null) return false;
+        if (!e.owned) return false;
         if (!force && (e.startup || isBasicPath(e.path))) return false;
         if (Thread.currentThread() != runtimeMain) return false;
         if (!ensurePlaceholder()) return false;
@@ -1395,6 +1470,10 @@ public final class LazyTextures {
             return false;
         }
         return true;
+    }
+
+    static boolean evictOneForTest(ProxyEntry e, boolean force) {
+        return evictOne(e, force);
     }
 
     private static boolean ensurePlaceholder() {
@@ -1504,7 +1583,7 @@ public final class LazyTextures {
             REMATERIALIZED.incrementAndGet();
         }
         if (eviction && budgetBytes() != Long.MAX_VALUE
-                && LIVE_BYTES.get() > budgetBytes()) {
+                && shouldArmOnBudget(evictDueNanos, LIVE_BYTES.get(), budgetBytes())) {
             evictDueNanos = System.nanoTime() + evictionSceneDelayNanos;
         }
     }

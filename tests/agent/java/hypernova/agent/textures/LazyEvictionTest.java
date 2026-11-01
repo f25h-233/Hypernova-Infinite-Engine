@@ -17,6 +17,7 @@ class LazyEvictionTest {
         e.glId = 1;
         e.bytes = bytes;
         e.lastUseNanos = lastUse;
+        e.owned = true;
         return e;
     }
 
@@ -87,6 +88,61 @@ class LazyEvictionTest {
                 List.of(offMain), 150, 100, 0, 10_000, 10).isEmpty());
         assertEquals(List.of(onMain), LazyTextures.selectVictims(
                 List.of(onMain), 150, 100, 0, 10_000, 10));
+    }
+
+    @Test
+    void engineOwnedEntriesAreNotEvicted() {
+        LazyTextures.ProxyEntry engine = entry("engine", 10, 100);
+        engine.owned = false;
+        LazyTextures.ProxyEntry mine = entry("mine", 10, 100);
+        assertEquals(List.of(mine), LazyTextures.selectVictims(
+                List.of(engine, mine), 150, 100, 0, 10_000, 10));
+        assertFalse(LazyTextures.evictOneForTest(engine, true));
+    }
+
+    @Test
+    void evictionScheduleTruthTable() {
+        assertTrue(LazyTextures.shouldRunEviction(true, false, 100, 100, false));
+        assertFalse(LazyTextures.shouldRunEviction(true, false, 101, 100, false));
+        assertFalse(LazyTextures.shouldRunEviction(true, false, 100, 100, true));
+        assertFalse(LazyTextures.shouldRunEviction(false, false, 100, 100, false));
+        assertFalse(LazyTextures.shouldRunEviction(true, true, 100, 100, false));
+        assertFalse(LazyTextures.shouldRunEviction(true, false, 0, 100, false));
+    }
+
+    @Test
+    void transitionArmsOnlyWhenNameChanges() {
+        assertTrue(LazyTextures.shouldArmOnTransition("TITLE", "CAMPAIGN"));
+        assertFalse(LazyTextures.shouldArmOnTransition("CAMPAIGN", "CAMPAIGN"));
+        assertFalse(LazyTextures.shouldArmOnTransition(null, "TITLE"));
+    }
+
+    @Test
+    void partialPassRearmsOnlyWhileOverBudget() {
+        assertEquals(1_123, LazyTextures.nextDueAfterPass(1_000, 123, 200, 100, 1));
+        assertEquals(0, LazyTextures.nextDueAfterPass(1_000, 123, 100, 100, 1));
+        // empty pass over budget: back off, do not scan 45k proxies on every materialization
+        assertEquals(1_000 + LazyTextures.EVICT_EMPTY_BACKOFF_NANOS,
+                LazyTextures.nextDueAfterPass(1_000, 123, 200, 100, 0));
+    }
+
+    @Test
+    void budgetArmOnlyWhenIdle() {
+        assertTrue(LazyTextures.shouldArmOnBudget(0, 200, 100));
+        assertFalse(LazyTextures.shouldArmOnBudget(123, 200, 100));
+        assertFalse(LazyTextures.shouldArmOnBudget(0, 100, 100));
+    }
+
+    @Test
+    void combatProbeUsesGameState() {
+        LazyTextures.resetGateStateForTest();
+        com.fs.starfarer.api.Global.currentState = "COMBAT";
+        assertTrue(LazyTextures.isInCombat());
+        com.fs.starfarer.api.Global.currentState = "CAMPAIGN";
+        assertFalse(LazyTextures.isInCombat());
+        com.fs.starfarer.api.Global.currentState = null;
+        assertFalse(LazyTextures.isInCombat());
+        LazyTextures.resetGateStateForTest();
     }
 
     @Test
