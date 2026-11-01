@@ -53,6 +53,8 @@ fi
 # 注意 `cp -r data/. <dst>` 而不是 `cp -r data <dst>`：后者在 dst 存在时会嵌套成 data/data/。
 mkdir -p "$MODDIR/data"
 cp -r "$ROOT_W/data/." "$MODDIR/data/"
+mkdir -p "$MODDIR/graphics"
+cp -r "$ROOT_W/graphics/." "$MODDIR/graphics/"
 cp "$OUT/hypernova-manifest-v1.json" "$MODDIR/data/config/hypernova/manifest-v1.json"
 cp "$SKIP_INSTALLED" "$MODDIR/data/config/hypernova/lazy-skip-v1.txt"
 # zip 内容断言：manifest 必须在且非空，否则宁可不产出 zip。
@@ -70,6 +72,11 @@ fi
 if ! (cd "$OUT" && jar --list --file hypernova-0.1.0.zip) \
     | grep -qx 'data/config/hypernova/lazy-skip-v1.txt'; then
   echo "FATAL: zip 缺少 data/config/hypernova/lazy-skip-v1.txt" >&2
+  exit 1
+fi
+if ! (cd "$OUT" && jar --list --file hypernova-0.1.0.zip) \
+    | grep -qx 'graphics/hypernova/blank.png'; then
+  echo "FATAL: zip 缺少 graphics/hypernova/blank.png" >&2
   exit 1
 fi
 if [ -f "$MODDIR/jars/hypernova.agent.jar" ]; then

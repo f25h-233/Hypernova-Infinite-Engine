@@ -21,6 +21,10 @@ mkdir -p "$MODDIR/jars" "$DST"
 cp "$ROOT/build/java/hypernova.jar" "$MODDIR/jars/hypernova.jar"
 cp "$ROOT/mod_info.json" "$MODDIR/mod_info.json"
 if [ -d "$ROOT/data" ]; then mkdir -p "$MODDIR/data"; cp -r "$ROOT/data/." "$MODDIR/data/"; fi
+if [ -d "$ROOT/graphics" ]; then
+  mkdir -p "$MODDIR/graphics"
+  cp -r "$ROOT/graphics/." "$MODDIR/graphics/"
+fi
 
 python -I "$ROOT/tools/install_manifest.py" --game-root "$GAME_ROOT"
 echo "installed: $GAME_ROOT/mods/hypernova_infinite_engine/data/config/hypernova/{manifest-v1.json,lazy-skip-v1.txt}"

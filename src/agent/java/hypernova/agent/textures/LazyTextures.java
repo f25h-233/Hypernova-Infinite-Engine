@@ -10,7 +10,10 @@ import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -57,6 +60,26 @@ public final class LazyTextures {
     private static final AtomicLong DDS_FALLBACK = new AtomicLong();
     private static final AtomicLong DDS_DISABLED = new AtomicLong();
     private static final AtomicLong DDS_DIM_MISMATCH = new AtomicLong();
+    // ---- M2.6 eviction state ----
+    private static volatile boolean eviction;
+    private static volatile int evictionBudgetMb;
+    private static volatile long evictionGraceNanos;
+    private static volatile long evictionSceneDelayNanos;
+    private static volatile int evictionMaxPerPass;
+    private static final AtomicLong LIVE_BYTES = new AtomicLong();
+    private static final AtomicLong EVICTED = new AtomicLong();
+    private static final AtomicLong EVICTED_BYTES = new AtomicLong();
+    private static final AtomicLong REMATERIALIZED = new AtomicLong();
+    private static final AtomicLong EVICT_PASSES = new AtomicLong();
+    private static final AtomicLong OLD_ID_DELETED = new AtomicLong();
+    private static final AtomicLong OLD_ID_SKIPPED = new AtomicLong();
+    private static volatile int placeholderId;
+    private static final AtomicBoolean PLACEHOLDER_FAILED = new AtomicBoolean();
+    private static volatile long evictDueNanos;
+    private static volatile String lastStateName;
+    private static volatile long stateTransitions;
+    private static volatile long mainCapturedNanos;
+    private static final String PLACEHOLDER_PATH = "graphics/hypernova/blank.png";
     private static final AtomicBoolean LOAD_ASYNC_FAILED = new AtomicBoolean();
     private static final Map<String, ProxyEntry> PROXIES = new ConcurrentHashMap<>();
     private static final Map<Object, ProxyEntry> PROXY_BY_OBJ = new ConcurrentHashMap<>();
@@ -113,6 +136,11 @@ public final class LazyTextures {
         probe = config.probe();
         if (!enabled && !probe) return;
         dds = config.dds();
+        eviction = config.eviction();
+        evictionBudgetMb = config.evictionBudgetMb();
+        evictionGraceNanos = Math.max(0, config.evictionGraceMs()) * 1_000_000L;
+        evictionSceneDelayNanos = Math.max(0, config.evictionSceneDelayMs()) * 1_000_000L;
+        evictionMaxPerPass = Math.max(1, config.evictionMaxPerPass());
         skipFile = config.skipFile();
         manifestFile = config.manifestFile();
         Thread loader = new Thread(LazyTextures::loadIndex, "Hypernova-Lazy-Index");
@@ -267,6 +295,15 @@ public final class LazyTextures {
         DDS_FALLBACK.set(0);
         DDS_DISABLED.set(0);
         DDS_DIM_MISMATCH.set(0);
+        EVICTED.set(0);
+        EVICTED_BYTES.set(0);
+        REMATERIALIZED.set(0);
+        EVICT_PASSES.set(0);
+        LIVE_BYTES.set(0);
+        OLD_ID_DELETED.set(0);
+        OLD_ID_SKIPPED.set(0);
+        evictDueNanos = 0;
+        lastStateName = null;
     }
 
     // ---- wiring armed flags (set by the transformers when a hook is applied) ----
@@ -622,14 +659,43 @@ public final class LazyTextures {
 
     public static void captureMainThread(Object state) {
         try {
-            if (runtimeMain != null || state == null) return;
+            if (state == null) return;
             String name = state.getClass().getName();
             if (name.contains("launcher") || name.contains("Launcher")) return;
-            runtimeMain = Thread.currentThread();
-            AgentLog.info("lazy: runtime main thread captured " + runtimeMain.getName() + " from " + name);
+            if (runtimeMain == null) {
+                runtimeMain = Thread.currentThread();
+                mainCapturedNanos = System.nanoTime();
+                AgentLog.info("lazy: runtime main thread captured " + runtimeMain.getName()
+                        + " from " + name);
+            }
+            noteGameState(name);
         } catch (Throwable t) {
             AgentLog.fail("lazy: main-thread capture failed", t);
         }
+    }
+
+    static void noteGameState(String name) {
+        long now = System.nanoTime();
+        if (eviction) {
+            String prev = lastStateName;
+            if (prev != null && !prev.equals(name)) {
+                evictDueNanos = now + evictionSceneDelayNanos;
+                long n = ++stateTransitions;
+                if (n <= 20) {
+                    AgentLog.info("lazy: state " + prev + " -> " + name
+                            + "; eviction due in " + (evictionSceneDelayNanos / 1_000_000L) + " ms");
+                }
+            }
+            lastStateName = name;
+            if (evictDueNanos != 0 && now >= evictDueNanos) {
+                evictDueNanos = 0;
+                if (!isCombatState(name)) evictPass();
+            }
+        }
+    }
+
+    static boolean isCombatState(String name) {
+        return name != null && name.contains("Combat");
     }
 
     private static void materialize(ProxyEntry e) {
@@ -664,7 +730,7 @@ public final class LazyTextures {
         e.ready = true;
         e.glId = shape.glId(real);
         e.owned = false;
-        e.bytes = 4L * e.w * e.h;
+        noteMaterialized(e, 4L * e.w * e.h);
         e.dds = false;
         touch(e);
         putPathCache(e.path, e.obj);
@@ -756,7 +822,7 @@ public final class LazyTextures {
         e.dds = true;
         e.glId = id;
         e.owned = true;
-        e.bytes = ddsBytes(data.width(), data.height());
+        noteMaterialized(e, ddsBytes(data.width(), data.height()));
         touch(e);
         putPathCache(e.path, e.obj);
         long n = DDS_HIT.incrementAndGet();
@@ -1047,7 +1113,7 @@ public final class LazyTextures {
                 e.ready = true;
                 e.glId = shape.glId(value);
                 e.owned = false;
-                e.bytes = 4L * e.w * e.h;
+                noteMaterialized(e, 4L * e.w * e.h);
                 e.dds = false;
                 touch(e);
                 long n = LAZY_MATERIALIZED.incrementAndGet();
@@ -1081,7 +1147,7 @@ public final class LazyTextures {
                 e.ready = true;
                 e.glId = shape.glId(value);
                 e.owned = false;
-                e.bytes = 4L * e.w * e.h;
+                noteMaterialized(e, 4L * e.w * e.h);
                 e.dds = false;
                 touch(e);
                 long n = LAZY_MATERIALIZED.incrementAndGet();
@@ -1115,8 +1181,18 @@ public final class LazyTextures {
             onDimMismatch(e, realW, realH, source);
             return false;
         }
+        int oldId = shape.glId(e.obj);
+        boolean oldOwned = e.owned;
         shape.copy(value, e.obj);
-        e.glId = shape.glId(value);
+        int newId = shape.glId(value);
+        e.glId = newId;
+        if (shouldDeleteOldId(oldOwned, oldId, newId, placeholderId, canMaterialize())) {
+            if (GlBridge.deleteTexture(oldId)) {
+                OLD_ID_DELETED.incrementAndGet();
+            } else {
+                OLD_ID_SKIPPED.incrementAndGet();
+            }
+        }
         e.owned = false;
         e.lastSource = value;
         touch(e);
@@ -1143,6 +1219,154 @@ public final class LazyTextures {
 
     private static void touch(ProxyEntry e) {
         e.lastUseNanos = System.nanoTime();
+    }
+
+    static List<ProxyEntry> selectVictims(List<ProxyEntry> ready, long liveBytes,
+                                          long budgetBytes, long graceNanos,
+                                          long now, int max) {
+        if (liveBytes <= budgetBytes) return List.of();
+        long low = budgetBytes - (budgetBytes / 5); // 80%
+        List<ProxyEntry> candidates = new ArrayList<>();
+        for (ProxyEntry e : ready) {
+            if (e == null || !e.ready || e.bytes <= 0 || e.glId <= 0) continue;
+            if (e.startup || isBasicPath(e.path)) continue;
+            if (e.lastUseNanos == 0 || now - e.lastUseNanos < graceNanos) continue;
+            candidates.add(e);
+        }
+        candidates.sort(Comparator.comparingLong(e -> e.lastUseNanos));
+        List<ProxyEntry> out = new ArrayList<>();
+        long live = liveBytes;
+        for (ProxyEntry e : candidates) {
+            if (live <= low || out.size() >= max) break;
+            out.add(e);
+            live -= e.bytes;
+        }
+        return out;
+    }
+
+    static boolean isBasicPath(String path) {
+        if (path == null) return true;
+        return path.startsWith("graphics/ui/")
+                || path.startsWith("graphics/fonts/")
+                || path.startsWith("graphics/intro/");
+    }
+
+    static boolean shouldDeleteOldId(boolean owned, int oldId, int newId,
+                                     int placeholder, boolean allowedThread) {
+        return owned && allowedThread && oldId > 0 && oldId != newId
+                && oldId != placeholder;
+    }
+
+    private static long budgetBytes() {
+        return evictionBudgetMb <= 0 ? Long.MAX_VALUE : evictionBudgetMb * 1024L * 1024L;
+    }
+
+    private static void evictPass() {
+        if (!eviction || disabled || Thread.currentThread() != runtimeMain) return;
+        long live = LIVE_BYTES.get();
+        long budget = budgetBytes();
+        if (live <= budget) return;
+        List<ProxyEntry> ready = new ArrayList<>();
+        for (ProxyEntry e : PROXIES.values()) {
+            if (e.ready) ready.add(e);
+        }
+        List<ProxyEntry> victims = selectVictims(ready, live, budget,
+                evictionGraceNanos, System.nanoTime(), evictionMaxPerPass);
+        int n = 0;
+        long bytes = 0;
+        for (ProxyEntry e : victims) {
+            long b = e.bytes;
+            if (evictOne(e, false)) {
+                n++;
+                bytes += b;
+            }
+        }
+        EVICT_PASSES.incrementAndGet();
+        if (n > 0) {
+            AgentLog.info("lazy: eviction pass evicted=" + n + " bytes=" + bytes
+                    + " live=" + LIVE_BYTES.get() + " budget=" + budget);
+        }
+    }
+
+    private static boolean evictOne(ProxyEntry e, boolean force) {
+        if (e == null || !e.ready || e.glId <= 0 || e.obj == null) return false;
+        if (!force && (e.startup || isBasicPath(e.path))) return false;
+        if (Thread.currentThread() != runtimeMain) return false;
+        if (!ensurePlaceholder()) return false;
+        int id;
+        synchronized (e) {
+            if (!e.ready || e.glId <= 0) return false;
+            ProxyShape shape = proxyShape;
+            if (shape == null) return false;
+            id = e.glId;
+            try {
+                shape.reset(e.obj, 3553, placeholderId, 1, 1, 1.0f, 1.0f, e.w, e.h);
+            } catch (Throwable t) {
+                AgentLog.fail("lazy: eviction reset failed for " + e.path, t);
+                return false;
+            }
+            long bytes = e.bytes;
+            e.ready = false;
+            e.failed = false;
+            e.dds = false;
+            e.owned = false;
+            e.glId = 0;
+            e.bytes = 0;
+            e.lastSource = null;
+            e.attempts.set(0);
+            e.evicted++;
+            LIVE_BYTES.addAndGet(-bytes);
+            EVICTED.incrementAndGet();
+            EVICTED_BYTES.addAndGet(bytes);
+            touch(e);
+        }
+        // The proxy already points at the valid placeholder; a failed delete is
+        // a VRAM leak, not a dangling id. Count it and let re-materialize fix it.
+        if (!GlBridge.deleteTexture(id)) {
+            OLD_ID_SKIPPED.incrementAndGet();
+            return false;
+        }
+        return true;
+    }
+
+    private static boolean ensurePlaceholder() {
+        if (placeholderId > 0) return true;
+        if (PLACEHOLDER_FAILED.get()) return false;
+        synchronized (LazyTextures.class) {
+            if (placeholderId > 0) return true;
+            try {
+                Object real = syncLoad(PLACEHOLDER_PATH);
+                ProxyShape shape = proxyShape;
+                if (shape == null) throw new IllegalStateException("proxy shape unavailable");
+                int target = shape.target(real);
+                int id = shape.glId(real);
+                if (target != 3553 || id <= 0) {
+                    throw new IllegalStateException("bad placeholder target=" + target + " id=" + id);
+                }
+                placeholderId = id;
+                AgentLog.info("lazy: eviction placeholder resolved id=" + id);
+                return true;
+            } catch (Throwable t) {
+                PLACEHOLDER_FAILED.set(true);
+                AgentLog.fail("lazy: eviction placeholder unavailable; eviction disabled", t);
+                return false;
+            }
+        }
+    }
+
+    private static void noteMaterialized(ProxyEntry e, long bytes) {
+        if (e.bytes == 0 && bytes > 0) {
+            e.bytes = bytes;
+            LIVE_BYTES.addAndGet(bytes);
+        }
+        if (e.evicted > 0) {
+            e.rematerialized++;
+            REMATERIALIZED.incrementAndGet();
+        }
+        if (eviction && budgetBytes() != Long.MAX_VALUE
+                && LIVE_BYTES.get() > budgetBytes()) {
+            evictDueNanos = System.nanoTime() + evictionSceneDelayNanos;
+        }
     }
 
     private static void summaryLoop() {
@@ -1189,7 +1413,16 @@ public final class LazyTextures {
                     + " ddsHit=" + DDS_HIT.get()
                     + " ddsFallback=" + DDS_FALLBACK.get()
                     + " ddsDisabled=" + (dds && !DdsBridge.available() ? 1 : 0)
-                    + " ddsDimMismatch=" + DDS_DIM_MISMATCH.get());
+                    + " ddsDimMismatch=" + DDS_DIM_MISMATCH.get()
+                    + " eviction=" + (eviction ? 1 : 0)
+                    + " evicted=" + EVICTED.get()
+                    + " evictedBytes=" + EVICTED_BYTES.get()
+                    + " rematerialized=" + REMATERIALIZED.get()
+                    + " evictPasses=" + EVICT_PASSES.get()
+                    + " liveBytes=" + LIVE_BYTES.get()
+                    + " placeholder=" + placeholderId
+                    + " oldIdDeleted=" + OLD_ID_DELETED.get()
+                    + " evictSkipped=" + OLD_ID_SKIPPED.get());
         } catch (Throwable t) {
             AgentLog.fail("lazy probe: summary failed", t);
         }
@@ -1218,6 +1451,8 @@ public final class LazyTextures {
         volatile Object lastSource;
         /** How many different real objects this proxy has absorbed (F3). */
         int reregistered;
+        int evicted;
+        int rematerialized;
         volatile int glId;
         volatile long bytes;
         volatile long lastUseNanos;
