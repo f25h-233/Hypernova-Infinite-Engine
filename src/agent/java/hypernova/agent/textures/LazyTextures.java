@@ -106,6 +106,23 @@ public final class LazyTextures {
     private static volatile boolean gameStateResolved;
     private static final AtomicBoolean GAME_STATE_FAIL_LOGGED = new AtomicBoolean();
     static final long EVICT_EMPTY_BACKOFF_NANOS = 30_000_000_000L;
+    // ---- M2.8 scene unload (aggressive, experimental; default off) ----
+    private static volatile boolean sceneUnload;
+    private static volatile long sceneUnloadGraceNanos;
+    private static volatile int sceneUnloadMaxPerPass;
+    private static volatile long scenePassDueNanos;
+    private static volatile long sceneArmedNanos;
+    private static volatile int scenePassesRemaining;
+    private static volatile long nextSceneProbeNanos;
+    private static volatile String lastGameStateName;
+    private static final AtomicLong SCENE_PASSES = new AtomicLong();
+    private static final AtomicLong SCENE_EVICTIONS = new AtomicLong();
+    private static final AtomicLong SCENE_PASS_NANOS_TOTAL = new AtomicLong();
+    private static final AtomicLong SCENE_PASS_NANOS_MAX = new AtomicLong();
+    static final int SCENE_PASS_MAX_CHUNKS = 8;
+    static final long SCENE_CHUNK_DELAY_NANOS = 100_000_000L;
+    static final long SCENE_WINDOW_NANOS = 10_000_000_000L;
+    static final long SCENE_STATE_PROBE_NANOS = 250_000_000L;
     // ---- M2.6 selftest state ----
     private static volatile boolean selftest;
     private static volatile int selftestResult;
@@ -173,6 +190,12 @@ public final class LazyTextures {
         evictionGraceNanos = Math.max(0, config.evictionGraceMs()) * 1_000_000L;
         evictionSceneDelayNanos = Math.max(0, config.evictionSceneDelayMs()) * 1_000_000L;
         evictionMaxPerPass = Math.max(1, config.evictionMaxPerPass());
+        sceneUnload = config.evictionSceneUnload();
+        sceneUnloadGraceNanos = Math.max(0, config.evictionSceneUnloadGraceMs()) * 1_000_000L;
+        sceneUnloadMaxPerPass = Math.max(1, config.evictionSceneUnloadMaxPerPass());
+        if (sceneUnload && !eviction) {
+            AgentLog.info("lazy: scene unload requires textures.lazy.eviction.enabled=true; inactive");
+        }
         budgetBytesOverride = Long.getLong(
                 "hypernova.textures.lazy.eviction.budgetBytes", -1L);
         skipFile = config.skipFile();
@@ -354,6 +377,15 @@ public final class LazyTextures {
         gameStateMethod = null;
         gameStateResolved = false;
         GAME_STATE_FAIL_LOGGED.set(false);
+        SCENE_PASSES.set(0);
+        SCENE_EVICTIONS.set(0);
+        SCENE_PASS_NANOS_TOTAL.set(0);
+        SCENE_PASS_NANOS_MAX.set(0);
+        scenePassDueNanos = 0;
+        sceneArmedNanos = 0;
+        scenePassesRemaining = 0;
+        nextSceneProbeNanos = 0;
+        lastGameStateName = null;
     }
 
     // ---- wiring armed flags (set by the transformers when a hook is applied) ----
@@ -766,6 +798,30 @@ public final class LazyTextures {
         return now + Math.max(delay, EVICT_EMPTY_BACKOFF_NANOS);
     }
 
+    static boolean shouldArmSceneUnload(String prev, String current) {
+        return "CAMPAIGN".equals(prev) && "COMBAT".equals(current);
+    }
+
+    static long sceneGraceNanos(long now, long armedNanos, long configuredGraceNanos) {
+        if (armedNanos == 0) return configuredGraceNanos;
+        return Math.max(0L, now - armedNanos) + configuredGraceNanos;
+    }
+
+    static long nextScenePassDue(int remaining, long now, long delayNanos) {
+        return remaining > 0 ? now + delayNanos : 0;
+    }
+
+    static boolean shouldRunScenePass(boolean eviction, boolean sceneUnload,
+                                      boolean disabled, int remaining, long dueNanos,
+                                      long now, boolean inCombat, long armedNanos,
+                                      long windowNanos) {
+        if (!eviction || !sceneUnload || disabled) return false;
+        if (remaining <= 0 || dueNanos == 0 || now < dueNanos) return false;
+        if (!inCombat || armedNanos == 0) return false;
+        long elapsed = now - armedNanos;
+        return elapsed >= 0 && elapsed <= windowNanos;
+    }
+
     static boolean shouldArmOnBudget(long dueNanos, long liveBytes, long budget) {
         return dueNanos == 0 && liveBytes > budget;
     }
@@ -774,6 +830,8 @@ public final class LazyTextures {
         if (Thread.currentThread() != runtimeMain) return;
         if (!PENDING_DELETE.isEmpty()) drainPendingDeletes();
         if (!eviction || disabled) return;
+        maybeArmSceneUnload(now);
+        maybeRunSceneEviction(now);
         long due = evictDueNanos;
         if (due == 0 || now < due) return;
         boolean combat = isInCombat();
@@ -787,6 +845,93 @@ public final class LazyTextures {
         evictPass(now);
     }
 
+    static void maybeArmSceneUnload(long now) {
+        if (!eviction || !sceneUnload || disabled) return;
+        if (now < nextSceneProbeNanos) return;
+        nextSceneProbeNanos = now + SCENE_STATE_PROBE_NANOS;
+        String current = currentGameStateName();
+        if (current == null) return;
+        if (shouldArmSceneUnload(lastGameStateName, current)) {
+            armScenePass(now);
+        }
+        lastGameStateName = current;
+    }
+
+    private static void armScenePass(long now) {
+        sceneArmedNanos = now;
+        scenePassesRemaining = SCENE_PASS_MAX_CHUNKS;
+        scenePassDueNanos = now + evictionSceneDelayNanos;
+        AgentLog.info("lazy: scene unload armed CAMPAIGN -> COMBAT; chunks="
+                + SCENE_PASS_MAX_CHUNKS + " firstPassInMs="
+                + (evictionSceneDelayNanos / 1_000_000L));
+    }
+
+    private static void maybeRunSceneEviction(long now) {
+        if (!eviction || !sceneUnload || disabled) return;
+        if (Thread.currentThread() != runtimeMain) return;
+        int remaining = scenePassesRemaining;
+        long due = scenePassDueNanos;
+        if (remaining <= 0 || due == 0 || now < due) return;
+        long armed = sceneArmedNanos;
+        boolean combat = isDefinitelyInCombat();
+        if (!shouldRunScenePass(eviction, sceneUnload, disabled, remaining, due, now,
+                combat, armed, SCENE_WINDOW_NANOS)) {
+            if (remaining > 0 && due != 0
+                    && (!combat || armed == 0 || now - armed > SCENE_WINDOW_NANOS)) {
+                scenePassesRemaining = 0;
+                scenePassDueNanos = 0;
+            }
+            return;
+        }
+        scenePassesRemaining = remaining - 1;
+        scenePassDueNanos = nextScenePassDue(scenePassesRemaining, now,
+                SCENE_CHUNK_DELAY_NANOS);
+        sceneEvictPass(now);
+    }
+
+    private static void sceneEvictPass(long now) {
+        if (!eviction || !sceneUnload || disabled
+                || Thread.currentThread() != runtimeMain) return;
+        long t0 = System.nanoTime();
+        List<ProxyEntry> ready = new ArrayList<>();
+        for (ProxyEntry e : PROXIES.values()) {
+            if (e.ready) ready.add(e);
+        }
+        long grace = sceneGraceNanos(now, sceneArmedNanos, sceneUnloadGraceNanos);
+        List<ProxyEntry> victims = selectSceneVictims(ready, now, grace,
+                sceneUnloadMaxPerPass);
+        int n = 0;
+        long bytes = 0;
+        for (ProxyEntry e : victims) {
+            long b = e.bytes;
+            if (evictOne(e)) {
+                n++;
+                bytes += b;
+            }
+        }
+        SCENE_PASSES.incrementAndGet();
+        SCENE_EVICTIONS.addAndGet(n);
+        long elapsed = System.nanoTime() - t0;
+        SCENE_PASS_NANOS_TOTAL.addAndGet(elapsed);
+        SCENE_PASS_NANOS_MAX.accumulateAndGet(elapsed, (a, b) -> Math.max(a, b));
+        if (n > 0) {
+            AgentLog.info("lazy: scene eviction pass evicted=" + n + " bytes=" + bytes
+                    + " candidates=" + victims.size()
+                    + " live=" + evictableBytes()
+                    + " remaining=" + scenePassesRemaining);
+        }
+        if (elapsed >= 50_000_000L) {
+            AgentLog.info("lazy: scene eviction pass slow " + (elapsed / 1_000_000L)
+                    + " ms evicted=" + n + " candidates=" + victims.size()
+                    + " live=" + evictableBytes());
+        }
+        if (victims.isEmpty()) {
+            // Nothing eligible; later chunks would rescan the same proxies.
+            scenePassesRemaining = 0;
+            scenePassDueNanos = 0;
+        }
+    }
+
     static boolean isInCombat() {
         Method m = resolveGameStateMethod();
         if (m == null) return true; // conservative: unknown -> do not evict
@@ -796,6 +941,21 @@ public final class LazyTextures {
         } catch (Throwable t) {
             return true;
         }
+    }
+
+    static String currentGameStateName() {
+        Method m = resolveGameStateMethod();
+        if (m == null) return null;
+        try {
+            Object state = m.invoke(null);
+            return state == null ? null : String.valueOf(state);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    static boolean isDefinitelyInCombat() {
+        return "COMBAT".equals(currentGameStateName());
     }
 
     private static Method resolveGameStateMethod() {
@@ -1422,6 +1582,13 @@ public final class LazyTextures {
         e.lastUseNanos = System.nanoTime();
     }
 
+    private static boolean isEvictCandidate(ProxyEntry e, long now, long graceNanos) {
+        if (e == null || !e.ready || e.bytes <= 0 || e.glId <= 0) return false;
+        if (!e.owned || e.startup || isBasicPath(e.path)) return false;
+        if (e.lastUseNanos == 0 || now - e.lastUseNanos < graceNanos) return false;
+        return true;
+    }
+
     static boolean canEvict(ProxyEntry e, boolean onMain) {
         if (e == null || !e.ready || e.glId <= 0 || e.obj == null) return false;
         if (!e.owned || e.startup || isBasicPath(e.path)) return false;
@@ -1435,10 +1602,7 @@ public final class LazyTextures {
         long low = budgetBytes - (budgetBytes / 5); // 80%
         List<ProxyEntry> candidates = new ArrayList<>();
         for (ProxyEntry e : ready) {
-            if (e == null || !e.ready || e.bytes <= 0 || e.glId <= 0) continue;
-            if (!e.owned) continue;
-            if (e.startup || isBasicPath(e.path)) continue;
-            if (e.lastUseNanos == 0 || now - e.lastUseNanos < graceNanos) continue;
+            if (!isEvictCandidate(e, now, graceNanos)) continue;
             candidates.add(e);
         }
         candidates.sort(Comparator.comparingLong(e -> e.lastUseNanos));
@@ -1450,6 +1614,21 @@ public final class LazyTextures {
             live -= e.bytes;
         }
         return out;
+    }
+
+    static List<ProxyEntry> selectSceneVictims(List<ProxyEntry> ready, long now,
+                                               long graceNanos, int max) {
+        if (max <= 0) return List.of();
+        List<ProxyEntry> candidates = new ArrayList<>();
+        for (ProxyEntry e : ready) {
+            if (!isEvictCandidate(e, now, graceNanos)) continue;
+            candidates.add(e);
+        }
+        candidates.sort(Comparator.comparingLong(e -> e.lastUseNanos));
+        if (candidates.size() > max) {
+            return new ArrayList<>(candidates.subList(0, max));
+        }
+        return candidates;
     }
 
     static boolean isBasicPath(String path) {
@@ -1824,7 +2003,13 @@ public final class LazyTextures {
                     + " evictSkipped=" + OLD_ID_SKIPPED.get()
                     + " deferredDeletes=" + DEFERRED_DELETES.get()
                     + " selftest=" + selftestResult
-                    + " failedParked=" + FAILED_PARKED.get());
+                    + " failedParked=" + FAILED_PARKED.get()
+                    + " sceneUnload=" + ((eviction && sceneUnload) ? 1 : 0)
+                    + " scenePasses=" + SCENE_PASSES.get()
+                    + " sceneEvictions=" + SCENE_EVICTIONS.get()
+                    + " sceneEvictMsTotal=" + (SCENE_PASS_NANOS_TOTAL.get() / 1_000_000L)
+                    + " sceneEvictMsMax=" + (SCENE_PASS_NANOS_MAX.get() / 1_000_000L)
+                    + " scenePending=" + scenePassesRemaining);
         } catch (Throwable t) {
             AgentLog.fail("lazy probe: summary failed", t);
         }

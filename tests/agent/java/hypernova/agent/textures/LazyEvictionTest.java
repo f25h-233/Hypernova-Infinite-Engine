@@ -337,4 +337,104 @@ class LazyEvictionTest {
         assertTrue(LazyTextures.isBasicPath("graphics/intro/x.png"));
         assertFalse(LazyTextures.isBasicPath("graphics/ships/x.png"));
     }
+
+    @Test
+    void sceneArmsOnlyOnCampaignToCombat() {
+        assertFalse(LazyTextures.shouldArmSceneUnload(null, "COMBAT"));
+        assertTrue(LazyTextures.shouldArmSceneUnload("CAMPAIGN", "COMBAT"));
+        assertFalse(LazyTextures.shouldArmSceneUnload("COMBAT", "COMBAT"));
+        assertFalse(LazyTextures.shouldArmSceneUnload("COMBAT", "CAMPAIGN"));
+        assertFalse(LazyTextures.shouldArmSceneUnload("TITLE", "COMBAT"));
+        assertFalse(LazyTextures.shouldArmSceneUnload("CAMPAIGN", null));
+    }
+
+    @Test
+    void sceneVictimsIgnoreBudgetAndLowWater() {
+        LazyTextures.ProxyEntry old = entry("old", 30, 100);
+        LazyTextures.ProxyEntry mid = entry("mid", 30, 200);
+        LazyTextures.ProxyEntry young = entry("young", 30, 300);
+        List<LazyTextures.ProxyEntry> ready = List.of(old, mid, young);
+        assertTrue(LazyTextures.selectVictims(ready, 90, 100, 0, 1_000, 10).isEmpty());
+        assertEquals(List.of(old, mid, young),
+                LazyTextures.selectSceneVictims(ready, 1_000, 0, 10));
+    }
+
+    @Test
+    void sceneVictimsProtectBasicStartupForeignAndYoung() {
+        LazyTextures.ProxyEntry startup = entry("startup", 10, 100);
+        startup.startup = true;
+        LazyTextures.ProxyEntry ui = entry("graphics/ui/x.png", 10, 100);
+        LazyTextures.ProxyEntry fonts = entry("graphics/fonts/x.png", 10, 100);
+        LazyTextures.ProxyEntry intro = entry("graphics/intro/x.png", 10, 100);
+        LazyTextures.ProxyEntry background = entry("graphics/backgrounds/x.jpg", 10, 100);
+        LazyTextures.ProxyEntry foreign = entry("foreign", 10, 100);
+        foreign.owned = false;
+        LazyTextures.ProxyEntry young = entry("young", 10, 9_950);
+        LazyTextures.ProxyEntry notReady = entry("notReady", 10, 100);
+        notReady.ready = false;
+        LazyTextures.ProxyEntry ok = entry("ok", 10, 100);
+        assertEquals(List.of(ok), LazyTextures.selectSceneVictims(
+                List.of(startup, ui, fonts, intro, background, foreign,
+                        young, notReady, ok), 10_000, 1_000, 10));
+    }
+
+    @Test
+    void sceneVictimsAreLruOrderedAndCapped() {
+        LazyTextures.ProxyEntry a = entry("a", 10, 300);
+        LazyTextures.ProxyEntry b = entry("b", 10, 100);
+        LazyTextures.ProxyEntry c = entry("c", 10, 200);
+        assertEquals(List.of(b, c), LazyTextures.selectSceneVictims(
+                List.of(a, b, c), 1_000, 0, 2));
+        assertTrue(LazyTextures.selectSceneVictims(
+                List.of(a, b, c), 1_000, 0, 0).isEmpty());
+    }
+
+    @Test
+    void sceneGraceIncludesElapsedSinceArm() {
+        assertEquals(0, LazyTextures.sceneGraceNanos(1_000, 1_000, 0));
+        assertEquals(500, LazyTextures.sceneGraceNanos(1_500, 1_000, 0));
+        assertEquals(700, LazyTextures.sceneGraceNanos(1_500, 1_000, 200));
+        assertEquals(200, LazyTextures.sceneGraceNanos(1_500, 0, 200));
+    }
+
+    @Test
+    void sceneGraceProtectsTexturesTouchedAfterArm() {
+        long armed = 1_000;
+        long now = 3_000;
+        long grace = LazyTextures.sceneGraceNanos(now, armed, 0);
+        LazyTextures.ProxyEntry combatTex = entry("combat", 10, 2_500);
+        LazyTextures.ProxyEntry campaignTex = entry("campaign", 10, 900);
+        assertEquals(List.of(campaignTex), LazyTextures.selectSceneVictims(
+                List.of(combatTex, campaignTex), now, grace, 10));
+    }
+
+    @Test
+    void sceneScheduleTruthTable() {
+        assertTrue(LazyTextures.shouldRunScenePass(
+                true, true, false, 8, 100, 100, true, 100, 1_000));
+        assertFalse(LazyTextures.shouldRunScenePass(
+                false, true, false, 8, 100, 100, true, 100, 1_000));
+        assertFalse(LazyTextures.shouldRunScenePass(
+                true, false, false, 8, 100, 100, true, 100, 1_000));
+        assertFalse(LazyTextures.shouldRunScenePass(
+                true, true, true, 8, 100, 100, true, 100, 1_000));
+        assertFalse(LazyTextures.shouldRunScenePass(
+                true, true, false, 0, 100, 100, true, 100, 1_000));
+        assertFalse(LazyTextures.shouldRunScenePass(
+                true, true, false, 8, 0, 100, true, 100, 1_000));
+        assertFalse(LazyTextures.shouldRunScenePass(
+                true, true, false, 8, 100, 99, true, 100, 1_000));
+        assertFalse(LazyTextures.shouldRunScenePass(
+                true, true, false, 8, 100, 100, false, 100, 1_000));
+        assertFalse(LazyTextures.shouldRunScenePass(
+                true, true, false, 8, 100, 100, true, 0, 1_000));
+        assertFalse(LazyTextures.shouldRunScenePass(
+                true, true, false, 8, 100, 1_200, true, 100, 1_000));
+    }
+
+    @Test
+    void sceneNextDueCapsChunks() {
+        assertEquals(1_050, LazyTextures.nextScenePassDue(3, 1_000, 50));
+        assertEquals(0, LazyTextures.nextScenePassDue(0, 1_000, 50));
+    }
 }
