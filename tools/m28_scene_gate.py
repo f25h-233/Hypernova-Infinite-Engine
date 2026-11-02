@@ -9,7 +9,8 @@ transcription.
 A summary only counts when it appears after the last
 `hypernova agent premain` anchor and contains every key in
 REQUIRED_SUMMARY_KEYS. Stale/old-format summaries are rejected instead of
-being reported as zeros.
+being reported as zeros. Strict mode also fails when lazy is unhealthy
+(`failed`, `disabled`, `dimMismatch`, or `main=none`).
 
 Usage:
     python tools/m28_scene_gate.py \
@@ -40,6 +41,9 @@ TEXTURE_ERRORS = (
 )
 REQUIRED_SUMMARY_KEYS = (
     "queue",
+    "failed",
+    "disabled",
+    "dimMismatch",
     "failedParked",
     "sceneUnload",
     "scenePasses",
@@ -47,6 +51,8 @@ REQUIRED_SUMMARY_KEYS = (
     "sceneEvictMsTotal",
     "sceneEvictMsMax",
     "scenePending",
+    "main",
+    "ddsDisabled",
 )
 _KEY_VALUE = re.compile(r"([A-Za-z][A-Za-z0-9_]*)=([^\s]+)")
 
@@ -140,6 +146,16 @@ def require_int(summary: dict[str, int | str], key: str) -> int:
     return value
 
 
+def require_string(summary: dict[str, int | str], key: str) -> str:
+    if key not in summary:
+        raise ValueError(f"summary missing required key: {key}")
+    value = summary[key]
+    if not isinstance(value, str):
+        raise ValueError(
+            f"summary key {key} must be a string, got {value!r}")
+    return value
+
+
 def count_texture_errors(text: str) -> dict[str, int]:
     return {name: text.count(name) for name in TEXTURE_ERRORS}
 
@@ -229,13 +245,18 @@ def build_report(
         "summary": summary,
         "texture_errors": errors,
         "texture_errors_total": sum(errors.values()),
+        "failed": require_int(summary, "failed"),
+        "disabled": require_int(summary, "disabled"),
+        "dim_mismatch": require_int(summary, "dimMismatch"),
+        "failed_parked": require_int(summary, "failedParked"),
+        "main": require_string(summary, "main"),
+        "dds_disabled": require_int(summary, "ddsDisabled"),
         "scene_unload": require_int(summary, "sceneUnload"),
         "scene_passes": require_int(summary, "scenePasses"),
         "scene_evictions": require_int(summary, "sceneEvictions"),
         "scene_evict_ms_total": require_int(summary, "sceneEvictMsTotal"),
         "scene_evict_ms_max": require_int(summary, "sceneEvictMsMax"),
         "scene_pending": require_int(summary, "scenePending"),
-        "failed_parked": require_int(summary, "failedParked"),
         "summary_line": summary_line,
         "agent_session_anchor_line": anchor_line,
         "agent_session_count": anchor_count,
@@ -258,10 +279,18 @@ def main(argv: list[str] | None = None) -> int:
         "--require-scene", action="store_true",
         help="fail unless sceneEvictions > 0; implies --strict")
     parser.add_argument(
+        "--require-control", action="store_true",
+        help="require control metrics (sceneUnload/scenePasses/"
+             "sceneEvictions all 0); implies --strict")
+    parser.add_argument(
         "--strict", action="store_true",
-        help="fail on texture errors, failedParked, or missing session anchor")
+        help="fail on lazy health, texture errors, failedParked, "
+             "or missing session anchor")
     args = parser.parse_args(argv)
-    strict = args.strict or args.require_scene
+    if args.require_scene and args.require_control:
+        parser.error("--require-scene and --require-control are "
+                     "mutually exclusive")
+    strict = (args.strict or args.require_scene or args.require_control)
 
     try:
         agent_text = args.agent_log.read_text(
@@ -296,6 +325,21 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     if strict:
+        if report["failed"] != 0:
+            print(f"m28_scene_gate: failed={report['failed']}",
+                  file=sys.stderr)
+            return 1
+        if report["disabled"] != 0:
+            print(f"m28_scene_gate: disabled={report['disabled']}",
+                  file=sys.stderr)
+            return 1
+        if report["dim_mismatch"] != 0:
+            print(f"m28_scene_gate: dimMismatch={report['dim_mismatch']}",
+                  file=sys.stderr)
+            return 1
+        if report["main"].strip().lower() == "none":
+            print("m28_scene_gate: main=none", file=sys.stderr)
+            return 1
         if not report["session_anchor_found"]:
             print("m28_scene_gate: no Fast Rendering session anchor",
                   file=sys.stderr)
@@ -311,6 +355,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.require_scene and report["scene_evictions"] <= 0:
             print("m28_scene_gate: require-scene but sceneEvictions=0",
                   file=sys.stderr)
+            return 1
+        if args.require_control and (
+                report["scene_unload"] != 0
+                or report["scene_passes"] != 0
+                or report["scene_evictions"] != 0):
+            print("m28_scene_gate: require-control but scene metrics "
+                  "are not all 0", file=sys.stderr)
             return 1
     return 0
 

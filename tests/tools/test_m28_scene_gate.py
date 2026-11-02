@@ -14,6 +14,9 @@ ANCHOR = "2026-11-02T00:00:00Z INFO hypernova agent premain; config=test"
 STAR = "Fast Rendering: v0.9.7rc2"
 SUMMARY_VALUES = {
     "queue": 12,
+    "failed": 0,
+    "disabled": 0,
+    "dimMismatch": 0,
     "failedParked": 0,
     "sceneUnload": 1,
     "scenePasses": 3,
@@ -21,6 +24,8 @@ SUMMARY_VALUES = {
     "sceneEvictMsTotal": 20,
     "sceneEvictMsMax": 7,
     "scenePending": 0,
+    "main": "Thread-3",
+    "ddsDisabled": 0,
 }
 
 
@@ -29,6 +34,13 @@ def _summary(**overrides):
     values.update(overrides)
     return "lazy probe: summary " + " ".join(
         f"{key}={value}" for key, value in values.items())
+
+
+def _summary_without(key):
+    values = dict(SUMMARY_VALUES)
+    values.pop(key)
+    return "lazy probe: summary " + " ".join(
+        f"{name}={value}" for name, value in values.items())
 
 
 def _agent(*lines):
@@ -46,6 +58,13 @@ def _write_run(tmp_path, agent_text, starsector_text):
 def _main_args(agent, starsector, *extra):
     return ["--agent-log", str(agent), "--starsector-log", str(starsector),
             *extra]
+
+
+def _run_gate(tmp_path, capsys, summary_line, *flags):
+    agent, starsector = _write_run(
+        tmp_path, _agent(summary_line), f"{STAR}\n")
+    code = gate.main(_main_args(agent, starsector, *flags))
+    return code, capsys.readouterr()
 
 
 def test_parse_summary_line_extracts_ints_and_strings():
@@ -213,7 +232,12 @@ def test_build_report_exposes_scene_fields_and_evidence():
     assert report["scene_evict_ms_total"] == 20
     assert report["scene_evict_ms_max"] == 7
     assert report["scene_pending"] == 0
+    assert report["failed"] == 0
+    assert report["disabled"] == 0
+    assert report["dim_mismatch"] == 0
     assert report["failed_parked"] == 2
+    assert report["main"] == "Thread-3"
+    assert report["dds_disabled"] == 0
     assert report["texture_errors_total"] == 1
     assert report["summary_line"] == 2
     assert report["agent_session_anchor_line"] == 1
@@ -233,6 +257,19 @@ def test_build_report_rejects_non_int_scene_key():
     agent = _agent(_summary(scenePasses="oops"))
     with pytest.raises(ValueError, match="scenePasses"):
         gate.build_report(agent, f"{STAR}\n")
+
+
+def test_build_report_rejects_non_string_main():
+    agent = _agent(_summary(main=123))
+    with pytest.raises(ValueError, match="main"):
+        gate.build_report(agent, f"{STAR}\n")
+
+
+@pytest.mark.parametrize(
+    "key", ["failed", "disabled", "dimMismatch", "main", "ddsDisabled"])
+def test_last_summary_rejects_missing_health_key(key):
+    with pytest.raises(ValueError, match=key):
+        gate.last_summary(_agent(_summary_without(key)))
 
 
 def test_build_report_marks_missing_session_anchor():
@@ -325,3 +362,87 @@ def test_main_missing_input_file_has_clean_error(tmp_path, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.startswith("m28_scene_gate:")
+
+
+@pytest.mark.parametrize("field,needle", [
+    ("failed", "failed=1"),
+    ("disabled", "disabled=1"),
+    ("dimMismatch", "dimMismatch=1"),
+])
+def test_main_health_gate_returns_one(
+        tmp_path, capsys, field, needle):
+    code, captured = _run_gate(
+        tmp_path, capsys, _summary(**{field: 1}), "--strict")
+    assert code == 1
+    assert needle in captured.err
+
+
+def test_main_main_none_returns_one(tmp_path, capsys):
+    code, captured = _run_gate(
+        tmp_path, capsys, _summary(main="none"), "--strict")
+    assert code == 1
+    assert "main=none" in captured.err
+
+
+def test_main_treatment_disabled_fails_require_scene(tmp_path, capsys):
+    code, captured = _run_gate(
+        tmp_path, capsys,
+        _summary(sceneEvictions=5, disabled=1),
+        "--require-scene", "--strict")
+    assert code == 1
+    assert "disabled=1" in captured.err
+
+
+def test_main_dds_disabled_does_not_fail_strict(tmp_path, capsys):
+    code, captured = _run_gate(
+        tmp_path, capsys, _summary(ddsDisabled=1), "--strict")
+    assert code == 0
+    assert json.loads(captured.out)["dds_disabled"] == 1
+
+
+def test_main_require_control_implies_strict(tmp_path, capsys):
+    code, captured = _run_gate(
+        tmp_path, capsys, _summary(disabled=1), "--require-control")
+    assert code == 1
+    assert "disabled=1" in captured.err
+
+
+def test_main_require_control_rejects_treatment_metrics(tmp_path, capsys):
+    code, captured = _run_gate(
+        tmp_path, capsys,
+        _summary(sceneUnload=1, scenePasses=3, sceneEvictions=5),
+        "--require-control")
+    assert code == 1
+    assert "require-control" in captured.err
+
+
+def test_main_require_control_accepts_control_metrics(tmp_path, capsys):
+    code, captured = _run_gate(
+        tmp_path, capsys,
+        _summary(sceneUnload=0, scenePasses=0, sceneEvictions=0),
+        "--require-control")
+    assert code == 0
+    assert json.loads(captured.out)["scene_unload"] == 0
+
+
+def test_main_require_scene_and_require_control_conflict(tmp_path):
+    agent, starsector = _write_run(
+        tmp_path, _agent(_summary()), f"{STAR}\n")
+    with pytest.raises(SystemExit) as excinfo:
+        gate.main(_main_args(
+            agent, starsector, "--require-scene", "--require-control"))
+    assert excinfo.value.code == 2
+
+
+@pytest.mark.parametrize("key", ["failed", "disabled", "dimMismatch", "main"])
+def test_main_missing_health_key_fails_closed(tmp_path, capsys, key):
+    out = tmp_path / "out.json"
+    agent, starsector = _write_run(
+        tmp_path, _agent(_summary_without(key)), f"{STAR}\n")
+    assert gate.main(_main_args(
+        agent, starsector, "--strict", "--out", str(out))) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("m28_scene_gate:")
+    assert key in captured.err
+    assert not out.exists()
