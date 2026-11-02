@@ -10,6 +10,10 @@
 > scene/健康键或值类型不对时明确报错，不输出全零 JSON；strict 还会在
 > lazy fail-open（`failed`/`disabled`/`dimMismatch` 非 0 或 `main=none`）
 > 时失败。
+>
+> **2026-11-02 收口：Task 4 实机 gate 由用户跳过**（260mods 生涯大地图移动
+> 严重卡顿，不作为 Hypernova 结论）。M2.8 默认 off，不宣称显存收益；本清单
+> 保留为将来环境允许时的可选复跑步骤。详见 `docs/m28-results.md`。
 
 ## 1. 前置
 
@@ -94,9 +98,11 @@
   chunk 的墙钟耗时，不是帧时间 P99。>200 ms 的卡顿仍以主观/外部帧时间
   工具为准。
 - `scenePasses=0` 时，先在 agent log 搜 `lazy: scene unload armed`：
-  没有该行说明未 arm；有该行但淘汰为 0，可能是没有可淘汰候选
-  （例如都被保护或已 touch），也可能是首个 chunk 的 2 s 延迟前已离开
-  战斗、或 scene pass 窗口过期，不能只按“无候选”解释。
+  没有该行说明未 arm；有该行但 `scenePasses=0` 说明没有任何 chunk 真正执行
+  （例如首个 chunk 的 2 s 延迟前已离开战斗，或 scene pass 窗口过期）。
+  如果 chunk 执行了但没淘汰，`scenePasses` 会 ≥1（空候选/全失败也会计一次
+  chunk），此时再看 `sceneEvictions=0` 与候选原因；不能把“无候选”当成
+  `scenePasses=0` 的解释。
 - `disabled=1` 表示 lazy 已 fail-open（自动禁用）；此时控制组不是有效
   基线，两组都需要恢复 lazy 健康后重跑。`ddsDisabled=1` 只记录、不作为
   strict 失败条件（DDS 不可用不等于 lazy 失效）。
