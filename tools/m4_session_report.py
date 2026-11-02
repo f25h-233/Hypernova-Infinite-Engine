@@ -20,6 +20,10 @@ import re
 import sys
 from pathlib import Path
 
+TOOLS = Path(__file__).resolve().parent
+if str(TOOLS) not in sys.path:
+    sys.path.insert(0, str(TOOLS))
+
 import m28_scene_gate as gate
 
 FRAME_MARKER = "HYPERNOVA_FRAME "

@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -106,3 +108,11 @@ def test_gpu_csv_without_samples_is_rc2(tmp_path):
     gpu.write_text("timestamp,dedicated_mb,shared_mb\n", encoding="utf-8")
     assert report_mod.main(["--agent-log", str(agent), "--starsector-log", str(log),
                             "--gpu-csv", str(gpu)]) == 2
+
+
+def test_script_runs_under_isolated_mode():
+    proc = subprocess.run(
+        [sys.executable, "-I", str(TOOLS / "m4_session_report.py"), "--help"],
+        capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    assert "m4_session_report" in proc.stdout or "usage" in proc.stdout.lower()
