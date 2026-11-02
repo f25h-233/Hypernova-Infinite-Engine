@@ -31,7 +31,10 @@ AGENT_SESSION_ANCHOR = "hypernova agent premain"
 REQUIRED_FRAME_KEYS = (
     "frames", "over200", "maxMs", "p99Ms", "lastMs", "longGaps",
 )
-REQUIRED_LAZY_KEYS = ("queue", "failed", "disabled", "dimMismatch", "main")
+REQUIRED_LAZY_KEYS = (
+    "queue", "failed", "disabled", "dimMismatch", "main",
+    "liveBytes", "evictableBytes",
+)
 _KEY_VALUE = re.compile(r"([A-Za-z][A-Za-z0-9_]*)=([^\s]+)")
 
 
@@ -45,8 +48,21 @@ def parse_pairs(text: str) -> dict[str, int | str]:
     return out
 
 
-def find_frame_probe(text: str) -> dict:
-    """返回给定会话切片里最后一条 HYPERNOVA_FRAME 行。"""
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _lazy_value_ok(key: str, value) -> bool:
+    if key == "main":
+        return isinstance(value, str)
+    return _is_int(value)
+
+
+def find_frame_probe(text: str, offset: int = 0) -> dict:
+    """返回给定会话切片里最后一条 HYPERNOVA_FRAME 行。
+
+    `line` 是切片内行号；提供会话起点 offset 时，`file_line` 换算成绝对行号。
+    """
     found: dict[str, int | str] | None = None
     found_line = None
     for lineno, line in enumerate(text.splitlines(), 1):
@@ -56,10 +72,19 @@ def find_frame_probe(text: str) -> dict:
         found = parse_pairs(line[pos + len(FRAME_MARKER):])
         found_line = lineno
     if found is None:
-        return {"present": False, "missing_keys": list(REQUIRED_FRAME_KEYS)}
+        return {"present": False, "line": None, "file_line": None,
+                "missing_keys": list(REQUIRED_FRAME_KEYS),
+                "invalid_keys": []}
     missing = [key for key in REQUIRED_FRAME_KEYS if key not in found]
-    return {"present": True, "line": found_line,
-            "missing_keys": missing, **found}
+    invalid = [key for key in REQUIRED_FRAME_KEYS
+               if key in found and (
+                   not _is_int(found[key]) or found[key] < 0)]
+    if offset > 0:
+        file_line = offset + found_line - 1
+    else:
+        file_line = found_line
+    return {"present": True, "line": found_line, "file_line": file_line,
+            "missing_keys": missing, "invalid_keys": invalid, **found}
 
 
 def find_lazy_summary(text: str) -> dict:
@@ -80,7 +105,9 @@ def find_lazy_summary(text: str) -> dict:
             continue
         parsed = parse_pairs(line)
         missing = [key for key in REQUIRED_LAZY_KEYS if key not in parsed]
-        if missing:
+        invalid = [key for key in REQUIRED_LAZY_KEYS
+                   if key in parsed and not _lazy_value_ok(key, parsed[key])]
+        if missing or invalid:
             continue
         found = parsed
         found_line = anchor + offset + 2
@@ -95,7 +122,7 @@ def find_lazy_summary(text: str) -> dict:
 
 def _zero(summary: dict, key: str):
     value = summary.get(key)
-    if not isinstance(value, int):
+    if not _is_int(value):
         return None
     return value == 0
 
@@ -105,19 +132,22 @@ def build_report(agent_text: str, starsector_text: str,
     session, anchor_found, anchor_line, anchor_count = gate.last_session(
         starsector_text)
     errors = gate.count_texture_errors(session)
-    frame = find_frame_probe(session)
+    frame = find_frame_probe(
+        session, offset=anchor_line if anchor_found else 0)
     lazy = find_lazy_summary(agent_text)
     summary = lazy.get("summary", {})
     health = {
         "session_anchor_found": anchor_found,
         "frame_probe_present": frame["present"],
-        "frame_probe_complete": frame["present"] and not frame["missing_keys"],
+        "frame_probe_complete": (frame["present"]
+                                 and not frame["missing_keys"]
+                                 and not frame["invalid_keys"]),
         "lazy_present": lazy["present"],
         "lazy_failed_zero": _zero(summary, "failed"),
         "lazy_disabled_zero": _zero(summary, "disabled"),
         "lazy_dim_mismatch_zero": _zero(summary, "dimMismatch"),
         "lazy_failed_parked_zero": _zero(summary, "failedParked"),
-        "lazy_main_bound": summary.get("main") not in (None, "none"),
+        "lazy_main_bound": str(summary.get("main")).strip().lower() != "none",
         "texture_errors_zero": sum(errors.values()) == 0,
     }
     report = {
@@ -142,9 +172,11 @@ def human_text(report: dict) -> str:
     lazy = report["lazy"]
     lines = []
     if frame["present"]:
-        lines.append("frame: frames={frames} over200={over200} "
-                     "max={maxMs}ms p99={p99Ms}ms last={lastMs}ms "
-                     "longGaps={longGaps}".format(**frame))
+        lines.append("frame: frames={} over200={} max={}ms p99={}ms "
+                     "last={}ms longGaps={}".format(
+                         frame.get("frames", "?"), frame.get("over200", "?"),
+                         frame.get("maxMs", "?"), frame.get("p99Ms", "?"),
+                         frame.get("lastMs", "?"), frame.get("longGaps", "?")))
     else:
         lines.append("frame: absent")
     if lazy["present"]:
@@ -162,7 +194,9 @@ def human_text(report: dict) -> str:
         report["texture_errors_total"]))
     gpu = report.get("gpu")
     if gpu:
-        lines.append("gpu dedicated MB: {}".format(gpu.get("dedicated_mb")))
+        dedicated = gpu.get("dedicated_mb") or {}
+        lines.append("gpu dedicated MB: {}".format(
+            dedicated.get("median", "?")))
     return "\n".join(lines)
 
 
@@ -196,6 +230,12 @@ def main(argv=None) -> int:
                       f"{args.gpu_csv} (bad_rows={gpu_bad_rows})",
                       file=sys.stderr)
                 return 2
+            gpu_summary = gate.summarize_gpu(gpu_rows)
+            if gpu_summary["dedicated_mb"] is None:
+                print("m4_session_report: no usable dedicated GPU memory "
+                      f"samples in {args.gpu_csv} "
+                      f"(bad_rows={gpu_bad_rows})", file=sys.stderr)
+                return 2
         report = build_report(agent_text, starsector_text, gpu_rows)
         if gpu_bad_rows:
             report["gpu_bad_rows"] = gpu_bad_rows
@@ -213,24 +253,27 @@ def main(argv=None) -> int:
         except OSError as exc:
             print(f"m4_session_report: {exc}", file=sys.stderr)
             return 1
-    if args.text:
-        print(human_text(report), file=sys.stderr)
 
     problems: list[str] = []
     health = report["health"]
+    if not health["session_anchor_found"]:
+        problems.append("no Fast Rendering session anchor")
+    if not health["lazy_present"]:
+        problems.append("no valid lazy probe summary")
+    if health["texture_errors_zero"] is False:
+        problems.append("texture errors > 0")
     if args.require_frame or args.strict:
-        if not health["session_anchor_found"]:
-            problems.append("no Fast Rendering session anchor")
         if not health["frame_probe_present"]:
             problems.append("no HYPERNOVA_FRAME line (frame probe off?)")
-        elif not health["frame_probe_complete"]:
-            problems.append("frame probe line missing keys: "
-                            + ", ".join(report["frame_probe"]["missing_keys"]))
-        if health["texture_errors_zero"] is False:
-            problems.append("texture errors > 0")
-    if args.strict:
-        if not health["lazy_present"]:
-            problems.append("no valid lazy probe summary")
+        else:
+            frame = report["frame_probe"]
+            if frame["invalid_keys"]:
+                problems.append("frame probe line has invalid values: "
+                                + ", ".join(frame["invalid_keys"]))
+            if frame["missing_keys"]:
+                problems.append("frame probe line missing keys: "
+                                + ", ".join(frame["missing_keys"]))
+    if args.strict and health["lazy_present"]:
         for key, label in (
                 ("lazy_failed_zero", "failed != 0"),
                 ("lazy_disabled_zero", "disabled != 0"),
@@ -241,6 +284,8 @@ def main(argv=None) -> int:
                 problems.append(label)
             elif health[key] is None:
                 problems.append(label + " (missing key)")
+    if args.text:
+        print(human_text(report), file=sys.stderr)
     if problems:
         for problem in problems:
             print(f"m4_session_report: {problem}", file=sys.stderr)
