@@ -327,3 +327,28 @@ def test_treatment_stats_only_from_current_run_tail(tmp_path, monkeypatch):
     assert result["rows"][0]["lazy"]["queue"] == 222
     assert result["lazy_median"]["queue"] == 222
     assert result["gates"]["treatment_stats_present"] is True
+
+
+def test_stale_pid_file_is_not_killed_before_launch(tmp_path, monkeypatch):
+    out = tmp_path / "round.json"
+    pid_file = tmp_path / "round.json.pid"
+    pid_file.write_text("777777", encoding="utf-8")
+    calls = []
+    seen = {}
+
+    class Result:
+        returncode = 0
+
+    def fake_run(cmd, **kwargs):
+        seen["pid_existed"] = pid_file.exists()
+        out.write_text(json.dumps([{"ok": True, "menu_s": 50.0}]),
+                       encoding="utf-8")
+        return Result()
+
+    monkeypatch.setattr(ab, "kill_pid", lambda pid, force: calls.append((pid, force)))
+    monkeypatch.setattr(ab, "wait_dead", lambda pid, timeout: True)
+    monkeypatch.setattr(ab.subprocess, "run", fake_run)
+    row = ab.run_round("miko-lite", True, True, False, False, out, 1, 1)
+    assert row["ok"] is True
+    assert seen["pid_existed"] is False
+    assert calls == []

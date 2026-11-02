@@ -262,3 +262,83 @@ def test_one_round_writes_and_clears_pid_file(tmp_path, monkeypatch):
     assert row["ok"] is True
     assert seen["pid"] == "424242"
     assert not pid_file.exists()
+
+
+def _one_round_args(pid_file):
+    return argparse.Namespace(start_res="1707x1067", fullscreen=False,
+                              jvm_arg=[], wait_menu=1, linger=0,
+                              pid_file=str(pid_file))
+
+
+def _stub_round_metrics(monkeypatch):
+    monkeypatch.setattr(smoke, "io_read_bytes", lambda pid: 7)
+    monkeypatch.setattr(smoke, "process_memory_mb", lambda pid: 1234.56)
+    monkeypatch.setattr(smoke, "process_private_mb", lambda pid: 2345.67)
+    monkeypatch.setattr(smoke, "gpu_memory_mb", lambda: 4096.0)
+    monkeypatch.setattr(smoke, "process_gpu_memory_mb", lambda pid: (3500.0, 100.0))
+    monkeypatch.setattr(smoke, "free_physical_mb", lambda: 15000.0)
+    monkeypatch.setattr(smoke.time, "sleep", lambda seconds: None)
+
+
+class _FakeProc:
+    pid = 424242
+
+
+def test_one_round_keeps_pid_file_when_stop_still_running(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    cfg = {"java": "jre/java", "vmparams": "vm.txt", "cwd": "starsector-core"}
+    pid_file = tmp_path / "round.pid"
+
+    monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **k: _FakeProc())
+    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: 12.5)
+    _stub_round_metrics(monkeypatch)
+    monkeypatch.setattr(smoke, "graceful_stop", lambda proc: "still-running")
+
+    row = smoke.one_round(cfg, game, _one_round_args(pid_file))
+    assert row["ok"] is False
+    assert row["reason"] == "game-still-running"
+    assert row["menu_s"] == 12.5
+    assert pid_file.read_text(encoding="utf-8") == "424242"
+
+
+def test_menu_timeout_keeps_pid_file_when_game_survives(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    cfg = {"java": "jre/java", "vmparams": "vm.txt", "cwd": "starsector-core"}
+    pid_file = tmp_path / "round.pid"
+    calls = []
+
+    monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **k: _FakeProc())
+    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: None)
+    monkeypatch.setattr(smoke, "kill_pid",
+                        lambda pid, force: calls.append((pid, force)))
+    monkeypatch.setattr(smoke, "wait_dead", lambda pid, timeout: False)
+    monkeypatch.setattr(smoke.time, "sleep", lambda seconds: None)
+
+    row = smoke.one_round(cfg, game, _one_round_args(pid_file))
+    assert row["ok"] is False
+    assert row["reason"] == "menu-timeout"
+    assert calls == [(424242, True)]
+    assert pid_file.read_text(encoding="utf-8") == "424242"
+
+
+def test_menu_timeout_clears_pid_file_when_game_dies(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    cfg = {"java": "jre/java", "vmparams": "vm.txt", "cwd": "starsector-core"}
+    pid_file = tmp_path / "round.pid"
+    calls = []
+
+    monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **k: _FakeProc())
+    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: None)
+    monkeypatch.setattr(smoke, "kill_pid",
+                        lambda pid, force: calls.append((pid, force)))
+    monkeypatch.setattr(smoke, "wait_dead", lambda pid, timeout: True)
+    monkeypatch.setattr(smoke.time, "sleep", lambda seconds: None)
+
+    row = smoke.one_round(cfg, game, _one_round_args(pid_file))
+    assert row["ok"] is False
+    assert row["reason"] == "menu-timeout"
+    assert calls == [(424242, True)]
+    assert not pid_file.exists()

@@ -520,8 +520,10 @@ def one_round(cfg: dict, game: Path, args) -> dict:
     menu_s = wait_for_menu(logp, offset, args.wait_menu, proc)
     if menu_s is None:
         kill_pid(proc.pid, True)
-        clear_pid_file(pid_file)
-        return {"ok": False, "reason": "menu-timeout", "elapsed": time.time() - t0}
+        if wait_dead(proc.pid, 20):
+            clear_pid_file(pid_file)
+        return {"ok": False, "reason": "menu-timeout",
+                "elapsed": time.time() - t0}
 
     print(f">>> 主菜单到达：{menu_s:.1f}s（从进程启动算）")
 
@@ -549,10 +551,11 @@ def one_round(cfg: dict, game: Path, args) -> dict:
     wall = time.time() - t0
     print(f">>> 退出方式：{how}；总墙钟 {wall:.1f}s")
 
-    clear_pid_file(pid_file)
+    if how != "still-running":
+        clear_pid_file(pid_file)
     time.sleep(1.0)   # 让 shutdown hook 写完
-    return {
-        "ok": True,
+    row = {
+        "ok": how != "still-running",
         "menu_s": round(menu_s, 1),
         "wall_s": round(wall, 1),
         "stop": how,
@@ -571,6 +574,9 @@ def one_round(cfg: dict, game: Path, args) -> dict:
         "free_mb_exit": _round_mb(free_exit),
         "agent": agent_results(game, agent_off),
     }
+    if how == "still-running":
+        row["reason"] = "game-still-running"
+    return row
 
 
 # ---------------------------------------------------------------- reporting
