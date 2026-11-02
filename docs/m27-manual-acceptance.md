@@ -1,7 +1,9 @@
 # M2.7 手动验收清单（战斗/读档/分辨率/长会话）
 
-> 这些项目**尚未执行**；本文件是给用户的验收步骤，不是 PASS 记录。只有在全部通过后才可讨论
-> default-on；任何一项失败先记录再修。自动化菜单证据见 `docs/m27-results.md`。
+> 2026-11-02：已执行一次用户任务战斗（Valkyrie「为天堂之门而战」），lazy+DDS+eviction
+> 默认预算下正常、0 五类纹理错误，但 `evictPasses=0`（无淘汰压力）；其余项目未完成。
+> 本文件是验收步骤 + 实测记录，不是完整 PASS。只有在全部通过后才可讨论 default-on；
+> 任何一项失败先记录再修。自动化菜单证据见 `docs/m27-results.md`。
 
 ## 前置
 
@@ -23,6 +25,19 @@
    - `saves/hypernova/scripts-agent.log` 的**最后一条** `lazy probe: summary`；
    - `starsector-core/starsector.log` 的最后 session 切片；
    - 逐进程 GPU dedicated/shared（任务管理器或 `nvidia-smi` 旁证）。
+
+## 2026-11-02 实测记录（用户）
+
+- **任务战斗**：Valkyrie「为天堂之门而战」；lazy+DDS+eviction on、默认 256 MB。
+  用户主观“一切正常”；`materialized=724`、`ddsHit=655`、`ddsFallback=3`（META）、
+  `failed=disabled=dimMismatch=failedParked=0`、`evictPasses=0`、`evicted=0`；
+  `starsector.log` 五类纹理错误 0。**没有触发淘汰**，所以不是淘汰路径的 PASS。
+- **与 Hypernova 无关的 260mods 问题**（no-Hypernova 对照复现/堆栈定位）：
+  Star Wars 开局 + 大量顶级舰 → 新建存档 `NameAssigner` NPE；超大舰队旧档严重卡顿；
+  “舰队改装” → Exotica `RefitButtonAdder.advance` 的 `UIComponentAPI` 空 cast。
+  不要把这些记成 Hypernova 失败；用干净存档/小舰队/禁用 Exotica refit 按钮再测。
+- **仍未完成**：campaign 战斗（带 `evictPasses>0`）、读档/存档、分辨率/全屏/alt-tab、
+  A→B 长会话、逐帧/P99 stutter。
 
 ## 可选诊断淘汰（战斗步骤前）
 

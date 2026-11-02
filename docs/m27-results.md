@@ -3,12 +3,14 @@
 - **日期**：2026-11-02（本地；实机会话 UTC 2026-11-01 20:11–21:03）。
 - **宿主/配置**：Windows 11 中国区；`Starsector-098-260mods`（`miko-lite`，JDK 28 启动档）+
   `Starsector-098-Base`；HEAD `8e6be81`（Task 7 后）。
-- **验证方式**：仅**菜单锚点**（`Playing music with id [miscallenous_main_menu.ogg]`）+
-  agent summary + `starsector.log` 会话切片。**不是战斗/读档/分辨率/长会话验收**。
+- **验证方式**：自动化证据是**菜单锚点**（`Playing music with id [miscallenous_main_menu.ogg]`）+
+  agent summary + `starsector.log` 会话切片；2026-11-02 追加一次用户手动任务战斗
+  （Valkyrie「为天堂之门而战」）。**仍不是完整的战斗/读档/分辨率/长会话验收。**
 - **状态**：**代码侧 default-on gates 已关闭；默认仍 off**
-  （`textures.lazy.enabled=false`、`textures.lazy.eviction.enabled=false`）。
-  **用户战斗/读档/分辨率/手动目检、A→B 长会话净 VRAM、>200 ms 卡顿仍 pending**，
-  清单见 `docs/m27-manual-acceptance.md`。**未 push。**
+  （`textures.lazy.enabled=false`、`textures.lazy.eviction.enabled=false`）；
+  **已 push `2c7c07c`**。手动冒烟：任务战斗正常但无淘汰压力；读档/分辨率/A→B/stutter
+  仍未完成。已知 260mods 不稳定（Star Wars 开局/超大舰队/Exotica 改装 UI）与 Hypernova 无关，
+  清单见 `docs/m27-manual-acceptance.md`。
 
 ### R-M27-9（门禁修复，必须和 M2.6 数字分开读）
 
@@ -59,7 +61,7 @@ Task 7（`8e6be81`）新增内部诊断属性
    `evictableBytes` 恒等式成立；0 errors；`evictPassMsMax=0`（无 pass）。
 9. **默认/回滚不变**：两侧 `hypernova.json` 没有 `textures.lazy` 键；A/B 开关全部走 `-D`；
    回滚仍是配置 false / `-Dhypernova.textures.lazy=false` / 删除 agent 行。
-10. **未 push**；Tasks 1–5、7 与本 docs 提交均留在本地。
+10. **已 push `2c7c07c`**；M2.7 代码/docs 已到 `origin/main`。
 
 ---
 
@@ -305,9 +307,9 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
 | refcount / REQ-R1-10 | **not implementable**（无全局注册表） | owned-only + 失败停车 + 文档；本轮不实现 |
 | 第三方 id 缓存（W-3） | **residual** | owned-only + 文档；mod 若把 GL id 拷进自有结构，淘汰后仍可能持有已删 id |
 | GL context 重建（W-2） | **user gate** | 分辨率/全屏/alt-tab 手动验收；context 重建可能作废占位 id |
-| 战斗/读档/分辨率/手动目检 | **user gate** | `docs/m27-manual-acceptance.md` |
+| 战斗/读档/分辨率/手动目检 | **partial** | 2026-11-02 用户任务战斗（Valkyrie「为天堂之门而战」）lazy+DDS on、默认 256MB：0 五类错误、`materialized=724`、`ddsHit=655`、`ddsFallback=3`（META）、`evictPasses=0`；campaign/读档/分辨率/alt-tab 未完成；Star Wars/Exotica/超大舰队为 mod 问题 |
 | A→B 长会话净 VRAM | **user gate** | 手动；本轮只有菜单时刻 GPU 快照 |
-| >200 ms 卡顿 | **user gate** | 手动 + `evictPassMsMax` 仅菜单主线程旁证 |
+| >200 ms 卡顿 | **partial/user gate** | 任务战斗主观正常；无逐帧/P99 |
 | 默认预算 selftest | **pass** | `selftest=1/evicted=1/rematerialized=1`；`startupBytes=5,522,052`；恒等式；0 errors |
 | counterbalanced A/B n=3 | **pass（带工具 caveat）** | C 71.6 / T 69.6 / paired −2.0（边界，不称收益）；GPU ded T 3/3 更低；`ddsHit` 中位 27；0 errors；§4.3 工具限制 |
 | linger120 默认预算 | **pass** | 0 errors；`evictPasses=0`（预期）；`startupBytes` 未增长；恒等式 |
@@ -316,11 +318,26 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
 
 ## 6. 剩余 user gates
 
-以下**未做，不标 PASS**：
+### 2026-11-02 用户手动冒烟（任务战斗）
 
-1. **战斗 5–10 min**：0 `Failed to load texture` / `VerifyError` / `ClassFormatError` /
-   `AsyncException` / `isStateCorrupted`；记录 `evictPasses/evicted/rematerialized/
-   evictPassMsMax/failedParked/ddsFallback` 及原因分解；主观记录 >200 ms 卡顿次数。
+- 场景：Valkyrie「为天堂之门而战」任务战斗；lazy+DDS on、eviction on、默认 256 MB。
+- 结果：用户主观“一切正常”；latest session `materialized=724`、`ddsHit=655`、
+  `ddsFallback=3`（全部 META）、`failed=disabled=dimMismatch=failedParked=0`、
+  `evictPasses=0`、`evicted=0`、`liveBytes≈35.5 MB`；`starsector.log` 五类纹理错误 0。
+- **没有淘汰压力**（默认 256 MB，`evictPasses=0`）：这次只验证了战斗中的 lazy/DDS 物化
+  正确性，不是淘汰路径。
+- 同一轮人工复测中出现的、**与 Hypernova 无关**的问题：Star Wars 开局 + 大量顶级舰 →
+  新建存档 `NameAssigner` NPE；超大舰队旧档严重卡顿；进“舰队改装” → Exotica
+  `RefitButtonAdder.advance` 的 `UIComponentAPI` 空 cast。三者均在 **no-Hypernova**
+  对照复现/由堆栈定位到对应 mod。
+- 因此这几项不记 Hypernova 失败，也不改变 default-on 结论；但它们使 campaign/读档/
+  分辨率/A→B 无法在本次完成。
+
+以下**仍未完成，不标完整 PASS**：
+
+1. **campaign 战斗 5–10 min（带淘汰压力）**：任务战斗已过，但 `evictPasses=0`；仍需在
+   干净存档/小舰队下跑一场，记录 `evictPasses/evicted/rematerialized/evictPassMsMax/
+   failedParked/ddsFallback` 及原因分解；主观记录 >200 ms 卡顿次数。
 2. **读档/存档**：读档两次、存档一次；无白块/错位/崩溃；记录 `dimMismatch`、`reregistered`。
 3. **分辨率/全屏/alt-tab**：1707×1067 → 2560×1440 → 返回；确认占位纹理不残留（W-2）；
    若 lazy 因 `dimMismatch` 自动禁用，记为 fail-open，不是崩溃。
@@ -358,8 +375,8 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
 
 ## 8. 限制
 
-1. **菜单 only**：所有自动化证据都只到主菜单锚点；没有战斗/读档/分辨率/长会话/手动目检，
-   不标 PASS。
+1. **自动化菜单 only；手动只完成一次任务战斗**：没有 campaign 战斗/读档/分辨率/长会话；
+   任务战斗无 eviction pressure（`evictPasses=0`），不标完整 PASS。
 2. **A/B split 2+1**：单次 n=3 超过 10 min 上限；顺序保持 C→T/T→C/C→T、n=3 不变，
    但两次调用之间不是同一进程；`ab.json` 是合并聚合。时间 delta **−2.0 s 仅按边界记录，
    不称收益**。
