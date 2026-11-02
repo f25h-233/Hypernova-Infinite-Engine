@@ -80,7 +80,8 @@ def check_zip(zip_path: Path, agent_jar: Path | None = None,
         if main_name in names:
             entries = jar_entries(zf.read(main_name))
             for marker in MAIN_MARKERS:
-                if marker not in entries:
+                info = entries.get(marker)
+                if info is None or info[1] <= 0:
                     failures.append(f"packaged main jar missing {marker}")
             if main_jar is not None:
                 if not main_jar.is_file():
@@ -88,30 +89,34 @@ def check_zip(zip_path: Path, agent_jar: Path | None = None,
                 else:
                     built = jar_entries(main_jar.read_bytes())
                     for marker in MAIN_MARKERS:
-                        if marker not in built:
+                        info = built.get(marker)
+                        if info is None or info[1] <= 0:
                             failures.append(f"built main jar missing {marker}")
                     if entries and entries != built:
                         failures.append(
                             "packaged main jar entries differ from "
                             f"{main_jar}")
         if agent_jar is not None:
-            if "jars/hypernova.agent.jar" not in names:
-                failures.append("missing jars/hypernova.agent.jar")
-            elif agent_jar.is_file():
-                packaged = zf.read("jars/hypernova.agent.jar")
-                entries = jar_entries(packaged)
-                built = jar_entries(agent_jar.read_bytes())
-                for marker in AGENT_MARKERS:
-                    if marker not in entries:
-                        failures.append(f"packaged agent jar missing {marker}")
-                    if marker not in built:
-                        failures.append(f"built agent jar missing {marker}")
-                if entries and entries != built:
-                    failures.append(
-                        "packaged agent jar entries differ from "
-                        f"{agent_jar}")
-            else:
-                failures.append(f"agent jar missing: {agent_jar}")
+            if "jars/hypernova.agent.jar" in names:
+                if agent_jar.is_file():
+                    packaged = zf.read("jars/hypernova.agent.jar")
+                    entries = jar_entries(packaged)
+                    built = jar_entries(agent_jar.read_bytes())
+                    for marker in AGENT_MARKERS:
+                        info = entries.get(marker)
+                        if info is None or info[1] <= 0:
+                            failures.append(
+                                f"packaged agent jar missing {marker}")
+                        info = built.get(marker)
+                        if info is None or info[1] <= 0:
+                            failures.append(
+                                f"built agent jar missing {marker}")
+                    if entries and entries != built:
+                        failures.append(
+                            "packaged agent jar entries differ from "
+                            f"{agent_jar}")
+                else:
+                    failures.append(f"agent jar missing: {agent_jar}")
     return failures
 
 

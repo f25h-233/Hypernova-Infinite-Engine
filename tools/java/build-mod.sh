@@ -4,15 +4,28 @@
 # Starsector-098-Base 的 M2 manifest；manifest/skip 缺失时**拒绝产出 zip**：
 # 缺 manifest 的包解压后 ManifestLoader.load() 返回 null，整组件静默禁用（C1）。
 set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# Git Bash/MSYS 下 javac/jar/javap 是原生 Windows 程序，不认 /d/... 路径，统一转成 D:/...
+winpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s\n' "$1"; fi; }
+ROOT_W="$(winpath "$ROOT")"
+# 任意失败（含参数校验、agent 构建/新鲜度失败与显式 exit 1）都清掉 zip，
+# 避免发布路径上残留上一次成功构建的包；INT/TERM 转成非零退出以触发清理。
+OUT="$ROOT_W/build/java"
+cleanup_failed_zip() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -f "$OUT/hypernova-0.1.0.zip"
+  fi
+}
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap cleanup_failed_zip EXIT
+rm -f "$OUT/hypernova-0.1.0.zip"
 # 发行包固定使用 Base manifest；旧的 --env 参数已失去意义，显式拒绝以免误以为能打 260mods 包。
 if [ "$#" -gt 0 ]; then
   echo "FATAL: build-mod.sh 不再接受参数（发行包固定使用 Starsector-098-Base 的 M2 manifest）" >&2
   exit 1
 fi
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-# Git Bash/MSYS 下 javac/jar/javap 是原生 Windows 程序，不认 /d/... 路径，统一转成 D:/...
-winpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s\n' "$1"; fi; }
-ROOT_W="$(winpath "$ROOT")"
 # M2.7 W6：发行前强制重建 agent jar，避免把旧代理打进包里；随后校验新鲜度。
 AGENT_JAR="$ROOT_W/build/agent/hypernova.agent.jar"
 bash "$ROOT_W/tools/java/build-agent.sh" >/dev/null
@@ -25,19 +38,8 @@ if find "$ROOT_W/src/agent/java" -name '*.java' ! -path '*/tools/*' -newer "$AGE
   exit 1
 fi
 GAME="$ROOT_W/Starsector-098-Base/starsector-core"
-OUT="$ROOT_W/build/java"
-# 任意失败（含显式 exit 1）都清掉本轮 zip，避免失败路径留下可发布的包。
-cleanup_failed_zip() {
-  status=$?
-  if [ "$status" -ne 0 ]; then
-    rm -f "$OUT/hypernova-0.1.0.zip"
-  fi
-}
-trap cleanup_failed_zip EXIT
 CP="$GAME/starfarer.api.jar;$GAME/json.jar;$GAME/lwjgl.jar;$GAME/log4j-1.2.9.jar"
 rm -rf "$OUT/classes" "$OUT/hypernova.jar"
-# 先删旧 zip：任何一步失败都不留下上一次的成品（否则失败路径仍然「有包可发」）。
-rm -f "$OUT/hypernova-0.1.0.zip"
 mkdir -p "$OUT/classes"
 find "$ROOT_W/src/main/java" -name '*.java' > "$OUT/sources.txt"
 javac --release 17 -encoding UTF-8 -cp "$CP" -d "$OUT/classes" @"$OUT/sources.txt"

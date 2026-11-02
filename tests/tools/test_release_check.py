@@ -139,3 +139,43 @@ def test_main_jar_entries_must_match_built(tmp_path):
                       extra={"extra/Thing.class": b"x"})
     assert any("packaged main jar entries differ" in f
                for f in rc.check_zip(zip_path, main_jar=built))
+
+
+def test_identical_main_jar_passes(tmp_path):
+    zip_path, _ = _release_zip(tmp_path)
+    built = _main_jar(tmp_path / "built.jar")
+    assert rc.check_zip(zip_path, main_jar=built) == []
+
+
+def test_empty_main_jar_fails(tmp_path):
+    zip_path, _ = _release_zip(
+        tmp_path, overrides={"jars/hypernova.jar": b""})
+    assert any("empty jars/hypernova.jar" in f
+               for f in rc.check_zip(zip_path))
+
+
+def test_built_main_jar_missing_marker_fails(tmp_path):
+    zip_path, _ = _release_zip(tmp_path)
+    built = tmp_path / "built-partial.jar"
+    with zipfile.ZipFile(built, "w") as zf:
+        zf.writestr(MAIN[0], b"x")
+    assert any("built main jar missing" in f
+               for f in rc.check_zip(zip_path, main_jar=built))
+
+
+def test_corrupt_main_jar_fails(tmp_path):
+    zip_path, _ = _release_zip(
+        tmp_path, overrides={"jars/hypernova.jar": b"not a zip"})
+    assert any("packaged main jar missing" in f
+               for f in rc.check_zip(zip_path))
+
+
+def test_zero_size_main_marker_fails(tmp_path):
+    bad = tmp_path / "empty-markers.jar"
+    with zipfile.ZipFile(bad, "w") as zf:
+        for name in MAIN:
+            zf.writestr(name, b"")
+    zip_path, _ = _release_zip(
+        tmp_path, overrides={"jars/hypernova.jar": bad.read_bytes()})
+    assert any("packaged main jar missing" in f
+               for f in rc.check_zip(zip_path))
