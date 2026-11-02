@@ -228,3 +228,37 @@ def test_process_gpu_memory_empty_or_error(monkeypatch):
 
     monkeypatch.setattr(smoke.subprocess, "run", lambda *a, **k: Bad())
     assert smoke.process_gpu_memory_mb(1234) == (None, None)
+
+
+def test_one_round_writes_and_clears_pid_file(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    cfg = {"java": "jre/java", "vmparams": "vm.txt", "cwd": "starsector-core"}
+    pid_file = tmp_path / "round.pid"
+    seen = {}
+
+    class FakeProc:
+        pid = 424242
+
+    def fake_stop(proc):
+        seen["pid"] = pid_file.read_text(encoding="utf-8")
+        return "forced"
+
+    monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **k: FakeProc())
+    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: 12.5)
+    monkeypatch.setattr(smoke, "io_read_bytes", lambda pid: 7)
+    monkeypatch.setattr(smoke, "process_memory_mb", lambda pid: 1234.56)
+    monkeypatch.setattr(smoke, "process_private_mb", lambda pid: 2345.67)
+    monkeypatch.setattr(smoke, "gpu_memory_mb", lambda: 4096.0)
+    monkeypatch.setattr(smoke, "process_gpu_memory_mb", lambda pid: (3500.0, 100.0))
+    monkeypatch.setattr(smoke, "free_physical_mb", lambda: 15000.0)
+    monkeypatch.setattr(smoke, "graceful_stop", fake_stop)
+    monkeypatch.setattr(smoke.time, "sleep", lambda seconds: None)
+
+    args = argparse.Namespace(start_res="1707x1067", fullscreen=False,
+                              jvm_arg=[], wait_menu=1, linger=0,
+                              pid_file=str(pid_file))
+    row = smoke.one_round(cfg, game, args)
+    assert row["ok"] is True
+    assert seen["pid"] == "424242"
+    assert not pid_file.exists()

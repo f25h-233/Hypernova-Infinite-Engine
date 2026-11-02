@@ -17,19 +17,21 @@ import json
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
 ROOT = TOOLS.parent
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
-from smoke_run import PROFILES, free_physical_mb  # noqa: E402
+from smoke_run import PROFILES, free_physical_mb, kill_pid, wait_dead  # noqa: E402
 
 SESSION_ANCHOR = b"Fast Rendering: v0.9."
 SUMMARY = "lazy probe: summary "
 PAIR_RE = re.compile(r"([A-Za-z][A-Za-z0-9_]*)=([^\s]+)")
 SMOKE_TIMEOUT_S = 900
 MIN_FREE_MB = 12 * 1024
+PID_FILE_MAX_AGE_S = 300
 
 
 def stats_from_text(text: str) -> dict:
@@ -63,25 +65,49 @@ def _flags(lazy: bool, dds: bool, eviction: bool, selftest: bool) -> list[str]:
     return args
 
 
+def cleanup_timed_out_game(pid_file: Path) -> bool:
+    """只杀 smoke_run 记录的这一个游戏 PID，避免残留进程污染下一轮。"""
+    try:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+        age = time.time() - pid_file.stat().st_mtime
+    except (OSError, ValueError):
+        return False
+    try:
+        if age > PID_FILE_MAX_AGE_S:
+            return False
+        kill_pid(pid, True)
+        wait_dead(pid, 20)
+        return True
+    finally:
+        try:
+            pid_file.unlink()
+        except OSError:
+            pass
+
+
 def run_round(profile: str, lazy: bool, dds: bool, eviction: bool,
               selftest: bool, out: Path, wait: float, linger: float) -> dict:
     out.parent.mkdir(parents=True, exist_ok=True)
+    pid_file = out.with_name(out.name + ".pid")
     cmd = [sys.executable, "-I", str(TOOLS / "smoke_run.py"),
            "--profile", profile, "--rounds", "1", "--wait-menu", str(wait),
-           "--linger", str(linger), "--json-out", str(out.resolve())]
+           "--linger", str(linger), "--json-out", str(out.resolve()),
+           "--pid-file", str(pid_file.resolve())]
     for arg in _flags(lazy, dds, eviction, selftest):
         cmd.append("--jvm-arg=" + arg)
     try:
         proc = subprocess.run(cmd, check=False, cwd=str(ROOT), timeout=SMOKE_TIMEOUT_S)
     except subprocess.TimeoutExpired:
-        return {"ok": False, "reason": "timeout", "returncode": None}
+        return {"ok": False, "reason": "timeout", "returncode": None,
+                "game_cleanup": cleanup_timed_out_game(pid_file)}
     try:
         row = json.loads(out.read_text(encoding="utf-8"))[0]
     except Exception as exc:
         row = {"ok": False, "reason": f"json: {exc}"}
     row["returncode"] = proc.returncode
-    if proc.returncode != 0:
+    if proc.returncode != 0 or not row.get("ok", False):
         row["ok"] = False
+        row["game_cleanup"] = cleanup_timed_out_game(pid_file)
     return row
 
 
@@ -134,6 +160,9 @@ def main(argv=None) -> int:
     ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
 
+    if args.rounds < 1:
+        ap.error("--rounds must be >= 1")
+
     free_start = free_physical_mb()
     print(f"[ab] free physical before A/B: {free_start} MB")
     if free_start is not None and free_start < MIN_FREE_MB:
@@ -154,6 +183,7 @@ def main(argv=None) -> int:
         if args.counterbalance and i % 2 == 0:
             order.reverse()
         side_rows = {}
+        treatment_lazy: dict = {}
         for side, treatment in order:
             label = f"#{i}/{args.rounds} {side}"
             print(f"\n[ab] {label}", flush=True)
@@ -167,27 +197,31 @@ def main(argv=None) -> int:
                             out_path, args.wait_menu, args.linger)
             row.update(archive_round(args.profile,
                                      "t" if treatment else "c", i, log_dir))
+            if treatment:
+                treatment_lazy = stats_from_text(
+                    agent.read_text(encoding="utf-8", errors="replace")) \
+                    if agent.is_file() else {}
+                row["lazy_captured"] = bool(treatment_lazy)
             side_rows[side] = row
             print(f"[ab] {label}: menu={row.get('menu_s')}s "
                   f"err={row['failed']}/{row['verify']}/{row['class_errors']}",
                   flush=True)
         c = side_rows["control"]
         t = side_rows["treatment"]
-        stats = stats_from_text(agent.read_text(encoding="utf-8", errors="replace")) \
-            if agent.is_file() else {}
-        rows.append({"control": c, "treatment": t, "lazy": stats,
+        rows.append({"control": c, "treatment": t, "lazy": treatment_lazy,
                      "order": [side for side, _ in order]})
         print(f"[ab] #{i}: control={c.get('menu_s')}s treatment={t.get('menu_s')}s "
-              f"lazy={stats}", flush=True)
+              f"lazy={treatment_lazy}", flush=True)
 
     c_med = median([r["control"].get("menu_s") for r in rows])
     t_med = median([r["treatment"].get("menu_s") for r in rows])
+    lazy_rows = [r["lazy"] for r in rows if r["lazy"]]
     lazy_median = {}
-    if rows and all(r["lazy"] for r in rows):
-        keys = set().union(*(r["lazy"].keys() for r in rows))
+    if lazy_rows:
+        keys = set().union(*(r.keys() for r in lazy_rows))
         for key in sorted(keys):
-            values = [r["lazy"].get(key) for r in rows
-                      if isinstance(r["lazy"].get(key), int)]
+            values = [r.get(key) for r in lazy_rows
+                      if isinstance(r.get(key), int)]
             lazy_median[key] = median(values)
     pairs = [round(r["treatment"]["menu_s"] - r["control"]["menu_s"], 1)
              for r in rows
@@ -196,6 +230,8 @@ def main(argv=None) -> int:
     gates = {
         "all_rounds_ok": all(r["control"].get("ok") and r["treatment"].get("ok")
                              for r in rows),
+        "treatment_stats_present": bool(rows) and all(
+            bool(r["lazy"]) for r in rows),
         "logs_present": all(
             r[side].get("log_present", False)
             for r in rows for side in ("control", "treatment")),
@@ -228,6 +264,7 @@ def main(argv=None) -> int:
         "paired_deltas_s": pairs,
         "paired_median_s": median(pairs),
         "lazy_median": lazy_median or None,
+        "lazy_rows": len(lazy_rows),
         "gates": gates,
     }
     out_path = Path(args.out)

@@ -112,6 +112,15 @@ def log_path_for(game: Path) -> Path:
     return game / "starsector-core" / "starsector.log"
 
 
+def clear_pid_file(path: str) -> None:
+    if not path:
+        return
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def session_offset(log_path: Path) -> int:
     """当前日志里最后一次会话起始的字节偏移。"""
     if not log_path.is_file():
@@ -498,6 +507,11 @@ def one_round(cfg: dict, game: Path, args) -> dict:
     # 不一致（Popen 拿到的是中间进程），导致 kill 打空、游戏残留（已实测踩到）。
     proc = subprocess.Popen(cmd, cwd=str(cwd),
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    pid_file = getattr(args, "pid_file", "")
+    if pid_file:
+        p = Path(pid_file)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(str(proc.pid), encoding="utf-8")
 
     print(f"\n{'='*60}")
     print(f">>> 直接启动（launchDirect），自动等待主菜单……")
@@ -506,6 +520,7 @@ def one_round(cfg: dict, game: Path, args) -> dict:
     menu_s = wait_for_menu(logp, offset, args.wait_menu, proc)
     if menu_s is None:
         kill_pid(proc.pid, True)
+        clear_pid_file(pid_file)
         return {"ok": False, "reason": "menu-timeout", "elapsed": time.time() - t0}
 
     print(f">>> 主菜单到达：{menu_s:.1f}s（从进程启动算）")
@@ -534,6 +549,7 @@ def one_round(cfg: dict, game: Path, args) -> dict:
     wall = time.time() - t0
     print(f">>> 退出方式：{how}；总墙钟 {wall:.1f}s")
 
+    clear_pid_file(pid_file)
     time.sleep(1.0)   # 让 shutdown hook 写完
     return {
         "ok": True,
@@ -623,6 +639,8 @@ def main() -> int:
     ap.add_argument("--jvm-arg", action="append", default=[],
                     help="extra JVM argument, e.g. -Dhypernova.textures=false")
     ap.add_argument("--json-out", default="")
+    ap.add_argument("--pid-file", default="",
+                    help="write the launched game PID here; removed on normal exit")
     args = ap.parse_args()
 
     cfg = PROFILES[args.profile]

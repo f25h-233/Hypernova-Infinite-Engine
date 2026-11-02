@@ -2,6 +2,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -199,3 +200,63 @@ def test_archive_round_missing_log_returns_zero_row(tmp_path, monkeypatch):
     assert row["log_present"] is False
     assert row["failed"] == row["verify"] == row["class_errors"] == 0
     assert row["async_errors"] == row["corrupted"] == 0
+
+
+def test_rounds_must_be_positive(tmp_path):
+    out = tmp_path / "ab.json"
+    try:
+        ab.main(["--rounds", "0", "--out", str(out)])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("--rounds 0 should exit 2")
+
+
+def test_stats_captured_before_later_control_session(tmp_path, monkeypatch):
+    """T→C 轮：treatment 的 summary 不能被后续 control 的 premain 冲掉。"""
+    monkeypatch.setattr(ab, "run_round", lambda *a, **k: _row(50.0))
+    monkeypatch.setattr(ab, "archive_round", lambda *a, **k: {
+        "log": None, "log_present": True, "failed": 0, "verify": 0,
+        "class_errors": 0, "async_errors": 0, "corrupted": 0})
+    monkeypatch.setattr(ab, "free_physical_mb", lambda: 20_000.0)
+    monkeypatch.setattr(ab, "stats_from_text", ab.stats_from_text)
+    agent = tmp_path / "agent.log"
+    agent.write_text("hypernova agent premain\n", encoding="utf-8")
+
+    def fake_run(profile, lazy, dds, eviction, selftest, out, wait, linger):
+        with agent.open("a", encoding="utf-8") as fh:
+            if lazy:
+                fh.write("hypernova agent premain\n"
+                         "lazy probe: summary queue=7 failed=0 disabled=0 "
+                         "dimMismatch=0 main=main ddsHit=1 ddsDisabled=0\n")
+            else:
+                fh.write("hypernova agent premain\n")
+        return _row(50.0)
+
+    monkeypatch.setattr(ab, "run_round", fake_run)
+    out = tmp_path / "ab.json"
+    assert ab.main(["--rounds", "2", "--counterbalance",
+                    "--agent-log", str(agent), "--out", str(out)]) == 0
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["lazy_rows"] == 2
+    assert result["lazy_median"]["queue"] == 7
+    assert result["gates"]["treatment_stats_present"] is True
+
+
+def test_timeout_kills_recorded_game_pid(tmp_path, monkeypatch):
+    out = tmp_path / "round.json"
+    pid_file = tmp_path / "round.json.pid"
+    pid_file.write_text("424242", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(ab, "kill_pid", lambda pid, force: calls.append((pid, force)))
+    monkeypatch.setattr(ab, "wait_dead", lambda pid, timeout: True)
+
+    def boom(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="smoke", timeout=1)
+    monkeypatch.setattr(ab.subprocess, "run", boom)
+    row = ab.run_round("miko-lite", True, True, False, False,
+                       out, 1, 1)
+    assert row["ok"] is False
+    assert row["reason"] == "timeout"
+    assert calls == [(424242, True)]
+    assert not pid_file.exists()
