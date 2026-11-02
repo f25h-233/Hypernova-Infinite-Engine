@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import time
@@ -246,12 +247,15 @@ def test_stats_captured_before_later_control_session(tmp_path, monkeypatch):
 def test_timeout_kills_recorded_game_pid(tmp_path, monkeypatch):
     out = tmp_path / "round.json"
     pid_file = tmp_path / "round.json.pid"
-    pid_file.write_text("424242", encoding="utf-8")
     calls = []
     monkeypatch.setattr(ab, "kill_pid", lambda pid, force: calls.append((pid, force)))
     monkeypatch.setattr(ab, "wait_dead", lambda pid, timeout: True)
 
     def boom(*args, **kwargs):
+        # smoke_run writes the pid file at launch; age it past the old guard.
+        pid_file.write_text("424242", encoding="utf-8")
+        old = time.time() - 900
+        os.utime(pid_file, (old, old))
         raise subprocess.TimeoutExpired(cmd="smoke", timeout=1)
     monkeypatch.setattr(ab.subprocess, "run", boom)
     row = ab.run_round("miko-lite", True, True, False, False,
@@ -260,3 +264,66 @@ def test_timeout_kills_recorded_game_pid(tmp_path, monkeypatch):
     assert row["reason"] == "timeout"
     assert calls == [(424242, True)]
     assert not pid_file.exists()
+
+
+def test_cleanup_keeps_pid_file_when_game_survives(tmp_path, monkeypatch):
+    pid_file = tmp_path / "round.json.pid"
+    pid_file.write_text("424242", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(ab, "kill_pid", lambda pid, force: calls.append((pid, force)))
+    monkeypatch.setattr(ab, "wait_dead", lambda pid, timeout: False)
+
+    assert ab.cleanup_timed_out_game(pid_file) is False
+    assert calls == [(424242, True)]
+    assert pid_file.exists()
+
+
+def test_treatment_stats_ignored_when_current_run_appended_nothing(
+        tmp_path, monkeypatch):
+    agent = tmp_path / "agent.log"
+    agent.write_text("hypernova agent premain\n"
+                     "lazy probe: summary queue=99 failed=0 disabled=0 "
+                     "dimMismatch=0 main=main ddsHit=5 ddsDisabled=0\n",
+                     encoding="utf-8")
+    monkeypatch.setattr(ab, "run_round", lambda *a, **k: _row(50.0))
+    monkeypatch.setattr(ab, "archive_round", lambda *a, **k: {
+        "log": None, "log_present": True, "failed": 0, "verify": 0,
+        "class_errors": 0, "async_errors": 0, "corrupted": 0})
+    monkeypatch.setattr(ab, "free_physical_mb", lambda: 20_000.0)
+
+    out = tmp_path / "ab.json"
+    assert ab.main(["--rounds", "1", "--agent-log", str(agent),
+                    "--out", str(out)]) == 1
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["rows"][0]["lazy"] == {}
+    assert result["gates"]["treatment_stats_present"] is False
+    assert result["lazy_rows"] == 0
+
+
+def test_treatment_stats_only_from_current_run_tail(tmp_path, monkeypatch):
+    agent = tmp_path / "agent.log"
+    agent.write_text("hypernova agent premain\n"
+                     "lazy probe: summary queue=111 failed=0 disabled=0 "
+                     "dimMismatch=0 main=main ddsHit=5 ddsDisabled=0\n",
+                     encoding="utf-8")
+    monkeypatch.setattr(ab, "archive_round", lambda *a, **k: {
+        "log": None, "log_present": True, "failed": 0, "verify": 0,
+        "class_errors": 0, "async_errors": 0, "corrupted": 0})
+    monkeypatch.setattr(ab, "free_physical_mb", lambda: 20_000.0)
+
+    def fake_run(profile, lazy, dds, eviction, selftest, out, wait, linger):
+        if lazy:
+            with agent.open("a", encoding="utf-8") as fh:
+                fh.write("hypernova agent premain\n"
+                         "lazy probe: summary queue=222 failed=0 disabled=0 "
+                         "dimMismatch=0 main=main ddsHit=6 ddsDisabled=0\n")
+        return _row(50.0)
+
+    monkeypatch.setattr(ab, "run_round", fake_run)
+    out = tmp_path / "ab.json"
+    assert ab.main(["--rounds", "1", "--agent-log", str(agent),
+                    "--out", str(out)]) == 0
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["rows"][0]["lazy"]["queue"] == 222
+    assert result["lazy_median"]["queue"] == 222
+    assert result["gates"]["treatment_stats_present"] is True

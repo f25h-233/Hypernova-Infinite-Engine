@@ -17,7 +17,6 @@ import json
 import re
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
@@ -31,7 +30,15 @@ SUMMARY = "lazy probe: summary "
 PAIR_RE = re.compile(r"([A-Za-z][A-Za-z0-9_]*)=([^\s]+)")
 SMOKE_TIMEOUT_S = 900
 MIN_FREE_MB = 12 * 1024
-PID_FILE_MAX_AGE_S = 300
+
+
+def read_since(path: Path, offset: int) -> str:
+    try:
+        with path.open("rb") as fh:
+            fh.seek(offset)
+            return fh.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
 
 
 def stats_from_text(text: str) -> dict:
@@ -69,20 +76,16 @@ def cleanup_timed_out_game(pid_file: Path) -> bool:
     """只杀 smoke_run 记录的这一个游戏 PID，避免残留进程污染下一轮。"""
     try:
         pid = int(pid_file.read_text(encoding="utf-8").strip())
-        age = time.time() - pid_file.stat().st_mtime
     except (OSError, ValueError):
         return False
-    try:
-        if age > PID_FILE_MAX_AGE_S:
-            return False
-        kill_pid(pid, True)
-        wait_dead(pid, 20)
-        return True
-    finally:
+    kill_pid(pid, True)
+    dead = wait_dead(pid, 20)
+    if dead:
         try:
             pid_file.unlink()
         except OSError:
             pass
+    return dead
 
 
 def run_round(profile: str, lazy: bool, dds: bool, eviction: bool,
@@ -95,6 +98,10 @@ def run_round(profile: str, lazy: bool, dds: bool, eviction: bool,
            "--pid-file", str(pid_file.resolve())]
     for arg in _flags(lazy, dds, eviction, selftest):
         cmd.append("--jvm-arg=" + arg)
+    try:
+        pid_file.unlink(missing_ok=True)
+    except OSError:
+        pass
     try:
         proc = subprocess.run(cmd, check=False, cwd=str(ROOT), timeout=SMOKE_TIMEOUT_S)
     except subprocess.TimeoutExpired:
@@ -190,6 +197,8 @@ def main(argv=None) -> int:
             round_dir = Path(args.out).parent
             out_path = round_dir / (
                 f"{Path(args.out).stem}-{'t' if treatment else 'c'}{i}.json")
+            agent_offset = (agent.stat().st_size
+                            if treatment and agent.is_file() else 0)
             row = run_round(args.profile, treatment,
                             args.dds if treatment else False,
                             args.eviction if treatment else False,
@@ -198,9 +207,7 @@ def main(argv=None) -> int:
             row.update(archive_round(args.profile,
                                      "t" if treatment else "c", i, log_dir))
             if treatment:
-                treatment_lazy = stats_from_text(
-                    agent.read_text(encoding="utf-8", errors="replace")) \
-                    if agent.is_file() else {}
+                treatment_lazy = stats_from_text(read_since(agent, agent_offset))
                 row["lazy_captured"] = bool(treatment_lazy)
             side_rows[side] = row
             print(f"[ab] {label}: menu={row.get('menu_s')}s "
