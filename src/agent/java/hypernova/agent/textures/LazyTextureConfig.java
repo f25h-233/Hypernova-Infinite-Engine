@@ -16,6 +16,9 @@ import java.nio.file.Path;
  *
  * <p>M2.6 knobs default off/on as follows: dds=true (only when lazy is on),
  * eviction=false, budget=256 MB, grace=10 s, scene delay=2 s, max=64/pass.
+ *
+ * <p>M2.8 scene_unload defaults: enabled=false, grace_ms=0, max_per_pass=64
+ * (only active when eviction=true).
  */
 public record LazyTextureConfig(
         boolean enabled,
@@ -28,12 +31,17 @@ public record LazyTextureConfig(
         int evictionGraceMs,
         int evictionSceneDelayMs,
         int evictionMaxPerPass,
+        boolean evictionSceneUnload,
+        int evictionSceneUnloadGraceMs,
+        int evictionSceneUnloadMaxPerPass,
         boolean selftest) {
 
     private static final int DEFAULT_BUDGET_MB = 256;
     private static final int DEFAULT_GRACE_MS = 10_000;
     private static final int DEFAULT_SCENE_DELAY_MS = 2_000;
     private static final int DEFAULT_MAX_PER_PASS = 64;
+    private static final int DEFAULT_SCENE_GRACE_MS = 0;
+    private static final int DEFAULT_SCENE_MAX_PER_PASS = DEFAULT_MAX_PER_PASS;
 
     public static LazyTextureConfig load() {
         return load(System.getProperty("hypernova.textures.lazy"),
@@ -46,6 +54,9 @@ public record LazyTextureConfig(
                 System.getProperty("hypernova.textures.lazy.eviction.graceMs"),
                 System.getProperty("hypernova.textures.lazy.eviction.sceneDelayMs"),
                 System.getProperty("hypernova.textures.lazy.eviction.maxPerPass"),
+                System.getProperty("hypernova.textures.lazy.eviction.sceneUnload"),
+                System.getProperty("hypernova.textures.lazy.eviction.sceneUnload.graceMs"),
+                System.getProperty("hypernova.textures.lazy.eviction.sceneUnload.maxPerPass"),
                 System.getProperty("hypernova.textures.lazy.selftest"),
                 locateConfig());
     }
@@ -54,7 +65,7 @@ public record LazyTextureConfig(
     public static LazyTextureConfig load(String enabledProp, String probeProp,
                                          String skipProp, Path configFile) {
         return load(enabledProp, probeProp, skipProp, null, null, null,
-                null, null, null, null, null, configFile);
+                null, null, null, null, null, null, null, null, configFile);
     }
 
     public static LazyTextureConfig load(String enabledProp, String probeProp,
@@ -62,9 +73,12 @@ public record LazyTextureConfig(
                                          String ddsProp, String evictionProp,
                                          String budgetProp, String graceProp,
                                          String delayProp, String maxProp,
+                                         String sceneUnloadProp, String sceneGraceProp,
+                                         String sceneMaxProp,
                                          String selftestProp, Path configFile) {
         JSONObject lazy = lazyJson(configFile);
         JSONObject eviction = lazy == null ? null : lazy.optJSONObject("eviction");
+        JSONObject scene = eviction == null ? null : eviction.optJSONObject("scene_unload");
         Path modRoot = modRoot(configFile);
         Path skip = skipProp == null || skipProp.isBlank() ? null : Path.of(skipProp);
         if (skip == null && modRoot != null) {
@@ -90,6 +104,9 @@ public record LazyTextureConfig(
                 integer(graceProp, eviction, "grace_ms", DEFAULT_GRACE_MS),
                 integer(delayProp, eviction, "scene_delay_ms", DEFAULT_SCENE_DELAY_MS),
                 integer(maxProp, eviction, "max_per_pass", DEFAULT_MAX_PER_PASS),
+                bool(sceneUnloadProp, scene, "enabled", false),
+                integer(sceneGraceProp, scene, "grace_ms", DEFAULT_SCENE_GRACE_MS),
+                integer(sceneMaxProp, scene, "max_per_pass", DEFAULT_SCENE_MAX_PER_PASS),
                 bool(selftestProp, lazy, "selftest", false));
     }
 

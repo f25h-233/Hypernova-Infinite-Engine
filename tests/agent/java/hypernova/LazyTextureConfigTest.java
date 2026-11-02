@@ -24,6 +24,9 @@ class LazyTextureConfigTest {
         assertEquals(2_000, c.evictionSceneDelayMs());
         assertEquals(64, c.evictionMaxPerPass());
         assertFalse(c.selftest());
+        assertFalse(c.evictionSceneUnload());
+        assertEquals(0, c.evictionSceneUnloadGraceMs());
+        assertEquals(64, c.evictionSceneUnloadMaxPerPass());
     }
 
     @Test
@@ -69,7 +72,9 @@ class LazyTextureConfigTest {
         Files.writeString(cfg, "{\"textures\":{\"lazy\":{"
                 + "\"enabled\":true,\"dds\":false,\"selftest\":true,"
                 + "\"eviction\":{\"enabled\":true,\"budget_mb\":32,\"grace_ms\":500,"
-                + "\"scene_delay_ms\":100,\"max_per_pass\":4}}}}");
+                + "\"scene_delay_ms\":100,\"max_per_pass\":4,"
+                + "\"scene_unload\":{\"enabled\":true,\"grace_ms\":250,"
+                + "\"max_per_pass\":8}}}}}");
         LazyTextureConfig c = LazyTextureConfig.load(null, null, null, cfg);
         assertTrue(c.enabled());
         assertFalse(c.dds());
@@ -79,5 +84,18 @@ class LazyTextureConfigTest {
         assertEquals(500, c.evictionGraceMs());
         assertEquals(100, c.evictionSceneDelayMs());
         assertEquals(4, c.evictionMaxPerPass());
+        assertTrue(c.evictionSceneUnload());
+        assertEquals(250, c.evictionSceneUnloadGraceMs());
+        assertEquals(8, c.evictionSceneUnloadMaxPerPass());
+    }
+
+    @Test
+    void sceneUnloadFromProperty() {
+        LazyTextureConfig c = LazyTextureConfig.load(null, null, null, null,
+                null, null, null, null, null, null,
+                "true", "150", "7", null, null);
+        assertTrue(c.evictionSceneUnload());
+        assertEquals(150, c.evictionSceneUnloadGraceMs());
+        assertEquals(7, c.evictionSceneUnloadMaxPerPass());
     }
 }

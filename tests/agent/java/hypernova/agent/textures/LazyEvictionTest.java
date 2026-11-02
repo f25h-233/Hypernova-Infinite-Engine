@@ -328,4 +328,13 @@ class LazyEvictionTest {
         assertEquals(262_144L, LazyTextures.budgetBytes(0, 262_144));
         assertEquals(Long.MAX_VALUE, LazyTextures.budgetBytes(-1, 0));
     }
+
+    @Test
+    void backgroundsAreBasicPath() {
+        assertTrue(LazyTextures.isBasicPath("graphics/backgrounds/x.jpg"));
+        assertTrue(LazyTextures.isBasicPath("graphics/ui/x.png"));
+        assertTrue(LazyTextures.isBasicPath("graphics/fonts/x.png"));
+        assertTrue(LazyTextures.isBasicPath("graphics/intro/x.png"));
+        assertFalse(LazyTextures.isBasicPath("graphics/ships/x.png"));
+    }
 }

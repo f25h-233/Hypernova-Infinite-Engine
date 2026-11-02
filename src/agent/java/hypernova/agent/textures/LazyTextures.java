@@ -1456,7 +1456,8 @@ public final class LazyTextures {
         if (path == null) return true;
         return path.startsWith("graphics/ui/")
                 || path.startsWith("graphics/fonts/")
-                || path.startsWith("graphics/intro/");
+                || path.startsWith("graphics/intro/")
+                || path.startsWith("graphics/backgrounds/");
     }
 
     static boolean shouldDeleteOldId(boolean owned, int oldId, int newId,
