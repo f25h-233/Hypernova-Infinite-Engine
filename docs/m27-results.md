@@ -8,7 +8,7 @@
   （Valkyrie「为天堂之门而战」）。**仍不是完整的战斗/读档/分辨率/长会话验收。**
 - **状态**：**代码侧 default-on gates 已关闭；默认仍 off**
   （`textures.lazy.enabled=false`、`textures.lazy.eviction.enabled=false`）；
-  **已 push `2c7c07c`**。手动冒烟：任务战斗正常但无淘汰压力；读档/分辨率/A→B/stutter
+  **已 push 到 `origin/main`（2026-11-02）**。手动冒烟：任务战斗正常但无淘汰压力；读档/分辨率/A→B/stutter
   仍未完成。已知 260mods 不稳定（Star Wars 开局/超大舰队/Exotica 改装 UI）与 Hypernova 无关，
   清单见 `docs/m27-manual-acceptance.md`。
 
@@ -61,7 +61,7 @@ Task 7（`8e6be81`）新增内部诊断属性
    `evictableBytes` 恒等式成立；0 errors；`evictPassMsMax=0`（无 pass）。
 9. **默认/回滚不变**：两侧 `hypernova.json` 没有 `textures.lazy` 键；A/B 开关全部走 `-D`；
    回滚仍是配置 false / `-Dhypernova.textures.lazy=false` / 删除 agent 行。
-10. **已 push `2c7c07c`**；M2.7 代码/docs 已到 `origin/main`。
+10. **已 push 到 `origin/main`**（2026-11-02）；M2.7 代码/docs 已同步。
 
 ---
 
@@ -384,7 +384,7 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
   `Starsector-098-260mods/saves/hypernova/scripts-agent.log`；
   `Starsector-098-260mods/starsector-core/starsector.log`。
 - **本 docs 提交**：`docs(m27): record default-on readiness gates and manual acceptance`；
-  不 push。
+  已 push 到 `origin/main`（后续 docs 修正也 push）。
 
 ---
 
