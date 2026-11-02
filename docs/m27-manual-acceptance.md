@@ -2,7 +2,8 @@
 
 > 2026-11-02：已执行一次任务战斗（Valkyrie「为天堂之门而战」，默认 256 MB，无淘汰压力）
 > 和一次 4 MiB 诊断会话（`evictPasses=32`、`evicted=886`、`empty=7`）；均 0 五类纹理错误。
-> 读档/分辨率/A→B/stutter 仍未完成。本文件是验收步骤 + 实测记录，不是完整 PASS。
+> 读档/存档、分辨率/全屏/alt-tab 用户报告通过；A→B/stutter 仍未完成。
+> 本文件是验收步骤 + 实测记录，不是完整 PASS。
 > 只有在全部通过后才可讨论 default-on；任何一项失败先记录再修。自动化菜单证据见
 > `docs/m27-results.md`。
 
@@ -42,8 +43,9 @@
   `oldIdDeleted=886`、`evictSkipped=0`、`ddsHit=1008`、`ddsFallback=4`（META）；
   `starsector.log` 0 五类纹理错误、0 Hypernova/lazy ERROR。
   `emptyEvictPasses=7` 证明空 pass 分支真实发生；精确 30 s 间隔没有 per-pass 时间戳。
-- **仍未完成**：读档/存档、分辨率/全屏/alt-tab、A→B 长会话、逐帧/P99 stutter；
-  建议在干净存档/小舰队下重复一场带淘汰的战斗确认可复现。
+- **用户报告通过**（2026-11-02，lazy on；无独立日志切片）：读档/存档；分辨率/全屏/alt-tab。
+- **仍未完成**：A→B 长会话、逐帧/P99 stutter；建议在干净存档/小舰队下重复一场带淘汰的
+  战斗确认可复现。
 
 ## 可选诊断淘汰（战斗步骤前）
 
@@ -72,11 +74,15 @@
 
 ## 2. 读档 / 存档
 
+> 2026-11-02 用户报告通过（无独立日志切片）。
+
 - 读档两次、存档一次；确认无白块、错位、崩溃、贴图串位。
 - 记录 `dimMismatch`、`reregistered`、`failed`、`failedParked`、`ddsDimMismatch`。
 - 若 lazy 因 `dimMismatch` 自动禁用（fail-open），记录为**降级**，不是崩溃；保留日志。
 
 ## 3. 分辨率 / 全屏 / alt-tab
+
+> 2026-11-02 用户报告通过（无独立日志切片）；W-2 残余说明保留。
 
 - 1707×1067 → 2560×1440 → 返回 1707×1067；再试全屏/窗口化与 alt-tab。
 - 确认占位纹理不残留、不闪白、不崩溃（W-2：GL context 重建可能作废占位 id；
@@ -86,6 +92,8 @@
 
 ## 4. A→B 长会话（各 10 分钟）
 
+- **来源**：REQ-R1-10 的“进出星系 100 次 / working set drift ≤200 MB”验证，不是新功能；
+  M2.5/M2.6 把它列为长会话净 VRAM 的用户门禁，用来补菜单快照看不到的漂移。
 - A 场景 10 分钟 → B 场景 10 分钟；尽量覆盖不同星系/战斗/市场/百科。
 - 记录逐进程 GPU dedicated 曲线（菜单 / 战斗 / 退出）与
   `liveBytes` / `evictableBytes` / `startupBytes` / `foreignBytes` 漂移。
@@ -93,14 +101,22 @@
   记录预算/场景延迟/战斗门禁状态。
 - 本轮自动化只有菜单时刻快照，**不能替代**本项。
 
-## 5. 回滚
+## 5. >200 ms stutter / 帧时间
+
+- **现有日志不足以分析**：`evictPassMsMax` 只覆盖淘汰 pass（4 MiB 诊断最大 11 ms）；
+  summary 最大间隔约 10.02 s，只能排除多秒级 summary 线程冻结；没有逐帧/P99。
+- 需要：在 `HypernovaCombatPlugin.advance` 加 frame-time probe（记录 >200 ms 次数/最大值），
+  或用 JFR 自定义事件、PresentMon/CapFrameX 等外部工具。
+- 在补齐前，不得声称“无 >200 ms 卡顿”或“战斗/长会话不卡”。
+
+## 6. 回滚
 
 - 配置 `textures.lazy.enabled=false`（或单独 `textures.lazy.eviction.enabled=false`），
   或加 `-Dhypernova.textures.lazy=false`，或删除启动文件中的
   `-javaagent:.../hypernova.agent.jar` 行。
 - 确认行为回到 M2（不跳过、不代理、不注册 lazy）；skip v1/v2 可保留。
 
-## 6. 判定
+## 7. 判定
 
 - 全部通过才可讨论 default-on；任何一项失败先记录再修，不得把菜单门禁通过当成
   战斗/长会话通过。

@@ -4,12 +4,13 @@
 - **宿主/配置**：Windows 11 中国区；`Starsector-098-260mods`（`miko-lite`，JDK 28 启动档）+
   `Starsector-098-Base`；HEAD `8e6be81`（Task 7 后）。
 - **验证方式**：自动化证据是**菜单锚点**（`Playing music with id [miscallenous_main_menu.ogg]`）+
-  agent summary + `starsector.log` 会话切片；2026-11-02 追加一次用户手动任务战斗
-  （Valkyrie「为天堂之门而战」）。**仍不是完整的战斗/读档/分辨率/长会话验收。**
+  agent summary + `starsector.log` 会话切片；2026-11-02 追加用户任务战斗
+  （Valkyrie「为天堂之门而战」）和 4 MiB 诊断会话（带淘汰）。**仍不是完整的
+  战斗/读档/分辨率/长会话验收。**
 - **状态**：**代码侧 default-on gates 已关闭；默认仍 off**
   （`textures.lazy.enabled=false`、`textures.lazy.eviction.enabled=false`）；
-  **已 push 到 `origin/main`（2026-11-02）**。手动冒烟：任务战斗正常但无淘汰压力；读档/分辨率/A→B/stutter
-  仍未完成。已知 260mods 不稳定（Star Wars 开局/超大舰队/Exotica 改装 UI）与 Hypernova 无关，
+  **已 push 到 `origin/main`（2026-11-02）**。手动冒烟：任务战斗 + 4 MiB 诊断（带淘汰）已过；读档/分辨率/alt-tab 用户报告通过；
+  A→B/stutter 仍未完成。已知 260mods 不稳定（Star Wars 开局/超大舰队/Exotica 改装 UI）与 Hypernova 无关，
   清单见 `docs/m27-manual-acceptance.md`。
 
 ### R-M27-9（门禁修复，必须和 M2.6 数字分开读）
@@ -306,10 +307,10 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
 | M2.5 W6 agent jar 新鲜度 | **fixed** | Task 4 `40dd39c`；`build-mod.sh` 强制重建/新鲜度/release_check；`install_agent.py` 先复制 jar 再早退 |
 | refcount / REQ-R1-10 | **not implementable**（无全局注册表） | owned-only + 失败停车 + 文档；本轮不实现 |
 | 第三方 id 缓存（W-3） | **residual** | owned-only + 文档；mod 若把 GL id 拷进自有结构，淘汰后仍可能持有已删 id |
-| GL context 重建（W-2） | **user gate** | 分辨率/全屏/alt-tab 手动验收；context 重建可能作废占位 id |
-| 战斗/读档/分辨率/手动目检 | **partial pass** | 任务战斗（Valkyrie「为天堂之门而战」）0 五类错误、`materialized=724`、`ddsHit=655`、`ddsFallback=3`（META）、`evictPasses=0`；4 MiB 诊断会话 `evictPasses=32`、`evicted=886`、`rematerialized=90`、`empty=7`、`max=11ms`、0 五类错误；读档/分辨率/alt-tab 未完成；Star Wars/Exotica/超大舰队为 mod 问题 |
-| A→B 长会话净 VRAM | **user gate** | 手动；本轮只有菜单时刻 GPU 快照 |
-| >200 ms 卡顿 | **partial/user gate** | 任务战斗主观正常；4 MiB 诊断 `evictPassMsMax=11 ms`；仍无逐帧/P99 |
+| GL context 重建（W-2） | **user-reported pass（partial）** | 用户 2026-11-02 报告分辨率/全屏/alt-tab 无问题（lazy on；无独立日志切片）；context 重建占位残余说明保留 |
+| 战斗/读档/分辨率/手动目检 | **partial pass** | 任务战斗 + 4 MiB 诊断（`evictPasses=32`/`evicted=886`/`empty=7`/`max=11ms`/0 五类错误）已过；读档/存档、分辨率/全屏/alt-tab 用户报告通过（无独立切片）；手动目检未单独记录；Star Wars/Exotica/超大舰队为 mod 问题 |
+| A→B 长会话净 VRAM | **user gate** | 来源：REQ-R1-10“进出星系 100 次/working set drift ≤200 MB”验证；A 场景 10 min → B 场景 10 min；菜单快照不能替代 |
+| >200 ms 卡顿 | **user gate（现有日志不足）** | `evictPassMsMax=11 ms` 只覆盖淘汰 pass；summary 最大间隔 ~10.02 s，只能排除多秒级冻结；无逐帧/P99 |
 | 默认预算 selftest | **pass** | `selftest=1/evicted=1/rematerialized=1`；`startupBytes=5,522,052`；恒等式；0 errors |
 | counterbalanced A/B n=3 | **pass（带工具 caveat）** | C 71.6 / T 69.6 / paired −2.0（边界，不称收益）；GPU ded T 3/3 更低；`ddsHit` 中位 27；0 errors；§4.3 工具限制 |
 | linger120 默认预算 | **pass** | 0 errors；`evictPasses=0`（预期）；`startupBytes` 未增长；恒等式 |
@@ -346,22 +347,24 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
   LunaSettings/weapon_data/NexUtils 等 mod 数据问题。
 - **30 s backoff**：`emptyEvictPasses=7` 证明空 pass 分支真实发生；`nextDueAfterPass` 的
   30 s 值有单测，但没有 per-pass 时间戳，不能声称精确间隔已测量。
-- 仍未完成：读档/存档、分辨率/全屏/alt-tab、A→B 长会话、逐帧/P99 stutter。
+- **粗粒度健康**：76 条 summary 的最大间隔 **10.02 s**，没有多秒级 summary 线程冻结；
+  但这不是逐帧数据。
+
+**用户报告已完成（2026-11-02，lazy on；无独立日志切片）**：读档/存档；分辨率/全屏/
+alt-tab。记录为 user-reported，不作为独立日志证据。
 
 以下**仍未完成，不标完整 PASS**：
 
 1. **campaign 战斗 5–10 min（带淘汰压力）**：4 MiB 诊断会话已产生 `evictPasses=32`、
-   `evicted=886`、`rematerialized=90`；建议在干净存档/小舰队下再重复一场，确认可复现，
-   并主观记录 >200 ms 卡顿次数。
-2. **读档/存档**：读档两次、存档一次；无白块/错位/崩溃；记录 `dimMismatch`、`reregistered`。
-3. **分辨率/全屏/alt-tab**：1707×1067 → 2560×1440 → 返回；确认占位纹理不残留（W-2）；
-   若 lazy 因 `dimMismatch` 自动禁用，记为 fail-open，不是崩溃。
-4. **A→B 长会话**：A 场景 10 min → B 场景 10 min；记录逐进程 GPU dedicated 曲线与
-   `liveBytes`/`evictableBytes` 漂移；本轮菜单快照不能替代。
-5. **>200 ms stutter**：逐帧/P99 未测；`evictPassMsMax=7 ms` 只是 256 KiB 压力下菜单
-   主线程 pass 的旁证。
-6. **W-2/W-3/refcount**：GL context 重建占位、第三方 id 缓存、引用计数仍 open/residual；
-   见矩阵。
+   `evicted=886`、`rematerialized=90`；建议在干净存档/小舰队下再重复一场，确认可复现。
+2. **A→B 长会话**：来自 REQ-R1-10 的“进出星系 100 次 / working set drift ≤200 MB”验证，
+   不是新功能；A 场景 10 min → B 场景 10 min，记录逐进程 GPU dedicated 曲线与
+   `liveBytes`/`evictableBytes` 漂移；菜单快照不能替代。
+3. **>200 ms stutter**：现有日志**不足以**分析。`evictPassMsMax=11 ms` 只覆盖淘汰 pass；
+   summary 最大间隔 10.02 s 只能排除多秒级冻结；没有逐帧/P99。需要 frame-time probe、
+   JFR 自定义事件或 PresentMon/CapFrameX 之类的外部工具。
+4. **W-2/W-3/refcount**：GL context 重建占位（用户报告分辨率/alt-tab 通过，但无独立切片）、
+   第三方 id 缓存、引用计数仍 open/residual；见矩阵。
 
 ---
 
@@ -390,8 +393,8 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
 
 ## 8. 限制
 
-1. **自动化菜单 only；手动完成一次任务战斗 + 一次 4 MiB 诊断会话**：没有读档/分辨率/
-   长会话；任务战斗无 eviction pressure，4 MiB 诊断有淘汰但不等于完整 campaign 验收。
+1. **自动化菜单 only；手动完成任务战斗 + 4 MiB 诊断会话**：读档/分辨率/alt-tab 为
+   user-reported（无独立切片）；A→B 长会话和逐帧/P99 仍未完成。
 2. **A/B split 2+1**：单次 n=3 超过 10 min 上限；顺序保持 C→T/T→C/C→T、n=3 不变，
    但两次调用之间不是同一进程；`ab.json` 是合并聚合。时间 delta **−2.0 s 仅按边界记录，
    不称收益**。
@@ -400,7 +403,7 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
    summary 复核为 true。后续应修工具。
 4. **`ddsBytes` 是 1 B/px 估算**（BC7 level 0），不含 mip；`liveBytes`/`evictedBytes`
    是估算值，不是 VRAM 测量。
-5. **`evictPassMsMax` 仅菜单主线程 pass 旁证**，不是逐帧 P99；战斗/长会话 stutter 未测。
+5. **`evictPassMsMax` 仅淘汰 pass 旁证**，不是逐帧 P99；现有日志不足以分析 >200 ms stutter。
 6. **R-M27-7**：新增 DDS loader 锁沿用既有顺序风险；FR `commitAndCacheTexture` 在 loader
    监视器内调 `oOoO.super` → `onRegister` → `synchronized(e)`，存在**潜在 loader→e**
    反向路径（对 `materializeDds`/`putPathCache` 的 e→loader）。当前生命周期下 latent，
