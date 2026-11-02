@@ -766,10 +766,14 @@ public final class LazyTextures {
     }
 
     static void noteGameState(String name) {
-        long now = System.nanoTime();
+        noteGameState(name, System.nanoTime());
+    }
+
+    static void noteGameState(String name, long now) {
+        String prev = lastStateName;
+        boolean transition = shouldArmOnTransition(prev, name);
         if (eviction) {
-            String prev = lastStateName;
-            if (shouldArmOnTransition(prev, name)) {
+            if (transition) {
                 evictDueNanos = now + evictionSceneDelayNanos;
                 long n = ++stateTransitions;
                 if (n <= 20) {
@@ -778,6 +782,9 @@ public final class LazyTextures {
                 }
             }
             lastStateName = name;
+        }
+        if (transition && eviction && sceneUnload) {
+            maybeArmSceneUnload(now, true);
         }
         maybeRunEviction(now);
         maybeRunSelfTest(now);
@@ -830,7 +837,7 @@ public final class LazyTextures {
         if (Thread.currentThread() != runtimeMain) return;
         if (!PENDING_DELETE.isEmpty()) drainPendingDeletes();
         if (!eviction || disabled) return;
-        maybeArmSceneUnload(now);
+        maybeArmSceneUnload(now, false);
         maybeRunSceneEviction(now);
         long due = evictDueNanos;
         if (due == 0 || now < due) return;
@@ -845,12 +852,17 @@ public final class LazyTextures {
         evictPass(now);
     }
 
-    static void maybeArmSceneUnload(long now) {
+    static void maybeArmSceneUnload(long now, boolean force) {
+        if (Thread.currentThread() != runtimeMain) return;
         if (!eviction || !sceneUnload || disabled) return;
-        if (now < nextSceneProbeNanos) return;
+        if (!force && now < nextSceneProbeNanos) return;
         nextSceneProbeNanos = now + SCENE_STATE_PROBE_NANOS;
         String current = currentGameStateName();
         if (current == null) return;
+        if (!"COMBAT".equals(current)) {
+            scenePassesRemaining = 0;
+            scenePassDueNanos = 0;
+        }
         if (shouldArmSceneUnload(lastGameStateName, current)) {
             armScenePass(now);
         }
@@ -925,8 +937,8 @@ public final class LazyTextures {
                     + " ms evicted=" + n + " candidates=" + victims.size()
                     + " live=" + evictableBytes());
         }
-        if (victims.isEmpty()) {
-            // Nothing eligible; later chunks would rescan the same proxies.
+        if (n == 0) {
+            // No successful reset this chunk; later chunks would rescan the same proxies.
             scenePassesRemaining = 0;
             scenePassDueNanos = 0;
         }
@@ -1794,6 +1806,35 @@ public final class LazyTextures {
     static long evictableBytesForTest() { return evictableBytes(); }
     static long failedParkedForTest() { return FAILED_PARKED.get(); }
 
+    static void configureSceneForTest(boolean evictionOn, boolean sceneOn,
+                                      long sceneDelayNanos, long graceNanos, int maxPerPass) {
+        eviction = evictionOn;
+        sceneUnload = sceneOn;
+        evictionSceneDelayNanos = sceneDelayNanos;
+        sceneUnloadGraceNanos = graceNanos;
+        sceneUnloadMaxPerPass = maxPerPass;
+    }
+
+    static void setRuntimeMainForTest(Thread t) { runtimeMain = t; }
+
+    static void clearSceneForTest() {
+        eviction = false; sceneUnload = false; evictionSceneDelayNanos = 0;
+        sceneUnloadGraceNanos = 0; sceneUnloadMaxPerPass = 0; runtimeMain = null;
+        scenePassDueNanos = 0; sceneArmedNanos = 0; scenePassesRemaining = 0;
+        nextSceneProbeNanos = 0; lastGameStateName = null;
+        SCENE_PASSES.set(0); SCENE_EVICTIONS.set(0);
+        SCENE_PASS_NANOS_TOTAL.set(0); SCENE_PASS_NANOS_MAX.set(0);
+    }
+
+    static void addProxyForTest(ProxyEntry e) { PROXIES.put(e.path, e); }
+    static void removeProxyForTest(String path) { PROXIES.remove(path); }
+
+    static int scenePendingForTest() { return scenePassesRemaining; }
+    static long sceneDueForTest() { return scenePassDueNanos; }
+    static long sceneArmedForTest() { return sceneArmedNanos; }
+    static long scenePassesForTest() { return SCENE_PASSES.get(); }
+    static String lastGameStateForTest() { return lastGameStateName; }
+
     private static boolean ensurePlaceholder() {
         if (placeholderId > 0) return true;
         if (PLACEHOLDER_FAILED.get()) return false;
@@ -2004,7 +2045,7 @@ public final class LazyTextures {
                     + " deferredDeletes=" + DEFERRED_DELETES.get()
                     + " selftest=" + selftestResult
                     + " failedParked=" + FAILED_PARKED.get()
-                    + " sceneUnload=" + ((eviction && sceneUnload) ? 1 : 0)
+                    + " sceneUnload=" + ((eviction && sceneUnload && !disabled) ? 1 : 0)
                     + " scenePasses=" + SCENE_PASSES.get()
                     + " sceneEvictions=" + SCENE_EVICTIONS.get()
                     + " sceneEvictMsTotal=" + (SCENE_PASS_NANOS_TOTAL.get() / 1_000_000L)

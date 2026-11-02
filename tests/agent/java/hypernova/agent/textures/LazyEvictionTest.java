@@ -437,4 +437,101 @@ class LazyEvictionTest {
         assertEquals(1_050, LazyTextures.nextScenePassDue(3, 1_000, 50));
         assertEquals(0, LazyTextures.nextScenePassDue(0, 1_000, 50));
     }
+
+    @Test
+    void sceneArmWiringUsesMainThreadEvictionPath() {
+        try {
+            LazyTextures.configureSceneForTest(true, true, 2_000_000_000L, 0, 64);
+            LazyTextures.setRuntimeMainForTest(Thread.currentThread());
+            com.fs.starfarer.api.Global.currentState = "CAMPAIGN";
+            LazyTextures.maybeRunEviction(1_000);
+            assertEquals("CAMPAIGN", LazyTextures.lastGameStateForTest());
+            assertEquals(0, LazyTextures.scenePendingForTest());
+            // The first probe starts the 250 ms throttle; probe after it expires.
+            long t2 = 1_000 + LazyTextures.SCENE_STATE_PROBE_NANOS;
+            com.fs.starfarer.api.Global.currentState = "COMBAT";
+            LazyTextures.maybeRunEviction(t2);
+            assertEquals("COMBAT", LazyTextures.lastGameStateForTest());
+            assertEquals(8, LazyTextures.scenePendingForTest());
+            assertEquals(t2, LazyTextures.sceneArmedForTest());
+            assertEquals(t2 + 2_000_000_000L, LazyTextures.sceneDueForTest());
+            LazyTextures.maybeRunEviction(t2 + 600);
+            assertEquals(8, LazyTextures.scenePendingForTest());
+            assertEquals(t2, LazyTextures.sceneArmedForTest());
+        } finally {
+            com.fs.starfarer.api.Global.currentState = null;
+            LazyTextures.clearSceneForTest();
+            LazyTextures.resetGateStateForTest();
+        }
+    }
+
+    @Test
+    void sceneEvictionPathRunsAndCancelsEmptyChunk() {
+        try {
+            LazyTextures.configureSceneForTest(true, true, 0L, 0, 64);
+            LazyTextures.setRuntimeMainForTest(Thread.currentThread());
+            com.fs.starfarer.api.Global.currentState = "CAMPAIGN";
+            LazyTextures.maybeRunEviction(1_000);
+            long t2 = 1_000 + LazyTextures.SCENE_STATE_PROBE_NANOS;
+            com.fs.starfarer.api.Global.currentState = "COMBAT";
+            LazyTextures.maybeRunEviction(t2);
+            assertEquals(1, LazyTextures.scenePassesForTest());
+            assertEquals(0, LazyTextures.scenePendingForTest());
+        } finally {
+            com.fs.starfarer.api.Global.currentState = null;
+            LazyTextures.clearSceneForTest();
+            LazyTextures.resetGateStateForTest();
+        }
+    }
+
+    @Test
+    void sceneChunkCancelsWhenResetFails() {
+        LazyTextures.ProxyEntry victim = entry("victim", 10, 100);
+        try {
+            LazyTextures.addProxyForTest(victim);
+            LazyTextures.configureSceneForTest(true, true, 0L, 0, 64);
+            LazyTextures.setRuntimeMainForTest(Thread.currentThread());
+            com.fs.starfarer.api.Global.currentState = "CAMPAIGN";
+            LazyTextures.maybeRunEviction(1_000);
+            long t2 = 1_000 + LazyTextures.SCENE_STATE_PROBE_NANOS;
+            com.fs.starfarer.api.Global.currentState = "COMBAT";
+            LazyTextures.maybeRunEviction(t2);
+            assertEquals(1, LazyTextures.scenePassesForTest());
+            assertEquals(0, LazyTextures.scenePendingForTest());
+        } finally {
+            com.fs.starfarer.api.Global.currentState = null;
+            LazyTextures.removeProxyForTest("victim");
+            LazyTextures.clearSceneForTest();
+            LazyTextures.resetGateStateForTest();
+        }
+    }
+
+    @Test
+    void sceneForceProbeObservesCampaignBetweenCombats() {
+        try {
+            LazyTextures.configureSceneForTest(true, true, 2_000_000_000L, 0, 64);
+            LazyTextures.setRuntimeMainForTest(Thread.currentThread());
+            com.fs.starfarer.api.Global.currentState = "CAMPAIGN";
+            LazyTextures.noteGameState("campaign", 1_000);
+            assertEquals("CAMPAIGN", LazyTextures.lastGameStateForTest());
+            com.fs.starfarer.api.Global.currentState = "COMBAT";
+            LazyTextures.noteGameState("combat", 1_300);
+            assertEquals("COMBAT", LazyTextures.lastGameStateForTest());
+            assertEquals(8, LazyTextures.scenePendingForTest());
+            assertEquals(1_300, LazyTextures.sceneArmedForTest());
+            com.fs.starfarer.api.Global.currentState = "CAMPAIGN";
+            LazyTextures.noteGameState("campaign2", 1_400);
+            assertEquals("CAMPAIGN", LazyTextures.lastGameStateForTest());
+            assertEquals(0, LazyTextures.scenePendingForTest());
+            com.fs.starfarer.api.Global.currentState = "COMBAT";
+            LazyTextures.noteGameState("combat2", 1_700);
+            assertEquals("COMBAT", LazyTextures.lastGameStateForTest());
+            assertEquals(8, LazyTextures.scenePendingForTest());
+            assertEquals(1_700, LazyTextures.sceneArmedForTest());
+        } finally {
+            com.fs.starfarer.api.Global.currentState = null;
+            LazyTextures.clearSceneForTest();
+            LazyTextures.resetGateStateForTest();
+        }
+    }
 }
