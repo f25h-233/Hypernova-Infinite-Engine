@@ -15,12 +15,18 @@ REQUIRED = (
     "data/config/hypernova/manifest-v1.json",
     "data/config/hypernova/lazy-skip-v1.txt",
     "graphics/hypernova/blank.png",
+    "jars/hypernova.agent.jar",
+    "jars/hypernova.jar",
 )
 FORBIDDEN = ("data/config/hypernova/lazy-skip-v2.txt",)
 AGENT_MARKERS = (
     "hypernova/agent/HypernovaAgent.class",
     "hypernova/agent/textures/LazyTextures.class",
     "hypernova/agent/textures/LazyProxyObject.class",
+)
+MAIN_MARKERS = (
+    "hypernova/HypernovaPlugin.class",
+    "hypernova/adapter/HypernovaCombatPlugin.class",
 )
 
 
@@ -39,7 +45,8 @@ def jar_entries(data: bytes) -> dict[str, tuple[int, int]]:
         return {}
 
 
-def check_zip(zip_path: Path, agent_jar: Path | None = None) -> list[str]:
+def check_zip(zip_path: Path, agent_jar: Path | None = None,
+              main_jar: Path | None = None) -> list[str]:
     failures: list[str] = []
     if not zip_path.is_file():
         return [f"zip missing: {zip_path}"]
@@ -69,6 +76,24 @@ def check_zip(zip_path: Path, agent_jar: Path | None = None) -> list[str]:
                 if got != expected:
                     failures.append(
                         f"{skip} generation {got or '<none>'} != manifest {expected}")
+        main_name = "jars/hypernova.jar"
+        if main_name in names:
+            entries = jar_entries(zf.read(main_name))
+            for marker in MAIN_MARKERS:
+                if marker not in entries:
+                    failures.append(f"packaged main jar missing {marker}")
+            if main_jar is not None:
+                if not main_jar.is_file():
+                    failures.append(f"main jar missing: {main_jar}")
+                else:
+                    built = jar_entries(main_jar.read_bytes())
+                    for marker in MAIN_MARKERS:
+                        if marker not in built:
+                            failures.append(f"built main jar missing {marker}")
+                    if entries and entries != built:
+                        failures.append(
+                            "packaged main jar entries differ from "
+                            f"{main_jar}")
         if agent_jar is not None:
             if "jars/hypernova.agent.jar" not in names:
                 failures.append("missing jars/hypernova.agent.jar")
@@ -113,9 +138,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--zip", required=True, type=Path)
     ap.add_argument("--agent-jar", type=Path)
+    ap.add_argument("--main-jar", type=Path)
     ap.add_argument("--sources", type=Path)
     args = ap.parse_args(argv)
-    failures = check_zip(args.zip, args.agent_jar)
+    failures = check_zip(args.zip, args.agent_jar, args.main_jar)
     if args.agent_jar is not None and args.sources is not None:
         failures += check_agent_fresh(args.agent_jar, args.sources)
     if failures:

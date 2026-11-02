@@ -16,6 +16,8 @@ GEN = hashlib.sha256(MANIFEST).hexdigest()
 AGENT = ("hypernova/agent/HypernovaAgent.class",
          "hypernova/agent/textures/LazyTextures.class",
          "hypernova/agent/textures/LazyProxyObject.class")
+MAIN = ("hypernova/HypernovaPlugin.class",
+        "hypernova/adapter/HypernovaCombatPlugin.class")
 
 
 def _agent_jar(path, extra=None):
@@ -27,8 +29,18 @@ def _agent_jar(path, extra=None):
     return path
 
 
+def _main_jar(path, extra=None):
+    with zipfile.ZipFile(path, "w") as zf:
+        for name in MAIN:
+            zf.writestr(name, b"x")
+        for name, data in (extra or {}).items():
+            zf.writestr(name, data)
+    return path
+
+
 def _release_zip(tmp_path, drop=(), overrides=None):
     jar = _agent_jar(tmp_path / "agent.jar")
+    main = _main_jar(tmp_path / "hypernova.jar")
     files = {
         "mod_info.json": b"{}",
         "README-install.txt": b"note",
@@ -36,6 +48,7 @@ def _release_zip(tmp_path, drop=(), overrides=None):
         "data/config/hypernova/lazy-skip-v1.txt":
             b"# generation=" + GEN.encode() + b"\npath\t1\t1\n",
         "jars/hypernova.agent.jar": jar.read_bytes(),
+        "jars/hypernova.jar": main.read_bytes(),
         "graphics/hypernova/blank.png": b"png",
     }
     files.update(overrides or {})
@@ -102,3 +115,27 @@ def test_agent_freshness(tmp_path):
     os.utime(source, (now + 60, now + 60))
     assert any("agent sources newer than jar" in f
                for f in rc.check_agent_fresh(jar, src))
+
+
+def test_missing_main_jar_fails(tmp_path):
+    zip_path, _ = _release_zip(tmp_path, drop=("jars/hypernova.jar",))
+    assert any("missing jars/hypernova.jar" in f
+               for f in rc.check_zip(zip_path))
+
+
+def test_main_jar_missing_marker_fails(tmp_path):
+    bad = tmp_path / "bad-main.jar"
+    with zipfile.ZipFile(bad, "w") as zf:
+        zf.writestr("unrelated/Thing.class", b"x")
+    zip_path, _ = _release_zip(
+        tmp_path, overrides={"jars/hypernova.jar": bad.read_bytes()})
+    assert any("packaged main jar missing" in f
+               for f in rc.check_zip(zip_path))
+
+
+def test_main_jar_entries_must_match_built(tmp_path):
+    zip_path, _ = _release_zip(tmp_path)
+    built = _main_jar(tmp_path / "built.jar",
+                      extra={"extra/Thing.class": b"x"})
+    assert any("packaged main jar entries differ" in f
+               for f in rc.check_zip(zip_path, main_jar=built))

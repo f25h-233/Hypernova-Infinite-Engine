@@ -26,6 +26,14 @@ if find "$ROOT_W/src/agent/java" -name '*.java' ! -path '*/tools/*' -newer "$AGE
 fi
 GAME="$ROOT_W/Starsector-098-Base/starsector-core"
 OUT="$ROOT_W/build/java"
+# 任意失败（含显式 exit 1）都清掉本轮 zip，避免失败路径留下可发布的包。
+cleanup_failed_zip() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -f "$OUT/hypernova-0.1.0.zip"
+  fi
+}
+trap cleanup_failed_zip EXIT
 CP="$GAME/starfarer.api.jar;$GAME/json.jar;$GAME/lwjgl.jar;$GAME/log4j-1.2.9.jar"
 rm -rf "$OUT/classes" "$OUT/hypernova.jar"
 # 先删旧 zip：任何一步失败都不留下上一次的成品（否则失败路径仍然「有包可发」）。
@@ -96,7 +104,8 @@ if [ -f "$MODDIR/jars/hypernova.agent.jar" ]; then
 fi
 # M2.7 W5/W6：发行包门禁（README/manifest/skip generation/宿主 v2 路径/agent 一致性/新鲜度）。
 python -I "$ROOT_W/tools/release_check.py" --zip "$OUT/hypernova-0.1.0.zip" \
-  --agent-jar "$AGENT_JAR" --sources "$ROOT_W/src/agent/java"
+  --agent-jar "$AGENT_JAR" --main-jar "$OUT/hypernova.jar" \
+  --sources "$ROOT_W/src/agent/java"
 echo "OK: $MANIFEST_DIST (dist artifact, not tracked)"
 echo "OK: $ROOT/build/java/hypernova-mod"
 echo "OK: $ROOT/build/java/hypernova-0.1.0.zip"
