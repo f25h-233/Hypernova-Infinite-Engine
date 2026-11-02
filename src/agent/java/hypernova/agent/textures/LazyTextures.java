@@ -759,10 +759,19 @@ public final class LazyTextures {
                 AgentLog.info("lazy: runtime main thread captured " + runtimeMain.getName()
                         + " from " + name);
             }
-            noteGameState(name);
+            captureMainThreadAt(name, System.nanoTime());
         } catch (Throwable t) {
             AgentLog.fail("lazy: main-thread capture failed", t);
         }
+    }
+
+    private static void captureMainThreadAt(String name, long now) {
+        noteGameState(name, now);
+        maybeArmSceneUnload(now, true);
+    }
+
+    static void captureMainThreadForTest(String name, long now) {
+        captureMainThreadAt(name, now);
     }
 
     static void noteGameState(String name) {
@@ -782,9 +791,6 @@ public final class LazyTextures {
                 }
             }
             lastStateName = name;
-        }
-        if (transition && eviction && sceneUnload) {
-            maybeArmSceneUnload(now, true);
         }
         maybeRunEviction(now);
         maybeRunSelfTest(now);
@@ -938,7 +944,7 @@ public final class LazyTextures {
                     + " live=" + evictableBytes());
         }
         if (n == 0) {
-            // No successful reset this chunk; later chunks would rescan the same proxies.
+            // No successful reset+delete this chunk; later chunks would rescan the same proxies.
             scenePassesRemaining = 0;
             scenePassDueNanos = 0;
         }
@@ -1822,6 +1828,8 @@ public final class LazyTextures {
         sceneUnloadGraceNanos = 0; sceneUnloadMaxPerPass = 0; runtimeMain = null;
         scenePassDueNanos = 0; sceneArmedNanos = 0; scenePassesRemaining = 0;
         nextSceneProbeNanos = 0; lastGameStateName = null;
+        disabled = false; evictDueNanos = 0; lastStateName = null;
+        PENDING_DELETE.clear();
         SCENE_PASSES.set(0); SCENE_EVICTIONS.set(0);
         SCENE_PASS_NANOS_TOTAL.set(0); SCENE_PASS_NANOS_MAX.set(0);
     }
