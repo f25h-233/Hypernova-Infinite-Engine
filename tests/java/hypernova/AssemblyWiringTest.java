@@ -95,4 +95,38 @@ class AssemblyWiringTest {
         assertTrue(combat.contains("sharedStartupSelfCheck"),
                 "the one-shot self-check must run on the main thread");
     }
+
+    @Test
+    void frameProbeRunsAfterGateAndOnlyWhenPresent() throws Exception {
+        String src = read(COMBAT);
+        int completed = src.indexOf("GATE.completed(");
+        int probe = src.indexOf("probe.frame(");
+        assertTrue(completed > 0 && probe > completed,
+                "frame probe 必须在 GATE.completed 之后采样");
+        assertTrue(src.contains("FrameTimeProbe probe = frameProbe;"),
+                "关闭时必须只做一次 null 检查");
+        assertTrue(src.contains(".info(frameLine)"),
+                "探针行必须写入游戏日志");
+        assertTrue(read(PLUGIN).contains("Boolean.getBoolean(\"hypernova.frameProbe\")"),
+                "frame probe 必须默认关闭、用 -Dhypernova.frameProbe=true 开启");
+        assertTrue(read(PLUGIN).contains("new FrameTimeProbe(FRAME_PROBE_LOG_FRAMES)"),
+                "探针构造必须只在属性开启时发生");
+    }
+
+    @Test
+    void frameProbePropertyDefaultsOff() {
+        String old = System.getProperty("hypernova.frameProbe");
+        try {
+            System.clearProperty("hypernova.frameProbe");
+            assertFalse(HypernovaPlugin.frameProbeEnabled());
+            System.setProperty("hypernova.frameProbe", "true");
+            assertTrue(HypernovaPlugin.frameProbeEnabled());
+        } finally {
+            if (old == null) {
+                System.clearProperty("hypernova.frameProbe");
+            } else {
+                System.setProperty("hypernova.frameProbe", old);
+            }
+        }
+    }
 }

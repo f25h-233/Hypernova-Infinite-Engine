@@ -39,6 +39,8 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
     private static volatile Runnable sharedStartupSelfCheck;
     /** 心跳频率（帧）：0 关闭，1 每帧，N>1 每 N 帧。原 verbose 死开关的替代（Minor）。 */
     private static volatile int sharedHeartbeatFrames = 3000;
+    /** M4 frame-time probe；null = 关闭（零采样成本）。 */
+    private static volatile FrameTimeProbe sharedFrameProbe;
     /** 双入口共享的门闩：同帧第二次 advance（另一个实例/另一个入口）直接 return（I1）。 */
     private static final FrameAdvanceGate GATE = new FrameAdvanceGate(5_000_000L);
 
@@ -48,6 +50,7 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
     private PrefetchScheduler scheduler;
     private Telemetry telemetry;
     private TextureService service;
+    private FrameTimeProbe frameProbe;
 
     private int framesSinceFlush;
     private long tickCount;
@@ -60,7 +63,8 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
     public static void install(TriggerPoller poller, PostLoadWarmupHook warmupHook,
                                SaveLoadGuard saveLoadGuard, PrefetchScheduler scheduler,
                                Telemetry telemetry, TextureService service,
-                               Runnable startupSelfCheck, int heartbeatFrames) {
+                               Runnable startupSelfCheck, int heartbeatFrames,
+                               FrameTimeProbe frameProbe) {
         sharedPoller = poller;
         sharedWarmupHook = warmupHook;
         sharedSaveLoadGuard = saveLoadGuard;
@@ -69,6 +73,7 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
         sharedService = service;
         sharedStartupSelfCheck = startupSelfCheck;
         sharedHeartbeatFrames = heartbeatFrames;
+        sharedFrameProbe = frameProbe;
     }
 
     /** 供 {@code data/config/settings.json} 的 plugins 注册（ScriptStore 反射构造，每场战斗一次）。 */
@@ -105,8 +110,20 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
         warmupHook.tick();
         saveLoadGuard.tick();
         scheduler.tick();
-        GATE.completed(scheduler, scheduler.stats().ticks(), System.nanoTime());
+        long now = System.nanoTime();
+        long ticks = scheduler.stats().ticks();
+        GATE.completed(scheduler, ticks, now);
         tickCount++;
+        // M4：探针在门闩之后，并带 tick 去重；关闭时只做一次 null 检查。
+        FrameTimeProbe probe = frameProbe;
+        if (probe != null) {
+            probe.frame(now, ticks);
+            String frameLine = probe.lineIfDue();
+            if (frameLine != null) {
+                com.fs.starfarer.api.Global.getLogger(HypernovaCombatPlugin.class)
+                        .info(frameLine);
+            }
+        }
         int hb = heartbeatFrames;
         if (hb > 0 && tickCount % hb == 1) {
             com.fs.starfarer.api.Global.getLogger(HypernovaCombatPlugin.class).info(
@@ -154,6 +171,7 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
         telemetry = t;
         service = svc;
         heartbeatFrames = sharedHeartbeatFrames;
+        frameProbe = sharedFrameProbe;
         return true;
     }
 }

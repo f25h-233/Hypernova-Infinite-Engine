@@ -11,6 +11,7 @@ import com.fs.starfarer.api.campaign.SectorAPI;
 import com.fs.starfarer.api.combat.ShipHullSpecAPI;
 import com.fs.starfarer.api.combat.ShipVariantAPI;
 import hypernova.adapter.FleetViewFactory;
+import hypernova.adapter.FrameTimeProbe;
 import hypernova.adapter.GameBackend;
 import hypernova.adapter.GameSpriteSource;
 import hypernova.adapter.GameTelemetrySink;
@@ -40,6 +41,11 @@ import hypernova.texture.TextureServiceImpl;
 public class HypernovaPlugin extends BaseModPlugin {
     private static final String CONFIG_PATH = "data/config/hypernova/hypernova.json";
     private static final int PER_TICK_CAP = 32;
+    private static final int FRAME_PROBE_LOG_FRAMES = 600;
+
+    static boolean frameProbeEnabled() {
+        return Boolean.getBoolean("hypernova.frameProbe");
+    }
 
     private transient boolean active;
     private transient TextureServiceImpl service;
@@ -113,8 +119,15 @@ public class HypernovaPlugin extends BaseModPlugin {
             // 注入给无参的战斗插件实例（settings.json 的 plugins 由 ScriptStore 反射构造）。
             // install() 放在 active=true 之后：它之前的初始化失败不会留下「已禁用但仍运行」
             // 的静态槽位；install() 之后的失败由 catch 里的 install(null,...) 统一回滚（I2 / INV-05）。
+            FrameTimeProbe frameProbe = frameProbeEnabled()
+                    ? new FrameTimeProbe(FRAME_PROBE_LOG_FRAMES) : null;
+            if (frameProbe != null) {
+                Global.getLogger(HypernovaPlugin.class).info(
+                        "Hypernova frame probe enabled: log every "
+                                + FRAME_PROBE_LOG_FRAMES + " frames");
+            }
             HypernovaCombatPlugin.install(poller, warmupHook, saveLoadGuard, scheduler, telemetry,
-                    service, startupSelfCheck, config.heartbeatFrames());
+                    service, startupSelfCheck, config.heartbeatFrames(), frameProbe);
             Global.getLogger(HypernovaPlugin.class).info("Hypernova active: " + cap.reason()
                     + ", manifest=" + manifest.size() + " paths, discarded=" + manifest.discardedCount()
                     + ", crossLayer=" + manifest.crossLayerConflictCount());
@@ -122,7 +135,7 @@ public class HypernovaPlugin extends BaseModPlugin {
             active = false;
             // 回滚静态槽位：否则 transient script / combat plugin 仍能从 static 拿到依赖，
             // 出现「日志说已禁用、管线照常运行」的自相矛盾状态（I2 / INV-05）。
-            HypernovaCombatPlugin.install(null, null, null, null, null, null, null, 0);
+            HypernovaCombatPlugin.install(null, null, null, null, null, null, null, 0, null);
             Global.getLogger(HypernovaPlugin.class).error("Hypernova disabled: init failure", t);
         }
     }
