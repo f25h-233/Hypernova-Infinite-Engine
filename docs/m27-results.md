@@ -301,15 +301,15 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
 | W-10 失败物化 id=0 | **fixed** | Task 2 `parkFailedProxy` + `failedParked`；实机 0；残余：`blank.png` 缺失时失败代理仍可能绑定 id 0（安装器断言 blank.png） |
 | W-4 ddsFallback 盲区 | **closed（可诊断）** | Task 3 `37899bf`/`bc886c8`；10 个 `ddsFb*`，sum == `ddsFallback`；R-M27-8：`BRIDGE` 计入总数，M2.6/M2.7 仅在 `ddsDisabled=0` 时可直接比较 |
 | W-7 DDS commit 监视器 | **defensive fixed** | Task 2 `synchronized(loader)`；**R-M27-7：仍存在潜在 loader→e 反向路径**（FR `commitAndCacheTexture` → `oOoO.super` → `onRegister`），不得声称“无反向锁路径” |
-| 30 s empty-pass backoff | **open/unexercised** | 所有实机 emptyEvictPasses=0；Task 1 预算口径消除了 startup-bytes 空转根因；真实长会话空 pass/backoff 行为仍需用户/压力验收 |
+| 30 s empty-pass backoff | **exercised（partial）** | 2026-11-02 4 MiB 诊断会话 `emptyEvictPasses=7`，空 pass 分支真实发生；定时值由 `nextDueAfterPass` 单测覆盖；没有 per-pass 时间戳，不能声称精确 30 s 间隔已测量 |
 | M2.5 W5 发行包 mod 集 | **documented + fail-open** | Task 4 `40dd39c`；`README-install.txt` + `release_check`；generation/尺寸不符 fail-open |
 | M2.5 W6 agent jar 新鲜度 | **fixed** | Task 4 `40dd39c`；`build-mod.sh` 强制重建/新鲜度/release_check；`install_agent.py` 先复制 jar 再早退 |
 | refcount / REQ-R1-10 | **not implementable**（无全局注册表） | owned-only + 失败停车 + 文档；本轮不实现 |
 | 第三方 id 缓存（W-3） | **residual** | owned-only + 文档；mod 若把 GL id 拷进自有结构，淘汰后仍可能持有已删 id |
 | GL context 重建（W-2） | **user gate** | 分辨率/全屏/alt-tab 手动验收；context 重建可能作废占位 id |
-| 战斗/读档/分辨率/手动目检 | **partial** | 2026-11-02 用户任务战斗（Valkyrie「为天堂之门而战」）lazy+DDS on、默认 256MB：0 五类错误、`materialized=724`、`ddsHit=655`、`ddsFallback=3`（META）、`evictPasses=0`；campaign/读档/分辨率/alt-tab 未完成；Star Wars/Exotica/超大舰队为 mod 问题 |
+| 战斗/读档/分辨率/手动目检 | **partial pass** | 任务战斗（Valkyrie「为天堂之门而战」）0 五类错误、`materialized=724`、`ddsHit=655`、`ddsFallback=3`（META）、`evictPasses=0`；4 MiB 诊断会话 `evictPasses=32`、`evicted=886`、`rematerialized=90`、`empty=7`、`max=11ms`、0 五类错误；读档/分辨率/alt-tab 未完成；Star Wars/Exotica/超大舰队为 mod 问题 |
 | A→B 长会话净 VRAM | **user gate** | 手动；本轮只有菜单时刻 GPU 快照 |
-| >200 ms 卡顿 | **partial/user gate** | 任务战斗主观正常；无逐帧/P99 |
+| >200 ms 卡顿 | **partial/user gate** | 任务战斗主观正常；4 MiB 诊断 `evictPassMsMax=11 ms`；仍无逐帧/P99 |
 | 默认预算 selftest | **pass** | `selftest=1/evicted=1/rematerialized=1`；`startupBytes=5,522,052`；恒等式；0 errors |
 | counterbalanced A/B n=3 | **pass（带工具 caveat）** | C 71.6 / T 69.6 / paired −2.0（边界，不称收益）；GPU ded T 3/3 更低；`ddsHit` 中位 27；0 errors；§4.3 工具限制 |
 | linger120 默认预算 | **pass** | 0 errors；`evictPasses=0`（预期）；`startupBytes` 未增长；恒等式 |
@@ -333,11 +333,26 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
 - 因此这几项不记 Hypernova 失败，也不改变 default-on 结论；但它们使 campaign/读档/
   分辨率/A→B 无法在本次完成。
 
+### 2026-11-02 4 MiB 诊断会话（用户）
+
+- 启动：`budgetBytes=4194304`（内部诊断，不是用户配置）；lazy+DDS+eviction on、`selftest=false`。
+- 最后 summary：`evictPasses=32`、`evicted=886`、`rematerialized=90`、`emptyEvictPasses=7`、
+  `evictPassMsTotal=60 ms`、`evictPassMsMax=11 ms`、`failedParked=0`、`oldIdDeleted=886`、
+  `evictSkipped=0`、`placeholder=15846`、`ddsHit=1008`、`ddsFallback=4`（全部 META）、
+  `liveBytes=19,195,192`、`startupBytes=5,522,052`、`foreignBytes=8,845,888`、
+  `evictableBytes=4,827,252`（恒等式成立）。
+- `starsector.log` 最后 session：0 `Failed to load texture` / `VerifyError` / `ClassFormatError` /
+  `AsyncException` / `isStateCorrupted`；0 条 Hypernova/lazy ERROR；339 条 ERROR-level 行是
+  LunaSettings/weapon_data/NexUtils 等 mod 数据问题。
+- **30 s backoff**：`emptyEvictPasses=7` 证明空 pass 分支真实发生；`nextDueAfterPass` 的
+  30 s 值有单测，但没有 per-pass 时间戳，不能声称精确间隔已测量。
+- 仍未完成：读档/存档、分辨率/全屏/alt-tab、A→B 长会话、逐帧/P99 stutter。
+
 以下**仍未完成，不标完整 PASS**：
 
-1. **campaign 战斗 5–10 min（带淘汰压力）**：任务战斗已过，但 `evictPasses=0`；仍需在
-   干净存档/小舰队下跑一场，记录 `evictPasses/evicted/rematerialized/evictPassMsMax/
-   failedParked/ddsFallback` 及原因分解；主观记录 >200 ms 卡顿次数。
+1. **campaign 战斗 5–10 min（带淘汰压力）**：4 MiB 诊断会话已产生 `evictPasses=32`、
+   `evicted=886`、`rematerialized=90`；建议在干净存档/小舰队下再重复一场，确认可复现，
+   并主观记录 >200 ms 卡顿次数。
 2. **读档/存档**：读档两次、存档一次；无白块/错位/崩溃；记录 `dimMismatch`、`reregistered`。
 3. **分辨率/全屏/alt-tab**：1707×1067 → 2560×1440 → 返回；确认占位纹理不残留（W-2）；
    若 lazy 因 `dimMismatch` 自动禁用，记为 fail-open，不是崩溃。
@@ -375,8 +390,8 @@ summary（`scripts-agent.log`）分别给出 `ddsHit=27/25/28`、`ddsFallback=2/
 
 ## 8. 限制
 
-1. **自动化菜单 only；手动只完成一次任务战斗**：没有 campaign 战斗/读档/分辨率/长会话；
-   任务战斗无 eviction pressure（`evictPasses=0`），不标完整 PASS。
+1. **自动化菜单 only；手动完成一次任务战斗 + 一次 4 MiB 诊断会话**：没有读档/分辨率/
+   长会话；任务战斗无 eviction pressure，4 MiB 诊断有淘汰但不等于完整 campaign 验收。
 2. **A/B split 2+1**：单次 n=3 超过 10 min 上限；顺序保持 C→T/T→C/C→T、n=3 不变，
    但两次调用之间不是同一进程；`ab.json` 是合并聚合。时间 delta **−2.0 s 仅按边界记录，
    不称收益**。

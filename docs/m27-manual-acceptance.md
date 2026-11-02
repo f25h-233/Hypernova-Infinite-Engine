@@ -1,9 +1,10 @@
 # M2.7 手动验收清单（战斗/读档/分辨率/长会话）
 
-> 2026-11-02：已执行一次用户任务战斗（Valkyrie「为天堂之门而战」），lazy+DDS+eviction
-> 默认预算下正常、0 五类纹理错误，但 `evictPasses=0`（无淘汰压力）；其余项目未完成。
-> 本文件是验收步骤 + 实测记录，不是完整 PASS。只有在全部通过后才可讨论 default-on；
-> 任何一项失败先记录再修。自动化菜单证据见 `docs/m27-results.md`。
+> 2026-11-02：已执行一次任务战斗（Valkyrie「为天堂之门而战」，默认 256 MB，无淘汰压力）
+> 和一次 4 MiB 诊断会话（`evictPasses=32`、`evicted=886`、`empty=7`）；均 0 五类纹理错误。
+> 读档/分辨率/A→B/stutter 仍未完成。本文件是验收步骤 + 实测记录，不是完整 PASS。
+> 只有在全部通过后才可讨论 default-on；任何一项失败先记录再修。自动化菜单证据见
+> `docs/m27-results.md`。
 
 ## 前置
 
@@ -36,13 +37,19 @@
   Star Wars 开局 + 大量顶级舰 → 新建存档 `NameAssigner` NPE；超大舰队旧档严重卡顿；
   “舰队改装” → Exotica `RefitButtonAdder.advance` 的 `UIComponentAPI` 空 cast。
   不要把这些记成 Hypernova 失败；用干净存档/小舰队/禁用 Exotica refit 按钮再测。
-- **仍未完成**：campaign 战斗（带 `evictPasses>0`）、读档/存档、分辨率/全屏/alt-tab、
-  A→B 长会话、逐帧/P99 stutter。
+- **4 MiB 诊断会话**：`budgetBytes=4194304`；`evictPasses=32`、`evicted=886`、
+  `rematerialized=90`、`emptyEvictPasses=7`、`evictPassMsMax=11 ms`、`failedParked=0`、
+  `oldIdDeleted=886`、`evictSkipped=0`、`ddsHit=1008`、`ddsFallback=4`（META）；
+  `starsector.log` 0 五类纹理错误、0 Hypernova/lazy ERROR。
+  `emptyEvictPasses=7` 证明空 pass 分支真实发生；精确 30 s 间隔没有 per-pass 时间戳。
+- **仍未完成**：读档/存档、分辨率/全屏/alt-tab、A→B 长会话、逐帧/P99 stutter；
+  建议在干净存档/小舰队下重复一场带淘汰的战斗确认可复现。
 
 ## 可选诊断淘汰（战斗步骤前）
 
-可选诊断淘汰：启动参数加内部诊断 `-Dhypernova.textures.lazy.eviction.budgetBytes=262144`
-（**不是用户配置**），确认 `budgetBytes=262144`、`evictPasses>0`、`evicted>0`、
+可选诊断淘汰：启动参数加内部诊断 `-Dhypernova.textures.lazy.eviction.budgetBytes=4194304`
+（4 MiB，推荐；**不是用户配置**）或 `262144`（256 KiB 压力版），确认
+`budgetBytes=<设定值>`、`evictPasses>0`、`evicted>0`、
 `failedParked=0`。默认 256 MB 下 `evictPasses=0` 是预期；只跑默认预算不能判定淘汰路径已验证。
 
 ## 1. 战斗（5–10 分钟）
