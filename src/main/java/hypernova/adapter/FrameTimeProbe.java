@@ -4,9 +4,11 @@ package hypernova.adapter;
  * 主线程帧时间探针（默认关闭，M4 验收用）。
  *
  * <p>只在 {@code HypernovaCombatPlugin.advance} 通过 {@link FrameAdvanceGate}
- * 之后调用，并按 scheduler tick 去重：同一帧的第二个入口（以及长帧超过门闩
- * 5 ms 时间窗后放行的第二个入口）不会重复采样。关闭时不创建实例，调用点只做
- * 一次 null 检查，没有额外计时/分配。
+ * 之后调用，并按引擎帧标识去重：{@code advance(float amount)} 的 {@code amount}
+ * 是引擎帧身份，同一引擎帧的两个入口拿到相同的 amount，因此长帧超过门闩 5 ms
+ * 时间窗后放行的第二个入口不会重复采样。固定步长引擎可能因相邻帧 amount 相同
+ * 而跳过一帧，但不影响 &gt;200 ms 卡顿计数。关闭时不创建实例，调用点只做一次
+ * null 检查，没有额外计时/分配。
  *
  * <p>口径：
  * <ul>
@@ -26,7 +28,8 @@ public final class FrameTimeProbe {
 
     private final int logEveryFrames;
     private final long[] buckets = new long[MAX_BUCKET_MS + 1];
-    private long lastTick = Long.MIN_VALUE;
+    private float lastAmount = Float.NaN;
+    private boolean hasLast;
     private long lastNanos;
     private long frames;
     private long over200;
@@ -40,20 +43,25 @@ public final class FrameTimeProbe {
     }
 
     /**
-     * 记录一帧。{@code tick} 必须来自 {@code scheduler.stats().ticks()}；
-     * 同一 tick 的重复调用直接忽略。{@code nowNanos} 必须是单调时钟。
+     * 记录一帧。{@code amount} 是引擎帧标识（{@code advance(float amount)} 的参数），
+     * 同一引擎帧的两个入口拿到相同的 amount，重复调用直接忽略。
+     * {@code nowNanos} 必须是单调时钟。
      */
-    public void frame(long nowNanos, long tick) {
-        if (tick == lastTick) {
+    public void frame(long nowNanos, float amount) {
+        if (!Float.isFinite(amount) || amount <= 0f) {
             return;
         }
-        lastTick = tick;
-        long last = lastNanos;
+        if (Float.compare(amount, lastAmount) == 0) {
+            return;
+        }
+        lastAmount = amount;
+        if (!hasLast) {
+            hasLast = true;
+            lastNanos = nowNanos;
+            return;
+        }
+        long delta = nowNanos - lastNanos;
         lastNanos = nowNanos;
-        if (last == 0L) {
-            return;
-        }
-        long delta = nowNanos - last;
         if (delta <= 0L) {
             return;
         }

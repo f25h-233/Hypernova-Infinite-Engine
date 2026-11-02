@@ -114,10 +114,10 @@ public final class HypernovaCombatPlugin extends BaseEveryFrameCombatPlugin impl
         long ticks = scheduler.stats().ticks();
         GATE.completed(scheduler, ticks, now);
         tickCount++;
-        // M4：探针在门闩之后，并带 tick 去重；关闭时只做一次 null 检查。
+        // M4：探针在门闩之后，并按引擎帧 amount 去重；关闭时只做一次 null 检查。
         FrameTimeProbe probe = frameProbe;
         if (probe != null) {
-            probe.frame(now, ticks);
+            probe.frame(now, amount);
             String frameLine = probe.lineIfDue();
             if (frameLine != null) {
                 com.fs.starfarer.api.Global.getLogger(HypernovaCombatPlugin.class)

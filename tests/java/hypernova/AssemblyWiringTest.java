@@ -100,9 +100,9 @@ class AssemblyWiringTest {
     void frameProbeRunsAfterGateAndOnlyWhenPresent() throws Exception {
         String src = read(COMBAT);
         int completed = src.indexOf("GATE.completed(");
-        int probe = src.indexOf("probe.frame(");
+        int probe = src.indexOf("probe.frame(now, amount)");
         assertTrue(completed > 0 && probe > completed,
-                "frame probe 必须在 GATE.completed 之后采样");
+                "frame probe 必须在 GATE.completed 之后按引擎帧 amount 采样");
         assertTrue(src.contains("FrameTimeProbe probe = frameProbe;"),
                 "关闭时必须只做一次 null 检查");
         assertTrue(src.contains(".info(frameLine)"),
