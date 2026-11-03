@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,11 +24,21 @@ class Finding:
 
 
 def _inside_root(path: Path, root: Path) -> bool:
+    """Lexical containment check.
+
+    Do not use ``Path.resolve()`` here: M7 migrates mods with Windows
+    junctions, and ``resolve()`` follows a junction to its real target under
+    ``Starsector-098-260mods``.  That made every junction-backed asset look
+    like it escaped the experimental game root.  The manifest records the
+    lexical in-root path; containment must be decided the same way.
+    ``abspath`` still normalizes ``..`` and different drives are rejected.
+    """
     try:
-        path.resolve().relative_to(root.resolve())
+        path_abs = os.path.normcase(os.path.abspath(os.fspath(path)))
+        root_abs = os.path.normcase(os.path.abspath(os.fspath(root)))
+        return os.path.commonpath([root_abs, path_abs]) == root_abs
     except (ValueError, OSError):
         return False
-    return True
 
 
 def _entry_findings(entry: dict, layer: str, game_root: Path) -> list[Finding]:

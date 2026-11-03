@@ -1,5 +1,10 @@
 import copy
 import json
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
 
 from validate_manifest import validate
 
@@ -440,3 +445,39 @@ def test_duplicate_mod_summary_is_case_insensitive(mini_game):
     m["mods"].append(zero_entry)
     sev = {(f.code, f.severity) for f in validate(m, mini_game)}
     assert ("duplicate_mod_summary", "Important") in sev
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows-only")
+def test_junction_inside_root_is_not_outside(mini_game, tmp_path):
+    """M7 --link uses junctions; lexical in-root paths must not be Critical.
+
+    ``Path.resolve()`` follows a junction to its real target under the source
+    install, which made every junction-backed asset look outside the game root.
+    """
+    from test_manifest_builder import _seed_core, build_manifest
+
+    _seed_core(mini_game)
+    outside = tmp_path / "outside_assets"
+    outside.mkdir()
+    (outside / "junction_asset.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    link = mini_game / "mods" / "junction_mod"
+    proc = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(outside)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        pytest.skip(f"mklink /J unavailable: {proc.stderr or proc.stdout}")
+
+    try:
+        m = build_manifest(mini_game, include_l2=False).manifest
+        entry = next(e for e in m["layers"]["L1"] if not e["baked"])
+        entry["absolutePath"] = str(link / "junction_asset.png")
+        codes = {
+            f.code for f in validate(m, mini_game) if f.severity == "Critical"
+        }
+        assert "asset_outside_root" not in codes
+    finally:
+        subprocess.run(
+            ["cmd", "/c", "rmdir", str(link)],
+            capture_output=True, text=True,
+        )

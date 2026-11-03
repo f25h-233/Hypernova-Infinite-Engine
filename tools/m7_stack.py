@@ -131,6 +131,20 @@ ROUTE_B_FLAGS = (
     "-Dhypernova.textures.lazy.eviction=true",
     "-Dhypernova.textures.lazy.eviction.sceneUnload=false",
 )
+# 随包 JRE 17 的 vmparams 带有 Java 28 不接受的参数。路线 B 必须过滤，
+# 否则 Java 28 在创建 JVM 时就退出（实测 -noverify 等）。
+ROUTE_B_JAVA28_REMOVED_TOKENS = frozenset({
+    "-noverify",
+    "-XX:+UseXMMForArrayCopy",
+    "-XX:+ParallelRefProcEnabled",
+    "-XX:+AlwaysAtomicAccesses",
+    "-XX:+UseVectorStubs",
+    "-XX:ShenandoahGCMode=iu",
+    "--enable-preview",
+})
+_MEMORY_VALUE_RE = re.compile(r"^\d+[kKmMgG]$")
+DEFAULT_ROUTE_B_XMS = "8G"
+DEFAULT_ROUTE_B_XMX = "10G"
 # ---- 路线 A 常量（Task 4）----
 # MixinFR 的 install.bat 从 mod 文件夹名推导 agent 路径，因此目标文件夹
 # 固定为 MixinFR（不能含空格）；Parallel 同理，由我们固定命名。
@@ -1045,11 +1059,71 @@ def _tokenless_arguments(tokens: list[str]) -> list[str]:
     return args
 
 
-def _route_b_tokens(tokens: list[str], *, prepatcher: bool) -> list[str]:
+def _normalize_memory_value(value: str, *, name: str) -> str:
+    text = str(value).strip()
+    if not _MEMORY_VALUE_RE.fullmatch(text):
+        raise ValueError(
+            f"invalid {name}: {value!r}; expected e.g. 8G, 8192m, 10240m")
+    return text
+
+
+def _ddscache_state(root: Path) -> dict[str, object]:
+    """FR 0.9.7rc2 requires ``mods/DDSCache`` to exist before startup."""
+    path = root / "mods" / "DDSCache"
+    exists = path.exists()
+    return {
+        "path": str(path),
+        "present": path.is_dir(),
+        "will_create": not exists,
+        "blocked": exists and not path.is_dir(),
+    }
+
+
+def _lunalib_settings_state(root: Path) -> dict[str, object]:
+    """Detect the known LunaLib first-run corruption (all files identical).
+
+    M7 must not write LunaSettings; this is a read-only precheck so the
+    operator can restore a known-good ``saves/common/LunaSettings`` before
+    launching a 256-mod install.
+    """
+    folder = root / "saves" / "common" / "LunaSettings"
+    files = sorted(folder.glob("*.json.data")) if folder.is_dir() else []
+    by_hash: dict[str, list[str]] = {}
+    for path in files:
+        try:
+            digest = _sha256_file(path)
+        except OSError:
+            continue
+        by_hash.setdefault(digest, []).append(path.name)
+    unique = len(by_hash)
+    suspicious = len(files) > 1 and unique == 1
+    sample = []
+    if suspicious:
+        sample = sorted(by_hash, key=lambda key: -len(by_hash[key]))[:1]
+        sample = [name for name in by_hash[sample[0]]][:5]
+    return {
+        "path": str(folder),
+        "present": folder.is_dir(),
+        "file_count": len(files),
+        "unique_hashes": unique,
+        "suspicious": suspicious,
+        "sample": sample,
+    }
+
+
+def _route_b_tokens(tokens: list[str], *, prepatcher: bool,
+                    xms: str | None = None,
+                    xmx: str | None = None) -> list[str]:
     """清洗旧注入并生成路线 B 的 token-less 参数序列。"""
     out: list[str] = []
+    replace_memory = xms is not None or xmx is not None
     for token in tokens:
         lowered = token.lower()
+        if token in ROUTE_B_JAVA28_REMOVED_TOKENS:
+            continue
+        if replace_memory and (
+                lowered.startswith("-xms") or lowered.startswith("-xmx")):
+            continue
         if lowered.startswith("-javaagent:"):
             name = lowered[len("-javaagent:"):].replace("\\", "/")
             name = name.rsplit("/", 1)[-1]
@@ -1078,7 +1152,13 @@ def _route_b_tokens(tokens: list[str], *, prepatcher: bool) -> list[str]:
             insert_at = index
             break
 
-    options = list(ROUTE_B_FLAGS) + [HYPERNOVA_AGENT_TOKEN, FR_AGENT_TOKEN]
+    memory: list[str] = []
+    if xms is not None:
+        memory.append(f"-Xms{xms}")
+    if xmx is not None:
+        memory.append(f"-Xmx{xmx}")
+    options = memory + list(ROUTE_B_FLAGS) + [
+        HYPERNOVA_AGENT_TOKEN, FR_AGENT_TOKEN]
     if prepatcher:
         options.append(PREPATCHER_AGENT_TOKEN)
     return out[:insert_at] + options + out[insert_at:]
@@ -1091,13 +1171,21 @@ def plan_route_b(
     jdk_dir: str | Path,
     hypernova_mod: str | Path,
     prepatcher_dir: str | Path | None = None,
+    xms: str | None = None,
+    xmx: str | None = None,
 ) -> dict[str, object]:
     """规划路线 B（FR 0.9.7rc2 + jdk-28+13 + Hypernova）。
 
     只读：返回新的 vmparams 行、effective Java 与复制清单。写盘必须显式
     调用 ``apply_route_b`` 并先经过 ``m6_env_snapshot.snapshot``。
+    ``xms``/``xmx`` 会替换源 vmparams 的内存参数；Java 28 专属过滤见
+    ``ROUTE_B_JAVA28_REMOVED_TOKENS``。
     """
-    base = Path(root)
+    base = Path(root).resolve()
+    if xms is not None:
+        xms = _normalize_memory_value(xms, name="xms")
+    if xmx is not None:
+        xmx = _normalize_memory_value(xmx, name="xmx")
     if not base.is_dir():
         raise FileNotFoundError(f"install root not found: {base}")
     vmparams = base / VMPARAMS_PATH
@@ -1111,7 +1199,9 @@ def plan_route_b(
     _reject_route_a_components(base, tokens)
     args = _tokenless_arguments(tokens)
     new_line = " ".join(
-        _route_b_tokens(args, prepatcher=prepatcher_dir is not None))
+        _route_b_tokens(
+            args, prepatcher=prepatcher_dir is not None,
+            xms=xms, xmx=xmx))
     route_b_vmparams = base / ROUTE_B_VMPARAMS_NAME
     launcher_path = _route_launcher_path(base)
     launcher_text = _route_launcher_text(base)
@@ -1186,6 +1276,27 @@ def plan_route_b(
             "VramOptimizer not present in target mods; apply the 256-mod "
             "migration (Task 2) before route B")
 
+    ddscache = _ddscache_state(base)
+    if ddscache["blocked"]:
+        warnings.append(
+            f"{ddscache['path']} exists but is not a directory; route B "
+            "needs an empty directory here")
+    elif ddscache["will_create"]:
+        warnings.append(
+            "mods/DDSCache missing; apply will create it (FR 0.9.7rc2 "
+            "requires it before startup)")
+    lunalib = _lunalib_settings_state(base)
+    if lunalib["suspicious"]:
+        warnings.append(
+            "LunaLib settings look corrupt: "
+            f"{lunalib['file_count']} file(s) share one hash under "
+            f"{lunalib['path']}; restore a known-good "
+            "saves/common/LunaSettings before launching")
+    elif not lunalib["present"]:
+        warnings.append(
+            "LunaLib settings directory missing; first run may regenerate it "
+            "(known issue: 256-mod first run can write identical files)")
+
     mod_ids: dict[str, str] = {
         HYPERNOVA_MOD_ID: str(Path(hypernova_mod) / "mod_info.json"),
     }
@@ -1220,6 +1331,10 @@ def plan_route_b(
         str(base / HYPERNOVA_MOD_REL),
         str(base / HYPERNOVA_MOD_REL / "data/config/hypernova/hypernova.json"),
     ]
+    ensure_dirs: list[str] = []
+    if ddscache["will_create"] and not ddscache["blocked"]:
+        ensure_dirs.append(str(ddscache["path"]))
+        rollback_paths.append(str(ddscache["path"]))
     rollback_paths.extend(str(item["dst"]) for item in copies)
 
     writes = [
@@ -1276,6 +1391,17 @@ def plan_route_b(
         "vmparams_changed": False,
         "agents": agents,
         "flags": list(ROUTE_B_FLAGS),
+        "memory": {
+            "xms": xms,
+            "xmx": xmx,
+            "overridden": xms is not None or xmx is not None,
+            "source": ("override" if (xms is not None or xmx is not None)
+                       else "inherited"),
+        },
+        "java28_removed_tokens": sorted(ROUTE_B_JAVA28_REMOVED_TOKENS),
+        "ddscache": ddscache,
+        "lunalib_settings": lunalib,
+        "ensure_dirs": ensure_dirs,
         "writes": writes,
         "copies": copies,
         "copy_count": len(copies),
@@ -1431,6 +1557,12 @@ def apply_route_b(plan: dict[str, object]) -> dict[str, object]:
     raw_rollback = plan.get("rollback_paths")
     rollback_paths = (raw_rollback if isinstance(raw_rollback, list)
                       else list(ROUTE_SNAPSHOT_PATHS))
+    raw_ddscache = plan.get("ddscache")
+    ddscache = raw_ddscache if isinstance(raw_ddscache, dict) else {}
+    if ddscache.get("blocked"):
+        raise ValueError(
+            "route-b requires a directory at "
+            f"{ddscache.get('path')!r} for FR DDS metadata")
 
     # 快照先行：M6（全局约束） + M7 自己的完整回滚清单。
     raw_snapshot = plan.get("snapshot")
@@ -1444,6 +1576,13 @@ def apply_route_b(plan: dict[str, object]) -> dict[str, object]:
     snapshot_dir = dest_path.resolve() / str(label)
     rollback_meta = snapshot_route(
         root, str(label), paths=rollback_paths, dest=dest_path)
+
+    raw_ensure = plan.get("ensure_dirs")
+    ensure_dirs = ([str(item) for item in raw_ensure]
+                   if isinstance(raw_ensure, list) else [])
+    for item in ensure_dirs:
+        _snapshot_paths(root, [item])
+        Path(item).mkdir(parents=True, exist_ok=True)
 
     generated: list[str] = []
     for item in writes:
@@ -1484,7 +1623,11 @@ def apply_route_b(plan: dict[str, object]) -> dict[str, object]:
             "entries": len(rollback_meta.get("entries", [])),
         },
         "generated": generated,
+        "created_dirs": ensure_dirs,
         "vmparams": plan["vmparams"],
+        "memory": plan.get("memory"),
+        "ddscache": plan.get("ddscache"),
+        "lunalib_settings": plan.get("lunalib_settings"),
         "root_vmparams_modified": False,
         "copied": copied,
         "enabled_mods": enabled,
@@ -1695,7 +1838,7 @@ def plan_route_a(
     必须显式调用 ``apply_route_a`` 并先经过 M6/M7 快照。根 ``vmparams``
     不改写；``starsector-core/fr.jar`` 或 vmparams 里的 FR token 直接拒绝。
     """
-    base = Path(root)
+    base = Path(root).resolve()
     if not base.is_dir():
         raise FileNotFoundError(f"install root not found: {base}")
     vmparams = base / VMPARAMS_PATH
@@ -2999,6 +3142,13 @@ def _format_route_b_text(data: dict[str, object]) -> str:
         rollback = raw_rollback if isinstance(raw_rollback, dict) else {}
         generated = data.get("generated")
         copied = data.get("copied")
+        raw_memory = data.get("memory")
+        memory = raw_memory if isinstance(raw_memory, dict) else {}
+        raw_ddscache = data.get("ddscache")
+        ddscache = raw_ddscache if isinstance(raw_ddscache, dict) else {}
+        raw_lunalib = data.get("lunalib_settings")
+        lunalib = raw_lunalib if isinstance(raw_lunalib, dict) else {}
+        created = data.get("created_dirs")
         return "\n".join([
             f"applied={flag(data.get('applied'))}",
             f"ok={flag(data.get('ok'))}",
@@ -3007,6 +3157,11 @@ def _format_route_b_text(data: dict[str, object]) -> str:
             f"rollback.manifest={rollback.get('manifest')}",
             f"generated={len(generated) if isinstance(generated, list) else 0}",
             f"copied={len(copied) if isinstance(copied, list) else 0}",
+            f"created_dirs={len(created) if isinstance(created, list) else 0}",
+            f"memory.xms={memory.get('xms')}",
+            f"memory.xmx={memory.get('xmx')}",
+            f"ddscache.blocked={flag(ddscache.get('blocked'))}",
+            f"lunalib_settings.suspicious={flag(lunalib.get('suspicious'))}",
             f"root_vmparams_modified="
             f"{flag(data.get('root_vmparams_modified'))}",
         ])
@@ -3019,6 +3174,12 @@ def _format_route_b_text(data: dict[str, object]) -> str:
     enabled = raw_enabled if isinstance(raw_enabled, dict) else {}
     raw_warnings = data.get("warnings")
     raw_copies = data.get("copies")
+    raw_memory = data.get("memory")
+    memory = raw_memory if isinstance(raw_memory, dict) else {}
+    raw_ddscache = data.get("ddscache")
+    ddscache = raw_ddscache if isinstance(raw_ddscache, dict) else {}
+    raw_lunalib = data.get("lunalib_settings")
+    lunalib = raw_lunalib if isinstance(raw_lunalib, dict) else {}
     return "\n".join([
         f"route={data.get('route')}",
         f"root={data.get('root')}",
@@ -3028,6 +3189,15 @@ def _format_route_b_text(data: dict[str, object]) -> str:
         f"launcher.bat={launcher.get('bat')}",
         f"launcher.argfile={launcher.get('argfile')}",
         f"vmparams={data.get('vmparams_path')}",
+        f"memory.xms={memory.get('xms')}",
+        f"memory.xmx={memory.get('xmx')}",
+        f"memory.source={memory.get('source')}",
+        f"ddscache.present={flag(ddscache.get('present'))}",
+        f"ddscache.will_create={flag(ddscache.get('will_create'))}",
+        f"lunalib_settings.present={flag(lunalib.get('present'))}",
+        f"lunalib_settings.file_count={lunalib.get('file_count')}",
+        f"lunalib_settings.unique_hashes={lunalib.get('unique_hashes')}",
+        f"lunalib_settings.suspicious={flag(lunalib.get('suspicious'))}",
         f"root_vmparams_modified="
         f"{flag(data.get('root_vmparams_modified'))}",
         f"copies={len(raw_copies) if isinstance(raw_copies, list) else 0}",
@@ -3126,6 +3296,12 @@ def _build_parser() -> argparse.ArgumentParser:
     route_b.add_argument("--hypernova-mod", required=True, type=Path)
     route_b.add_argument("--prepatcher", type=Path,
                          help="可选：StarsectorPrepatcher 目录（实验）")
+    route_b.add_argument(
+        "--xms", type=str, default=None,
+        help="覆盖 -Xms（如 8G/8192m；256 mod 建议 8G）")
+    route_b.add_argument(
+        "--xmx", type=str, default=None,
+        help="覆盖 -Xmx（如 10G/10240m；256 mod 建议 8–12G）")
     route_b.add_argument("--backups", type=Path,
                          help="快照根目录（默认为 <audit>/backups）")
     route_b.add_argument("--text", action="store_true",
@@ -3231,6 +3407,8 @@ def main(argv: list[str] | None = None) -> int:
                 jdk_dir=args.jdk_dir,
                 hypernova_mod=args.hypernova_mod,
                 prepatcher_dir=args.prepatcher,
+                xms=args.xms,
+                xmx=args.xmx,
             )
             if args.backups is not None:
                 plan["snapshot"]["dest"] = str(args.backups)  # type: ignore[index]

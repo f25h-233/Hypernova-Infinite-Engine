@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +38,16 @@ def _folder_path(game_root: Path, folder: str) -> Path:
     if folder.casefold() == CORE_FOLDER:
         return root / CORE_FOLDER
     return root / "mods" / folder
+
+
+def _lexical_abs(path: Path | str) -> Path:
+    """Absolute path without following junctions/symlinks.
+
+    M7 migrates mods with junctions. ``Path.resolve()`` would follow a
+    junction into the source install and put a path outside the experimental
+    game root into ``absolutePath``, which then fails manifest validation.
+    """
+    return Path(os.path.abspath(os.fspath(path)))
 
 
 def load_tier_overrides(path: Path) -> dict[str, str]:
@@ -168,10 +179,11 @@ def _sprite_entry(
             meta = candidates[0]
 
     if owner is not None:
-        absolute = owner.absolute.resolve().as_posix()
+        absolute = _lexical_abs(owner.absolute).as_posix()
         mod_id = owner.mod_id
     elif meta is not None:
-        absolute = (_folder_path(root, meta.mod_folder) / meta.rel).resolve().as_posix()
+        absolute = _lexical_abs(
+            _folder_path(root, meta.mod_folder) / meta.rel).as_posix()
         mod_id = "core" if meta.mod_folder.casefold() == CORE_FOLDER else meta.mod_folder
     else:
         absolute = ""
@@ -186,7 +198,7 @@ def _sprite_entry(
         src = "dds_metadata"
         w, h = meta.width, meta.height
         if meta.dds_rel:
-            dds = (root / meta.dds_rel).resolve().as_posix()
+            dds = _lexical_abs(root / meta.dds_rel).as_posix()
     elif owner is not None:
         w, h = probe(owner.absolute)
         src = "header_probe" if w and h else "spec_scan"
@@ -210,9 +222,10 @@ def _metadata_entry(me: MetadataEntry, game_root: Path,
         folder = me.mod_folder
     else:
         folder = folder_by_modid.get(me.mod_id.casefold(), me.mod_folder)
-    absolute = (_folder_path(game_root, folder) / me.rel).resolve().as_posix()
+    absolute = _lexical_abs(
+        _folder_path(game_root, folder) / me.rel).as_posix()
     dds = (
-        (Path(game_root).resolve() / me.dds_rel).resolve().as_posix()
+        _lexical_abs(Path(game_root).resolve() / me.dds_rel).as_posix()
         if me.dds_rel
         else None
     )
@@ -351,7 +364,7 @@ def build_manifest(
             _entry(
                 asset.mod_id,
                 asset.rel,
-                asset.absolute.resolve().as_posix(),
+                _lexical_abs(asset.absolute).as_posix(),
                 None,
                 w,
                 h,

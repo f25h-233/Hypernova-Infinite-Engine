@@ -1042,3 +1042,124 @@ def test_plan_disable_mixinfr_fonts_reports_unreadable_config(tmp_path):
     assert plan["switch_available"] is False
     assert any("parse" in item.lower() or "unreadable" in item.lower()
                for item in plan["warnings"])
+
+
+# ---- Task 7 fix loop 1 ----
+
+
+def test_route_a_relative_root_rollback_removes_created_mods_and_blank(
+    tmp_path, monkeypatch
+):
+    root, mixin, par, hn = _route_a_sources(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    plan = plan_route_a(Path("install"), mixinfr_dir=mixin,
+                        parallel_dir=par, hypernova_mod=hn)
+    plan["apply"] = True
+    result = apply_route_a(plan)
+    assert result["applied"] is True
+
+    manifest_path = Path(result["rollback"]["manifest"])
+    entries = json.loads(manifest_path.read_text(encoding="utf-8"))["entries"]
+    paths = {Path(entry["path"]) for entry in entries}
+    assert (root / "mods/MixinFR").resolve() in paths
+    assert (root / "mods/StarsectorParallel").resolve() in paths
+    assert (root / "mods/hypernova_infinite_engine").resolve() in paths
+    assert (root / "starsector-core/graphics/hypernova/blank.png").resolve() in paths
+    root_abs = str(root.resolve())
+    for entry in entries:
+        path = Path(entry["path"])
+        if path.is_relative_to(root.resolve()):
+            # No duplicated root prefix (install/install/...).
+            assert str(path).count(root_abs) == 1, entry["path"]
+
+    rolled = rollback_route(
+        Path("install"), result["rollback"]["label"],
+        dest=result["rollback"]["dest"], apply=True)
+    assert rolled["ok"] is True
+    assert not (root / "mods/MixinFR").exists()
+    assert not (root / "mods/StarsectorParallel").exists()
+    assert not (root / "mods/hypernova_infinite_engine").exists()
+    assert not (root / "starsector-core/graphics/hypernova/blank.png").exists()
+
+
+def test_plan_route_b_removes_java17_flags_and_applies_memory(tmp_path):
+    root, fr, jdk, hn = _route_b_sources(tmp_path)
+    _write(
+        root / "vmparams",
+        "java.exe -noverify -XX:+UseXMMForArrayCopy "
+        "-XX:+ParallelRefProcEnabled -XX:+AlwaysAtomicAccesses "
+        "-XX:+UseVectorStubs -XX:ShenandoahGCMode=iu --enable-preview "
+        "-Xms2g -Xmx2g -classpath janino.jar "
+        "com.fs.starfarer.StarfarerLauncher\n",
+    )
+    plan = plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn,
+                        xms="8G", xmx="10G")
+    tokens = plan["vmparams"].split()
+    for removed in (
+        "-noverify",
+        "-XX:+UseXMMForArrayCopy",
+        "-XX:+ParallelRefProcEnabled",
+        "-XX:+AlwaysAtomicAccesses",
+        "-XX:+UseVectorStubs",
+        "-XX:ShenandoahGCMode=iu",
+        "--enable-preview",
+    ):
+        assert removed not in tokens
+    assert "-Xms8G" in tokens
+    assert "-Xmx10G" in tokens
+    assert "-Xms2g" not in tokens
+    assert "-Xmx2g" not in tokens
+    assert plan["memory"] == {
+        "xms": "8G", "xmx": "10G", "overridden": True, "source": "override",
+    }
+    assert len(plan["java28_removed_tokens"]) == 7
+    assert tokens.index("-Xms8G") < tokens.index("-classpath")
+    agent_index = next(
+        index for index, token in enumerate(tokens)
+        if token.startswith("-javaagent:"))
+    assert agent_index < tokens.index("com.fs.starfarer.StarfarerLauncher")
+
+
+def test_plan_route_b_rejects_invalid_xmx(tmp_path):
+    root, fr, jdk, hn = _route_b_sources(tmp_path)
+    with pytest.raises(ValueError, match="invalid xmx"):
+        plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn,
+                     xmx="lots")
+
+
+def test_plan_route_b_prechecks_ddscache_and_lunalib(tmp_path):
+    root, fr, jdk, hn = _route_b_sources(tmp_path)
+    plan = plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn)
+    assert plan["ddscache"]["present"] is False
+    assert plan["ddscache"]["will_create"] is True
+    assert str(root / "mods/DDSCache") in plan["ensure_dirs"]
+    assert str(root / "mods/DDSCache") in plan["rollback_paths"]
+    assert any("DDSCache" in warning for warning in plan["warnings"])
+    assert plan["lunalib_settings"]["present"] is False
+    assert any("LunaLib" in warning for warning in plan["warnings"])
+
+    # The known first-run corruption: every mod file has identical content.
+    _write(root / "saves/common/LunaSettings/a.json.data", '{"same":1}')
+    _write(root / "saves/common/LunaSettings/b.json.data", '{"same":1}')
+    suspicious = plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn)
+    assert suspicious["lunalib_settings"]["suspicious"] is True
+    assert suspicious["lunalib_settings"]["file_count"] == 2
+    assert suspicious["lunalib_settings"]["unique_hashes"] == 1
+    assert any("corrupt" in warning for warning in suspicious["warnings"])
+
+    _write(root / "saves/common/LunaSettings/b.json.data", '{"different":2}')
+    healthy = plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn)
+    assert healthy["lunalib_settings"]["suspicious"] is False
+    assert healthy["lunalib_settings"]["unique_hashes"] == 2
+
+    healthy["apply"] = True
+    result = apply_route_b(healthy)
+    assert result["applied"] is True
+    assert (root / "mods/DDSCache").is_dir()
+    assert result["created_dirs"] == [str(root / "mods/DDSCache")]
+
+    rolled = rollback_route(
+        root, result["rollback"]["label"],
+        dest=result["rollback"]["dest"], apply=True)
+    assert rolled["ok"] is True
+    assert not (root / "mods/DDSCache").exists()
