@@ -233,16 +233,29 @@ python -I tools/m6_session.py end \
 1. 若 stderr **没有** `rollback incomplete`：原日志已回到
    `starsector-core/starsector.log` / `saves/hypernova/scripts-agent.log`，
    直接重跑同一 label 即可（不会再有 `FileExistsError`）。
-2. 若出现 `rollback incomplete`：不要删除任何日志。先确认游戏已完全退出、
+2. 若进程在“日志已移动、`session-meta.json` 未写”之间崩溃（目录无 meta，
+   但有 `rotated-*.log`）：
+   - 对应源日志缺失：`start` 会先把 `rotated-<name>.log` 移回源路径，再
+     正常轮转；不会删除 `pre-*`/`rotated-*`。
+   - 源日志和 `rotated-*.log` 同时存在：`start` 拒绝重跑并报
+     `FATAL: incomplete previous start ...`，保留所有
+     `pre-*`/`rotated-*`。先人工确认哪份是原始现场（必要时把 rotated
+     移回源路径或另存），再重跑；无法判断就换 label。
+   - 只有 `pre-*` 而源日志缺失：同样拒绝（`pre` 可能是唯一副本），
+     不得手工删除。
+3. 若 `session-meta.json` 已存在（完整旧会话）：`start` 一律拒绝
+   （`session already started`）。只有确认旧证据已另存后，才可手工删除
+   `evidence/<label>/` 来重用该 label。
+4. 若出现 `rollback incomplete`：不要删除任何日志。先确认游戏已完全退出、
    日志句柄已释放，再把 `evidence/<label>/logs/rotated-*.log` 手工移回
    原路径；确认原日志恢复后删除该 `logs/` 目录，再重跑。仍被占用就换
    label（如 `A-campaign-r2`），旧目录保留为失败现场。
-3. `logs/` 里若有非本工具命名的文件，`start` 会拒绝删除并抛
+5. `logs/` 里若有非本工具命名的文件，`start` 会拒绝删除并抛
    `FileExistsError`；这是防止误删，不是轮转成功。换 label，或确认文件
    无用后手工处理。
-4. 跨盘 evidence root 已用 `shutil.move` 回退（必要时先复制再删除），
+6. 跨盘 evidence root 已用 `shutil.move` 回退（必要时先复制再删除），
    不需要手工处理 WinError 17。
-5. `start` 找不到任何日志时仍 rc=0（首次运行合法），但会向 stderr 打一行
+7. `start` 找不到任何日志时仍 rc=0（首次运行合法），但会向 stderr 打一行
    `WARNING: no logs found under ...`；看到它说明 `--game-root` 指错或
    游戏还没产生日志，本组不能作为证据。
 

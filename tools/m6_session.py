@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import filecmp
 import json
 import shutil
 import sys
@@ -69,6 +70,66 @@ def _rmdir_quietly(path: Path) -> None:
         pass
 
 
+def _same_content(left: Path, right: Path) -> bool:
+    try:
+        if left.stat().st_size != right.stat().st_size:
+            return False
+        return filecmp.cmp(left, right, shallow=False)
+    except OSError:
+        return False
+
+
+def _recover_incomplete_start(
+        root: Path, logs_dir: Path, names: set[str]) -> None:
+    """处理“日志已移动、meta 未写”的崩溃现场，绝不静默删除证据。
+
+    - `rotated-*` 存在而对应源日志缺失：先把 rotated 移回源路径；
+    - 源日志也存在（无法判断哪份是原始现场）或 pre 是唯一副本：
+      拒绝重跑，保留所有 pre/rotated，由操作者手工确认；
+    - 源日志完整时，残留的 pre 副本会在正常复制阶段被覆盖。
+    """
+    unknown = sorted(names - KNOWN_ARTIFACTS)
+    if unknown:
+        raise FileExistsError(
+            "session log dir has unexpected files (refusing to delete): "
+            + ", ".join(unknown)
+        )
+    rotated = {
+        name: logs_dir / f"rotated-{name}.log"
+        for name in LOG_RELS
+        if (logs_dir / f"rotated-{name}.log").is_file()
+    }
+    pre = {
+        name: logs_dir / f"pre-{name}.log"
+        for name in LOG_RELS
+        if (logs_dir / f"pre-{name}.log").is_file()
+    }
+    # 先完成全部检查，避免恢复一半再拒绝。
+    for name, rotated_path in rotated.items():
+        src = root / LOG_RELS[name]
+        if src.exists():
+            raise FileExistsError(
+                f"incomplete previous start: both {rotated_path} and {src} "
+                "exist; refusing to guess which is the original"
+            )
+    for name, pre_path in pre.items():
+        src = root / LOG_RELS[name]
+        if not src.exists() and name not in rotated:
+            raise FileExistsError(
+                f"incomplete previous start: {pre_path} exists but {src} "
+                "is missing; refusing to delete the only copy"
+            )
+    for name, rotated_path in rotated.items():
+        src = root / LOG_RELS[name]
+        try:
+            shutil.move(str(rotated_path), str(src))
+        except OSError as exc:
+            raise FileExistsError(
+                f"incomplete previous start: cannot restore {rotated_path} "
+                f"-> {src}: {exc}"
+            ) from exc
+
+
 def start(game_root: str | Path, evidence_root: str | Path, label: str) -> dict:
     label = _validate_label(label)
     root = Path(game_root).resolve()
@@ -80,22 +141,14 @@ def start(game_root: str | Path, evidence_root: str | Path, label: str) -> dict:
     if logs_dir.exists():
         if not logs_dir.is_dir():
             raise FileExistsError(f"session log path is not a directory: {logs_dir}")
-        names = {path.name for path in logs_dir.iterdir()}
-        unknown = sorted(names - KNOWN_ARTIFACTS)
-        if unknown:
-            raise FileExistsError(
-                "session log dir has unexpected files (refusing to delete): "
-                + ", ".join(unknown)
-            )
-        # 上次 start 失败留下的已知半成品：只清理这些，允许安全重试。
-        for name in names:
-            _unlink_quietly(logs_dir / name)
+        _recover_incomplete_start(
+            root, logs_dir, {path.name for path in logs_dir.iterdir()})
     else:
         logs_dir.mkdir(parents=True)
 
     started_epoch = time.time()
     created_pre: list[Path] = []
-    moved: list[tuple[Path, Path]] = []
+    moved: list[tuple[Path, Path, Path]] = []
     entries: list[dict] = []
     try:
         # 先把所有日志完整复制到 evidence，再移动原文件；
@@ -112,7 +165,7 @@ def start(game_root: str | Path, evidence_root: str | Path, label: str) -> dict:
         for name, src, pre in pending:
             rotated = logs_dir / f"rotated-{name}.log"
             shutil.move(str(src), str(rotated))
-            moved.append((src, rotated))
+            moved.append((src, rotated, pre))
             entries.append({
                 "name": name,
                 "path": str(pre),
@@ -133,14 +186,33 @@ def start(game_root: str | Path, evidence_root: str | Path, label: str) -> dict:
         )
     except BaseException as exc:
         rollback_errors: list[str] = []
-        for src, rotated in reversed(moved):
+        moved_rotated: set[Path] = set()
+        for src, rotated, pre in reversed(moved):
+            moved_rotated.add(rotated)
             if src.exists():
-                rollback_errors.append(f"{src} reappeared; left {rotated}")
+                if _same_content(src, pre):
+                    # 源完整；rotated 只是本次 move 留下的重复副本（N2）。
+                    _unlink_quietly(rotated)
+                else:
+                    rollback_errors.append(
+                        f"{src} exists but differs from {pre}; left {rotated}")
                 continue
             try:
                 shutil.move(str(rotated), str(src))
             except OSError as rollback_exc:
                 rollback_errors.append(f"{rotated} -> {src}: {rollback_exc}")
+        # move 自身可能在复制到一半时失败，留下不在 moved 里的孤儿 rotated。
+        for name, rel in LOG_RELS.items():
+            rotated = logs_dir / f"rotated-{name}.log"
+            pre = logs_dir / f"pre-{name}.log"
+            if not rotated.is_file() or rotated in moved_rotated:
+                continue
+            src = root / rel
+            if src.is_file() and pre.is_file() and _same_content(src, pre):
+                _unlink_quietly(rotated)
+            else:
+                rollback_errors.append(
+                    f"orphan {rotated} left (source missing or changed)")
         if not rollback_errors:
             # 写 meta 失败可能留下半截文件；删除后同一 label 才能安全重试。
             _unlink_quietly(meta_path)

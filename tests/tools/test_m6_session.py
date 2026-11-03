@@ -164,6 +164,112 @@ def test_start_failure_rolls_back_and_allows_retry(tmp_path, monkeypatch):
     assert (evidence / "retry" / "session-meta.json").is_file()
 
 
+def _crash_state(evidence: Path, label: str) -> Path:
+    """模拟“日志已移动、meta 未写”的崩溃现场：source 缺失，pre/rotated 在。"""
+    logs = evidence / label / "logs"
+    logs.mkdir(parents=True)
+    for name, text in (("starsector", "old game\n"),
+                       ("scripts-agent", "old agent\n")):
+        (logs / f"pre-{name}.log").write_text(text, encoding="utf-8")
+        (logs / f"rotated-{name}.log").write_text(text, encoding="utf-8")
+    return logs
+
+
+def test_start_recovers_incomplete_previous_start(tmp_path):
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    (game / "saves" / "hypernova").mkdir(parents=True)
+    logs = _crash_state(tmp_path / "evidence", "crash")
+
+    meta = start(game, tmp_path / "evidence", "crash")
+
+    assert [entry["name"] for entry in meta["logs"]] == [
+        "starsector", "scripts-agent"
+    ]
+    for name, text in (("starsector", "old game\n"),
+                       ("scripts-agent", "old agent\n")):
+        assert (logs / f"pre-{name}.log").read_text(
+            encoding="utf-8"
+        ) == text
+        assert (logs / f"rotated-{name}.log").read_text(
+            encoding="utf-8"
+        ) == text
+    assert (tmp_path / "evidence/crash/session-meta.json").is_file()
+
+
+def test_start_refuses_ambiguous_incomplete_start(tmp_path):
+    game = tmp_path / "game"
+    _seed_logs(game, agent_text="current agent\n", game_text="current game\n")
+    logs = tmp_path / "evidence" / "ambiguous" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "pre-starsector.log").write_text("old\n", encoding="utf-8")
+    (logs / "rotated-starsector.log").write_text("old\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="incomplete previous start"):
+        start(game, tmp_path / "evidence", "ambiguous")
+
+    # 拒绝重跑时不得删除任何证据，也不得覆盖当前源日志。
+    assert (logs / "pre-starsector.log").read_text(encoding="utf-8") == "old\n"
+    assert (logs / "rotated-starsector.log").read_text(
+        encoding="utf-8"
+    ) == "old\n"
+    assert (game / "starsector-core/starsector.log").read_text(
+        encoding="utf-8"
+    ) == "current game\n"
+    assert not (tmp_path / "evidence/ambiguous/session-meta.json").exists()
+
+
+def test_start_refuses_pre_only_evidence_without_source(tmp_path):
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    (game / "saves" / "hypernova").mkdir(parents=True)
+    logs = tmp_path / "evidence" / "pre-only" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "pre-starsector.log").write_text("only copy\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="incomplete previous start"):
+        start(game, tmp_path / "evidence", "pre-only")
+    assert (logs / "pre-starsector.log").read_text(
+        encoding="utf-8"
+    ) == "only copy\n"
+
+
+def test_start_cleans_orphan_rotated_when_source_complete(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    evidence = tmp_path / "evidence"
+    _seed_logs(game, agent_text="agent old\n", game_text="old\n")
+    real_move = m6_session.shutil.move
+    calls = {"count": 0}
+
+    def copy_then_fail(src, dst):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            # 模拟“move 实际只复制、源仍在”的半失败，留下孤儿 rotated。
+            m6_session.shutil.copy2(src, dst)
+            return dst
+        raise PermissionError("log is still locked")
+
+    monkeypatch.setattr(m6_session.shutil, "move", copy_then_fail)
+    with pytest.raises(PermissionError):
+        start(game, evidence, "orphan")
+
+    # 源完整（与 pre 一致）时清理本次孤儿 rotated，不留半成品。
+    assert (game / "starsector-core/starsector.log").read_text(
+        encoding="utf-8"
+    ) == "old\n"
+    assert (game / "saves/hypernova/scripts-agent.log").read_text(
+        encoding="utf-8"
+    ) == "agent old\n"
+    logs = evidence / "orphan" / "logs"
+    assert not (logs / "rotated-starsector.log").exists()
+    assert not (logs / "rotated-scripts-agent.log").exists()
+    assert not logs.exists()
+
+    monkeypatch.setattr(m6_session.shutil, "move", real_move)
+    meta = start(game, evidence, "orphan")
+    assert len(meta["logs"]) == 2
+
+
 def test_start_snapshot_records_start_time(tmp_path):
     game = tmp_path / "game"
     _seed_logs(game, agent_text="agent\n", game_text="game\n")
