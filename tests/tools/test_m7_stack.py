@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import m7_stack
 from m7_stack import (
     apply_disable_ime,
     apply_disable_mixinfr_fonts,
@@ -939,3 +940,105 @@ def test_cli_rollback_apply_restores_snapshot(tmp_path, capsys):
     assert rc == 0
     assert "restored=1" in captured.out
     assert (root / "vmparams").read_text(encoding="utf-8") == "original\n"
+
+
+# ---- Task 5 fix loop 1 ----
+
+
+def test_plan_disable_mixinfr_fonts_relative_root_apply_rollback(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "install"
+    _write(root / "mods/MixinFR/mod_info.json",
+           '{"id":"MixinLib","version":"1.2.5"}')
+    switch = root / "mods/MixinFR/mixinfr.font.json"
+    _write(switch, '{"FrFontHd": true}\n')
+    monkeypatch.chdir(tmp_path)
+
+    plan = plan_disable_mixinfr_fonts(Path("install"))
+    assert Path(plan["writes"][0]["path"]).is_absolute()
+    assert Path(plan["snapshot"]["paths"][0]).is_absolute()
+
+    plan["apply"] = True
+    result = apply_disable_mixinfr_fonts(plan)
+    assert result["changed"] is True
+    assert json.loads(switch.read_text(encoding="utf-8")) == {"FrFontHd": False}
+
+    rolled = rollback_route(
+        Path("install"), result["rollback"]["label"],
+        dest=result["rollback"]["dest"], apply=True)
+    assert rolled["ok"] is True
+    assert rolled["restored"] > 0
+    assert json.loads(switch.read_text(encoding="utf-8")) == {"FrFontHd": True}
+
+
+def test_apply_disable_ime_refuses_missing_enabled_mods(tmp_path):
+    root = tmp_path / "install"
+    (root / "starsector-core/native/windows").mkdir(parents=True)
+    (root / "starsector-core/native/windows/ssime.dll").write_bytes(b"x")
+    cif_src = tmp_path / "cif"
+    _write(cif_src / "mod_info.json", '{"id":"ChineseInputFix"}')
+
+    plan = plan_disable_ime(root, cif_source=cif_src)
+    assert plan["apply_blocked"] is True
+    plan["apply"] = True
+    with pytest.raises(ValueError, match="enabled_mods.json"):
+        apply_disable_ime(plan)
+    assert (root / "starsector-core/native/windows/ssime.dll").is_file()
+    assert not (root / "mods/ChineseInputFix").exists()
+
+
+def test_apply_disable_ime_refuses_corrupt_enabled_mods(tmp_path):
+    root = tmp_path / "install"
+    (root / "starsector-core/native/windows").mkdir(parents=True)
+    (root / "starsector-core/native/windows/ssime.dll").write_bytes(b"x")
+    _write(root / "mods/enabled_mods.json", "{bad json")
+    cif_src = tmp_path / "cif"
+    _write(cif_src / "mod_info.json", '{"id":"ChineseInputFix"}')
+
+    plan = plan_disable_ime(root, cif_source=cif_src)
+    assert plan["apply_blocked"] is True
+    plan["apply"] = True
+    with pytest.raises(ValueError, match="enabled_mods.json"):
+        apply_disable_ime(plan)
+    assert (root / "starsector-core/native/windows/ssime.dll").is_file()
+    assert (root / "mods/enabled_mods.json").read_text(
+        encoding="utf-8") == "{bad json"
+
+
+def test_apply_disable_ime_auto_rolls_back_on_write_failure(
+    tmp_path, monkeypatch
+):
+    root, cif_src = _ime_install(tmp_path)
+    plan = plan_disable_ime(root, cif_source=cif_src)
+    plan["apply"] = True
+    real = m7_stack._apply_enabled_mods
+
+    def boom(*args, **kwargs):
+        real(*args, **kwargs)
+        raise RuntimeError("enabled write boom")
+
+    monkeypatch.setattr("m7_stack._apply_enabled_mods", boom)
+    with pytest.raises(RuntimeError, match="enabled write boom"):
+        apply_disable_ime(plan)
+
+    assert (root / "starsector-core/native/windows/ssime.dll").is_file()
+    assert not (root / "starsector-core/native/windows/ssime.dll.disabled").exists()
+    assert not (root / "mods/ChineseInputFix").exists()
+    assert json.loads(
+        (root / "mods/enabled_mods.json").read_text(encoding="utf-8")
+    ) == {"enabledMods": ["mod_a"]}
+
+
+def test_plan_disable_mixinfr_fonts_reports_unreadable_config(tmp_path):
+    root = tmp_path / "install"
+    _write(root / "mods/MixinFR/mod_info.json",
+           '{"id":"MixinLib","version":"1.2.5"}')
+    _write(root / "mods/MixinFR/mixinfr.font.json", "{bad json")
+
+    plan = plan_disable_mixinfr_fonts(root)
+    assert plan["config_unreadable"] is True
+    assert plan["parse_errors"]
+    assert plan["switch_available"] is False
+    assert any("parse" in item.lower() or "unreadable" in item.lower()
+               for item in plan["warnings"])

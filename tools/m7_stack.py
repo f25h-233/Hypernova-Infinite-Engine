@@ -2081,7 +2081,7 @@ def _mod_id_and_error(info_path: Path) -> tuple[str | None, str | None]:
 def _cif_state(root: Path, cif_source: str | Path | None) -> dict[str, object]:
     """检查 ChineseInputFix 的目标/源目录；写 enabled 前必须 verified。"""
     target = root / CIF_MOD_REL
-    source = (Path(cif_source) if cif_source is not None
+    source = (Path(cif_source).resolve() if cif_source is not None
               else DEFAULT_CIF_SOURCE)
     target_present = target.is_dir()
     source_present = source.is_dir()
@@ -2146,7 +2146,7 @@ def plan_disable_ime(
 
     只读。``apply_disable_ime`` 才会先做 M6+M7 快照再写盘。
     """
-    base = Path(root)
+    base = Path(root).resolve()
     if not base.is_dir():
         raise FileNotFoundError(f"install root not found: {base}")
     dll = base / SSIME_DLL_PATH
@@ -2181,15 +2181,24 @@ def plan_disable_ime(
         warnings.append(
             "ChineseInputFix is already enabled; only the DLL rename remains")
 
+    blocked_reasons: list[str] = []
+    if conflict:
+        blocked_reasons.append("ssime.dll and ssime.dll.disabled both exist")
+    if not verified:
+        blocked_reasons.append(str(cif["error"]))
+    if enabled["state"] != "ok":
+        blocked_reasons.append(
+            f"enabled_mods.json state is {enabled['state']}")
+
     label = "m7-disable-ime-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     snapshot = {
         "dest": str(_default_backups(base)),
         "label": label,
         "paths": [
-            SSIME_DLL_PATH,
-            SSIME_DLL_DISABLED_PATH,
-            ENABLED_MODS_PATH,
-            CIF_MOD_REL.as_posix(),
+            str(base / SSIME_DLL_PATH),
+            str(base / SSIME_DLL_DISABLED_PATH),
+            str(base / ENABLED_MODS_PATH),
+            str(base / CIF_MOD_REL),
         ],
     }
     writes: list[dict[str, object]] = []
@@ -2226,6 +2235,8 @@ def plan_disable_ime(
         "writes": writes,
         "snapshot": snapshot,
         "warnings": warnings,
+        "apply_blocked": bool(blocked_reasons),
+        "blocked_reason": "; ".join(blocked_reasons) or None,
     }
 
 
@@ -2300,18 +2311,22 @@ def apply_disable_ime(plan: dict[str, object]) -> dict[str, object]:
     dest = Path(str(snapshot.get("dest")
                     or _default_backups(base))).resolve()
     raw_paths = snapshot.get("paths")
-    paths = ([str(item) for item in raw_paths]
-             if isinstance(raw_paths, list) else [
-                 SSIME_DLL_PATH,
-                 SSIME_DLL_DISABLED_PATH,
-                 ENABLED_MODS_PATH,
-                 CIF_MOD_REL.as_posix(),
-             ])
+    raw_list = ([str(item) for item in raw_paths]
+                if isinstance(raw_paths, list) else [
+                    str(base / SSIME_DLL_PATH),
+                    str(base / SSIME_DLL_DISABLED_PATH),
+                    str(base / ENABLED_MODS_PATH),
+                    str(base / CIF_MOD_REL),
+                ])
+    paths = [str(item) for item in _snapshot_paths(base, raw_list)]
 
     # 快照先行：M6（全局约束）+ M7 自己的完整回滚清单。
     snapshot_meta = m6_env_snapshot.snapshot(base, str(dest), label)
     rollback_meta = snapshot_route(
         base, label, paths=paths, dest=dest, route="ime")
+    _verify_rollback_targets(
+        dest / label, rollback_meta,
+        [Path(item) for item in paths])
 
     enabled_result: dict[str, object] = {
         "path": str(enabled_path),
@@ -2361,6 +2376,43 @@ def apply_disable_ime(plan: dict[str, object]) -> dict[str, object]:
             "entries": len(rollback_meta.get("entries", [])),
         },
     }
+
+
+def _verify_rollback_targets(
+    snap: Path, meta: dict[str, object], targets: list[Path]
+) -> None:
+    """写入前确认快照覆盖每个目标，且已存在目标的原始备份可用。"""
+    entries = meta.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("route rollback manifest is empty; refusing to write")
+    by_path: dict[Path, dict[str, object]] = {}
+    for entry in entries:
+        if isinstance(entry, dict):
+            by_path[Path(str(entry.get("path"))).resolve()] = entry
+    snap_resolved = snap.resolve()
+    for target in targets:
+        resolved = target.resolve()
+        entry = by_path.get(resolved)
+        if entry is None:
+            raise ValueError(
+                f"snapshot does not cover write target: {target}")
+        if not resolved.exists():
+            continue
+        if not entry.get("existed_before"):
+            raise ValueError(
+                f"snapshot recorded {target} as absent; refusing to write")
+        backup_rel = entry.get("backup")
+        if not backup_rel:
+            raise ValueError(f"snapshot has no backup for {target}")
+        backup = (snap_resolved / str(backup_rel)).resolve()
+        if not backup.is_relative_to(snap_resolved):
+            raise ValueError(
+                f"snapshot backup escapes snapshot dir: {backup}")
+        kind = entry.get("kind")
+        if kind == "file" and not backup.is_file():
+            raise FileNotFoundError(f"snapshot backup missing: {backup}")
+        if kind == "dir" and not backup.is_dir():
+            raise FileNotFoundError(f"snapshot backup missing: {backup}")
 
 
 def _mixinfr_version(mod_dir: Path) -> str | None:
@@ -2425,10 +2477,15 @@ def _set_dict_bool(
 
 def _mixinfr_font_scan(
     mod_dir: Path,
-) -> tuple[list[str], list[dict[str, object]]]:
-    """扫描 MixinFR 的显式字体配置；jar 内的开关只报告，不改写。"""
+) -> tuple[list[str], list[dict[str, object]], list[dict[str, object]]]:
+    """扫描 MixinFR 的显式字体配置；jar 内的开关只报告，不改写。
+
+    返回 ``(checked, switches, parse_errors)``。解析失败不能被当成
+    "没有开关"，否则用户会误以为配置正常。
+    """
     checked: list[str] = []
     switches: list[dict[str, object]] = []
+    parse_errors: list[dict[str, object]] = []
 
     candidates: list[Path] = []
     for name in MIXINFR_FONT_CONFIG_NAMES:
@@ -2438,8 +2495,16 @@ def _mixinfr_font_scan(
         if not path.is_file():
             continue
         checked.append(str(path))
-        payload = _read_json(path)
+        try:
+            payload = load(path)
+        except Exception as exc:  # noqa: BLE001 - 盘点需要报告解析错误
+            parse_errors.append({"path": str(path), "error": str(exc)})
+            continue
         if not isinstance(payload, dict):
+            parse_errors.append({
+                "path": str(path),
+                "error": "top-level must be an object",
+            })
             continue
         for key_path in _font_switch_paths(payload):
             switches.append({
@@ -2466,7 +2531,11 @@ def _mixinfr_font_scan(
                     try:
                         payload = json.loads(archive.read(name).decode(
                             "utf-8-sig", errors="replace"))
-                    except Exception:  # noqa: BLE001 - 非法配置不阻断扫描
+                    except Exception as exc:  # noqa: BLE001 - 报告解析错误
+                        parse_errors.append({
+                            "path": f"{jar.name}!{name}",
+                            "error": str(exc),
+                        })
                         continue
                     for key_path in _font_switch_paths(payload):
                         switches.append({
@@ -2479,7 +2548,7 @@ def _mixinfr_font_scan(
                         })
         except (OSError, zipfile.BadZipFile):
             continue
-    return checked, switches
+    return checked, switches, parse_errors
 
 
 def _font_switch_writes(
@@ -2517,17 +2586,18 @@ def plan_disable_mixinfr_fonts(root: str | Path) -> dict[str, object]:
     1.2.5 没有包内字体配置文件时只报告“已含修复 / 需换 1.2.5”，
     绝不伪造开关，也不改写 vendor jar。
     """
-    base = Path(root)
+    base = Path(root).resolve()
     if not base.is_dir():
         raise FileNotFoundError(f"install root not found: {base}")
     mod_dir = base / "mods" / MIXINFR_MOD_FOLDER
     applicable = mod_dir.is_dir()
     version = _mixinfr_version(mod_dir) if applicable else None
-    checked, switches = (_mixinfr_font_scan(mod_dir) if applicable
-                         else ([], []))
+    checked, switches, parse_errors = (
+        _mixinfr_font_scan(mod_dir) if applicable else ([], [], []))
     writes = _font_switch_writes(switches)
     switch_available = bool(switches)
     editable = any(bool(item.get("editable")) for item in switches)
+    config_unreadable = bool(parse_errors)
 
     if not applicable:
         recommendation = (
@@ -2539,15 +2609,19 @@ def plan_disable_mixinfr_fonts(root: str | Path) -> dict[str, object]:
         recommendation = (
             "显式 FrFontHd 字体开关已关闭或位于 jar 内不可安全改写；"
             "未生成写入。")
+    elif config_unreadable:
+        recommendation = (
+            "MixinFR 字体配置无法解析，无法确认是否存在 FrFontHd 开关；"
+            "请检查 parse_errors 或换 1.2.5。")
     elif version == "1.2.5":
         recommendation = (
-            "MixinFR 1.2.5 已包含高清字体重定向修复；包内没有独立的 "
+            "MixinFR 1.2.5 已包含高清字体重定向修复；包内没有用户可配置的 "
             "FrFontHd 字体开关，无需关闭（若当前不是 1.2.5，需换 1.2.5；"
             "若字体异常请收集 starsector-core/mixinfr-fonthd.log）。")
     else:
         recommendation = (
-            f"当前 MixinFR {version or '版本未知'} 没有可用的 FrFontHd "
-            "字体开关；需换 1.2.5。")
+            f"当前 MixinFR {version or '版本未知'} 没有用户可配置的 "
+            "FrFontHd 字体开关；需换 1.2.5。")
 
     warnings: list[str] = []
     if not applicable:
@@ -2555,6 +2629,10 @@ def plan_disable_mixinfr_fonts(root: str | Path) -> dict[str, object]:
     if switch_available and not editable:
         warnings.append(
             "font switch is inside a jar; M7 will not rewrite vendor jars")
+    if config_unreadable:
+        warnings.append(
+            f"{len(parse_errors)} MixinFR font config(s) could not be parsed; "
+            "cannot confirm whether an FrFontHd switch exists")
     if not switch_available and version not in (None, "1.2.5"):
         warnings.append(
             f"MixinFR {version} has no explicit font switch; upgrade to 1.2.5")
@@ -2580,6 +2658,8 @@ def plan_disable_mixinfr_fonts(root: str | Path) -> dict[str, object]:
             for item in switches
         ],
         "checked": checked,
+        "config_unreadable": config_unreadable,
+        "parse_errors": parse_errors,
         "writes": writes,
         "recommendation": recommendation,
         "snapshot": snapshot,
@@ -2619,17 +2699,24 @@ def apply_disable_mixinfr_fonts(
                     "%Y%m%d-%H%M%S-%f"))
     dest = Path(str(snapshot.get("dest")
                     or _default_backups(base))).resolve()
-    paths = [str(item["path"]) for item in writes]
-
+    raw_paths = [str(item["path"]) for item in writes]
+    for raw in raw_paths:
+        if not Path(raw).is_absolute():
+            raise ValueError(
+                "font plan contains a relative write path; replan with "
+                f"plan_disable_mixinfr_fonts: {raw!r}")
+    targets = _snapshot_paths(base, raw_paths)
+    if len(targets) != len(raw_paths):
+        raise ValueError("duplicate write targets in font plan")
     snapshot_meta = m6_env_snapshot.snapshot(base, str(dest), label)
     rollback_meta = snapshot_route(
-        base, label, paths=paths, dest=dest, route="a")
+        base, label, paths=[str(item) for item in targets],
+        dest=dest, route="a")
+    _verify_rollback_targets(dest / label, rollback_meta, targets)
 
     written: list[str] = []
     try:
-        for item in writes:
-            target = Path(str(item["path"]))
-            _snapshot_paths(base, [target])
+        for item, target in zip(writes, targets):
             target.parent.mkdir(parents=True, exist_ok=True)
             tmp = target.with_name(target.name + ".tmp")
             tmp.write_text(str(item.get("content", "")), encoding="utf-8")
@@ -2745,6 +2832,7 @@ def _format_disable_ime_text(data: dict[str, object]) -> str:
         f"cif.need_copy={flag(cif.get('need_copy'))}",
         f"enabled_mods.state={enabled.get('state')}",
         f"enabled_mods.add={joined(enabled.get('add'))}",
+        f"apply_blocked={flag(data.get('apply_blocked'))}",
         f"warnings={len(raw_warnings) if isinstance(raw_warnings, list) else 0}",
     ])
 
@@ -2766,6 +2854,7 @@ def _format_fonts_text(data: dict[str, object]) -> str:
 
     raw_writes = data.get("writes")
     raw_checked = data.get("checked")
+    raw_errors = data.get("parse_errors")
     raw_warnings = data.get("warnings")
     return "\n".join([
         f"route=a",
@@ -2775,6 +2864,8 @@ def _format_fonts_text(data: dict[str, object]) -> str:
         f"version={data.get('version')}",
         f"switch_available={flag(data.get('switch_available'))}",
         f"editable={flag(data.get('editable'))}",
+        f"config_unreadable={flag(data.get('config_unreadable'))}",
+        f"parse_errors={len(raw_errors) if isinstance(raw_errors, list) else 0}",
         f"writes={len(raw_writes) if isinstance(raw_writes, list) else 0}",
         f"checked={len(raw_checked) if isinstance(raw_checked, list) else 0}",
         f"recommendation={data.get('recommendation')}",
