@@ -177,6 +177,13 @@ summary 中这两项已正确记录，不是 lazy 健康失败。
 
 **未执行（user gate，需用户按 `docs/m4-manual-acceptance.md` 跑）。**
 
+**前置限制（必须）**：frame probe 依赖 textures 模块（`HypernovaPlugin`）。
+`Starsector-098-260mods` 默认是 agent-only（`enabled_mods.json` 不含
+`hypernova_infinite_engine`），不启用主 mod 就不会产生 `HYPERNOVA_FRAME` 行。
+用户 gate 必须先在 260mods 临时启用该模块（备份/启用/恢复步骤见
+`docs/m4-manual-acceptance.md` §1），或改用已启用模块的 `Starsector-098-Base`
+（先刷新主 jar；mod 数少），或使用外部帧时间工具。
+
 本轮没有：
 
 - 真实存档的 A→B 各 10 min 长会话；
@@ -195,6 +202,9 @@ summary 中这两项已正确记录，不是 lazy 健康失败。
 
 ## 6. 限制
 
+- **frame probe 前置**：必须启用 textures 模块（`HypernovaPlugin`）；260mods
+  默认 agent-only，不启用就不会有 `HYPERNOVA_FRAME`。用户 gate 需按
+  `docs/m4-manual-acceptance.md` §1 临时启用/恢复，或改用 Base/外部工具。
 - summary 每 10 s 一条，最后一条最多旧 10 s；
 - `p99Ms` 是 1 ms 桶估算，不是逐帧原始值；
 - `longGaps` 只排除 >5 s，短暂停仍会算作大帧；

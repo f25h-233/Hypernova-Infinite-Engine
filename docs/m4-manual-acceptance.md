@@ -7,17 +7,53 @@
 
 ## 1. 前置
 
-1. 构建并安装（主 jar + agent jar 都要刷新，否则 probe 仍是旧 class）：
+1. **先确认主 mod（textures 模块）已启用**。`HYPERNOVA_FRAME` 由主 mod 的
+   `HypernovaPlugin` 构造 `FrameTimeProbe` 后产生；只加载 agent 不会产生帧行。
+   `Starsector-098-260mods/mods/enabled_mods.json` 默认**不启用**
+   `hypernova_infinite_engine`，先备份再临时追加：
+
+   ```bash
+   cp Starsector-098-260mods/mods/enabled_mods.json \
+      Starsector-098-260mods/mods/enabled_mods.json.bak-m4
+   python -I - <<'PY'
+   import json
+   from pathlib import Path
+   p = Path("Starsector-098-260mods/mods/enabled_mods.json")
+   data = json.loads(p.read_text(encoding="utf-8"))
+   ids = data["enabledMods"]
+   if "hypernova_infinite_engine" not in ids:
+       ids.append("hypernova_infinite_engine")
+   p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+   PY
+   ```
+
+   验收结束后恢复原配置：
+
+   ```bash
+   cp Starsector-098-260mods/mods/enabled_mods.json.bak-m4 \
+      Starsector-098-260mods/mods/enabled_mods.json
+   ```
+
+   > **口径**：启用主 mod 会同时激活 `HypernovaPlugin` 的 manifest/prefetch
+   > 路径，所以本验收测的是“**textures 模块 + agent**”，不是 agent-only。
+   > 若必须保留 agent-only 数据，probe 无法运行，请改用外部帧时间工具
+   > （如 RTSS / MSI Afterburner）。
+   >
+   > **替代环境**：`Starsector-098-Base` 已启用该模块；先用
+   > `bash tools/java/install-manifest.sh Starsector-098-Base` 刷新主 jar，
+   > 再在该环境跑同一协议。缺点是 mod 数远少于 260mods。
+
+2. 构建并安装（主 jar + agent jar 都要刷新，否则 probe 仍是旧 class）：
    `bash tools/java/build-mod.sh` →
    `bash tools/java/install-manifest.sh Starsector-098-260mods` →
    `python tools/install_agent.py --game Starsector-098-260mods --env 260mods-lite`
-2. 确认 `Starsector-098-260mods/starsector-core/graphics/hypernova/blank.png` 非空。
-3. 每组开始前清空或改名：
+3. 确认 `Starsector-098-260mods/starsector-core/graphics/hypernova/blank.png` 非空。
+4. 每组开始前清空或改名：
    - `Starsector-098-260mods/saves/hypernova/scripts-agent.log`
    - `Starsector-098-260mods/starsector-core/starsector.log`
-4. 使用干净存档 / 小舰队；不要用 260mods 生涯大地图、Star Wars 新开局、
+5. 使用干净存档 / 小舰队；不要用 260mods 生涯大地图、Star Wars 新开局、
    超大舰队或 Exotica 改装 UI（这些是已知 mod 环境问题，不归因 Hypernova）。
-5. 默认开关不动；本验收只用启动参数临时开启。
+6. 默认开关不动；本验收只用启动参数临时开启。
 
 ## 2. 启动参数（probe + 当前 LRU）
 
@@ -68,9 +104,20 @@ Ctrl-C 结束采样。采样期间不要最小化窗口或长时间暂停。
 
 ## 4. A→B 会话
 
-1. **A 场景 10 min**：同一星系内正常活动（移动、开舰队/改装、接触对话），
+1. **加载存档后先做启动检查**：在 `starsector.log` 里搜索
+   `Hypernova frame probe enabled`：
+   ```bash
+   grep -c "Hypernova frame probe enabled" \
+     Starsector-098-260mods/starsector-core/starsector.log
+   ```
+   输出必须 ≥1。若为 0，**停止**：主 mod 没加载或主 jar 是旧的，继续采样
+   只会得到空帧报告。
+   `HYPERNOVA_FRAME` 行只在**读档后**、主线程 `advance` 开始后才出现；
+   主菜单没有 `Global.getSector()`，transient script 不挂载，菜单里 0 帧行
+   是预期，不能据此判定 probe 失败。
+2. **A 场景 10 min**：同一星系内正常活动（移动、开舰队/改装、接触对话），
    不进战斗或只打一场短战斗；不要暂停。
-2. A 结束立即生成报告（此时 agent summary 是 A 的最后一轮）：
+3. A 结束立即生成报告（此时 agent summary 是 A 的最后一轮）：
    ```bash
    python -I tools/m4_session_report.py \
      --agent-log Starsector-098-260mods/saves/hypernova/scripts-agent.log \
@@ -78,12 +125,15 @@ Ctrl-C 结束采样。采样期间不要最小化窗口或长时间暂停。
      --gpu-csv build/m4/gpu-ab.csv \
      --out build/m4/session-a.json --require-frame --text
    ```
-3. **B 场景 10 min**：跳跃到另一个星系，重复类似活动。
-4. B 结束再跑一次同命令，`--out build/m4/session-b.json`。
-5. 对比 A/B 的 `gpu.dedicated_mb.median`、`liveBytes`、`evictableBytes`；
+4. **B 场景 10 min**：跳跃到另一个星系，重复类似活动。
+5. B 结束再跑一次同命令，`--out build/m4/session-b.json`。
+6. 对比 A/B 的 `gpu.dedicated_mb.median`、`liveBytes`、`evictableBytes`；
    记录差值，不把单点当净 VRAM。
 
 ## 5. >200 ms stutter 判定
+
+> `HYPERNOVA_FRAME` 行只在加载存档后出现；主菜单里没有帧行是预期
+> （菜单没有 `Global.getSector()`，transient script 不挂载）。
 
 报告里的 `frame_probe`：
 
