@@ -60,6 +60,10 @@ EXCLUDED_MOD_IDS = frozenset({
     "starsectorparallel",
 })
 
+# 保留项：不排除。即使源里未启用，也把文件夹随迁移复制过去（不写入
+# enabled），供后续 disable-ime 等步骤按需启用。
+PRESERVED_MOD_IDS = frozenset({"vramoptimizer", "chineseinputfix"})
+
 # ---- 路线 B 常量（Task 3）----
 # Starsector 的启动档 CWD 是 starsector-core，因此 java 与 mods 都从该目录
 # 相对定位；这与 Inno 安装根 vmparams 的既有写法一致。
@@ -187,26 +191,108 @@ def inspect_root(root: str | Path) -> dict[str, object]:
 
 
 def _enabled_ids(source_mods: Path) -> list[str]:
-    payload = _read_json(source_mods / "enabled_mods.json")
-    if isinstance(payload, dict):
-        raw = payload.get("enabledMods")
-        if isinstance(raw, list):
-            return [item for item in raw if isinstance(item, str)]
-    return []
+    """读取 enabled_mods.json；迁移场景必须 fail-closed。"""
+    path = source_mods / "enabled_mods.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"enabled_mods.json not found: {path}")
+    try:
+        payload = load(path)
+    except Exception as exc:  # noqa: BLE001 - 迁移不能静默空跑
+        raise ValueError(f"cannot parse {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path}: top-level must be an object")
+    raw = payload.get("enabledMods")
+    if not isinstance(raw, list):
+        raise ValueError(f"{path}: enabledMods must be a list")
+    if not raw:
+        raise ValueError(f"{path}: enabledMods is empty")
+    ids: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(
+                f"{path}: enabledMods must contain non-empty strings")
+        ids.append(item)
+    return ids
 
 
-def _mod_folders(source_mods: Path) -> dict[str, str]:
-    """返回 ``小写 mod id -> 文件夹名``；读取每个文件夹的 mod_info.json。"""
-    folders: dict[str, str] = {}
+def _scan_mod_folders(source_mods: Path) -> dict[str, object]:
+    """扫描 mod_info.json，重复 id 规则与 ``mod_index.scan_mods`` 一致。
+
+    重复 id 取 ``sorted(folders)[0]``（与游戏实际加载的文件夹一致），
+    并把全部候选记录到 ``duplicate_ids``，让 dry-run 可审阅。
+    """
+    by_id: dict[str, list[tuple[str, str]]] = {}
+    by_folder: dict[str, str] = {}
     for entry in sorted(source_mods.iterdir(), key=lambda item: item.name):
         if not entry.is_dir():
             continue
+        by_folder[entry.name.lower()] = entry.name
         info = _read_json(entry / "mod_info.json")
         if isinstance(info, dict):
             mod_id = info.get("id")
             if isinstance(mod_id, str) and mod_id:
-                folders[mod_id.lower()] = entry.name
-    return folders
+                by_id.setdefault(mod_id.lower(), []).append(
+                    (mod_id, entry.name))
+
+    folders: dict[str, str] = {}
+    ids: dict[str, str] = {}
+    all_folders: dict[str, list[str]] = {}
+    duplicate_ids: dict[str, dict[str, object]] = {}
+    for key, items in by_id.items():
+        ordered = sorted(items, key=lambda item: item[1])
+        chosen_id, chosen_folder = ordered[0]
+        folders[key] = chosen_folder
+        ids[key] = chosen_id
+        all_folders[key] = [folder for _, folder in ordered]
+        if len(ordered) > 1:
+            duplicate_ids[chosen_id] = {
+                "chosen": chosen_folder,
+                "candidates": [folder for _, folder in ordered],
+            }
+    return {
+        "folders": folders,
+        "ids": ids,
+        "all_folders": all_folders,
+        "by_folder": by_folder,
+        "duplicate_ids": duplicate_ids,
+    }
+
+
+def _preserved_extras(
+    ids: dict[str, str],
+    all_folders: dict[str, list[str]],
+    by_folder: dict[str, str],
+    copied: list[str],
+) -> list[dict[str, str]]:
+    """保留项中未启用的文件夹：复制但不写入 enabled。"""
+    extras: list[dict[str, str]] = []
+    seen = set(copied)
+    for key, candidates in all_folders.items():
+        if key not in PRESERVED_MOD_IDS or key in EXCLUDED_MOD_IDS:
+            continue
+        for folder in candidates:
+            if folder in seen:
+                continue
+            seen.add(folder)
+            extras.append({
+                "id": ids.get(key, key),
+                "folder": folder,
+                "reason": "preserved but not enabled in source",
+            })
+    # 个别保留项没有可解析的 mod_info.json 时按文件夹名兜底。
+    for key, folder in by_folder.items():
+        if key not in PRESERVED_MOD_IDS or key in EXCLUDED_MOD_IDS:
+            continue
+        if folder in seen:
+            continue
+        seen.add(folder)
+        extras.append({
+            "id": key,
+            "folder": folder,
+            "reason": "preserved but no readable mod_info.json",
+        })
+    extras.sort(key=lambda item: item["folder"])
+    return extras
 
 
 def plan_migrate(
@@ -220,21 +306,28 @@ def plan_migrate(
     ``enabled_mods.json`` 里的条目是 mod id，而非文件夹名，因此先扫描
     ``mod_info.json`` 建立 id 到文件夹的映射。排除项按 id 大小写不敏感过滤。
     """
-    source = Path(source_mods)
-    target = Path(target_mods)
+    source = Path(source_mods).resolve()
+    target = Path(target_mods).resolve()
     if not source.is_dir():
         raise FileNotFoundError(f"source mods dir not found: {source}")
 
     enabled_ids = _enabled_ids(source)
-    folders = _mod_folders(source)
-    by_folder = {
-        entry.name.lower(): entry.name
-        for entry in source.iterdir()
-        if entry.is_dir()
-    }
+    scan = _scan_mod_folders(source)
+    folders = scan["folders"]
+    ids = scan["ids"]
+    all_folders = scan["all_folders"]
+    by_folder = scan["by_folder"]
+    duplicate_ids = scan["duplicate_ids"]
+    assert isinstance(folders, dict)
+    assert isinstance(ids, dict)
+    assert isinstance(all_folders, dict)
+    assert isinstance(by_folder, dict)
+    assert isinstance(duplicate_ids, dict)
 
     copy: list[str] = []
     enabled: list[str] = []
+    enabled_folders: dict[str, str] = {}
+    missing: list[str] = []
     for mod_id in enabled_ids:
         key = mod_id.lower()
         if key in EXCLUDED_MOD_IDS:
@@ -242,17 +335,23 @@ def plan_migrate(
         enabled.append(mod_id)
         # 优先按 id 映射；个别 mod 缺少 mod_info.json 时退回同名文件夹。
         folder = folders.get(key) or by_folder.get(key)
-        if folder is not None and folder not in copy:
+        if folder is None:
+            missing.append(mod_id)
+            continue
+        enabled_folders[mod_id] = folder
+        if folder not in copy:
             copy.append(folder)
 
-    excluded = sorted(
-        {folder for key, folder in folders.items() if key in EXCLUDED_MOD_IDS}
-        | {
-            folder
-            for key, folder in by_folder.items()
-            if key in EXCLUDED_MOD_IDS
-        }
-    )
+    excluded_set: set[str] = set()
+    for key, candidates in all_folders.items():
+        if key in EXCLUDED_MOD_IDS:
+            excluded_set.update(candidates)
+    for key, folder in by_folder.items():
+        if key in EXCLUDED_MOD_IDS:
+            excluded_set.add(folder)
+    excluded = sorted(excluded_set)
+
+    extras = _preserved_extras(ids, all_folders, by_folder, copy)
     return {
         "source": str(source),
         "target": str(target),
@@ -260,7 +359,11 @@ def plan_migrate(
         "apply": False,
         "copy": copy,
         "enabled": enabled,
+        "enabled_folders": enabled_folders,
         "excluded": excluded,
+        "extras": extras,
+        "missing_enabled_ids": missing,
+        "duplicate_ids": duplicate_ids,
     }
 
 
@@ -269,37 +372,92 @@ def apply_migrate(plan: dict[str, object]) -> dict[str, object]:
     if not plan.get("apply"):
         return {"applied": False, "target": plan.get("target")}
 
-    source = Path(str(plan["source"]))
-    target = Path(str(plan["target"]))
+    source = Path(str(plan["source"])).resolve()
+    target = Path(str(plan["target"])).resolve()
     if target.exists():
         raise FileExistsError(f"target already exists: {target}")
 
     raw_copy = plan.get("copy")
     names = [str(item) for item in raw_copy] if isinstance(raw_copy, list) else []
+    raw_extras = plan.get("extras")
+    extras = raw_extras if isinstance(raw_extras, list) else []
+    extra_names = [
+        str(item["folder"]) for item in extras
+        if isinstance(item, dict) and item.get("folder")
+    ]
+    all_names = names + [name for name in extra_names if name not in names]
     linked = bool(plan.get("link"))
-
-    target.mkdir(parents=True)
-    for name in names:
-        src = source / name
-        dst = target / name
-        if linked:
-            subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(dst), str(src)],
-                check=True,
-            )
-        else:
-            shutil.copytree(src, dst)
 
     raw_enabled = plan.get("enabled")
     enabled = [str(item) for item in raw_enabled] if isinstance(raw_enabled, list) else []
-    (target / "enabled_mods.json").write_text(
-        json.dumps({"enabledMods": enabled}, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    raw_enabled_folders = plan.get("enabled_folders")
+    enabled_folders = (
+        raw_enabled_folders if isinstance(raw_enabled_folders, dict) else {})
+    raw_missing = plan.get("missing_enabled_ids")
+    missing_ids = [str(item) for item in raw_missing] if isinstance(raw_missing, list) else []
+
+    # fail-closed：空计划、悬空 id、未覆盖的 id 都不允许写盘。
+    if not enabled:
+        raise ValueError("refusing to apply migration with empty enabled list")
+    if not names:
+        raise ValueError("refusing to apply migration with empty copy list")
+    if missing_ids:
+        raise ValueError(
+            "plan has unresolved enabled ids: " + ", ".join(missing_ids))
+    uncovered = [
+        mod_id for mod_id in enabled
+        if str(enabled_folders.get(mod_id)) not in all_names
+    ]
+    if uncovered:
+        raise ValueError(
+            "enabled ids not covered by copy plan: " + ", ".join(uncovered))
+    missing_sources = [
+        name for name in all_names if not (source / name).is_dir()]
+    if missing_sources:
+        raise FileNotFoundError(
+            "missing mod folders: " + ", ".join(missing_sources))
+
+    target.mkdir(parents=True)
+    try:
+        for name in all_names:
+            src = source / name
+            dst = target / name
+            if linked:
+                proc = subprocess.run(
+                    ["cmd", "/c", "mklink", "/J", str(dst), str(src)],
+                    capture_output=True, text=True, check=False,
+                )
+                if proc.returncode != 0:
+                    detail = (proc.stderr or proc.stdout).strip()
+                    raise RuntimeError(
+                        f"mklink failed for {name}: {detail}")
+            else:
+                shutil.copytree(src, dst)
+        missing_targets = [
+            name for name in all_names if not (target / name).is_dir()]
+        if missing_targets:
+            raise ValueError(
+                "copied mod folders missing in target: "
+                + ", ".join(missing_targets))
+        payload = {"enabledMods": enabled}
+        tmp = target / "enabled_mods.json.tmp"
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(tmp, target / "enabled_mods.json")
+    except BaseException:
+        # 失败时清理本次创建的 target，避免留下半成品。
+        shutil.rmtree(target, ignore_errors=True)
+        raise
+
     return {
         "applied": True,
         "target": str(target),
         "copied": len(names),
+        "extras_copied": len(extra_names),
+        "total_copied": len(all_names),
+        "enabled": len(enabled),
         "link": linked,
     }
 
@@ -793,6 +951,52 @@ def _format_text(data: dict[str, object]) -> str:
     ])
 
 
+def _format_migrate_text(data: dict[str, object]) -> str:
+    def flag(value: object) -> str:
+        return "true" if value else "false"
+
+    def joined(value: object) -> str:
+        items = value if isinstance(value, list) else []
+        return ",".join(str(item) for item in items) or "-"
+
+    if "applied" in data:
+        return "\n".join([
+            f"applied={flag(data.get('applied'))}",
+            f"target={data.get('target')}",
+            f"copied={data.get('copied', 0)}",
+            f"extras_copied={data.get('extras_copied', 0)}",
+            f"total_copied={data.get('total_copied', 0)}",
+            f"enabled={data.get('enabled', 0)}",
+            f"link={flag(data.get('link'))}",
+        ])
+
+    raw_extras = data.get("extras")
+    extras = [
+        str(item.get("folder")) for item in raw_extras
+        if isinstance(item, dict) and item.get("folder")
+    ] if isinstance(raw_extras, list) else []
+    raw_duplicates = data.get("duplicate_ids")
+    duplicates: list[str] = []
+    if isinstance(raw_duplicates, dict):
+        for mod_id, info in raw_duplicates.items():
+            if isinstance(info, dict):
+                duplicates.append(f"{mod_id}:{info.get('chosen')}")
+    raw_copy = data.get("copy")
+    raw_enabled = data.get("enabled")
+    return "\n".join([
+        f"source={data.get('source')}",
+        f"target={data.get('target')}",
+        f"link={flag(data.get('link'))}",
+        f"apply={flag(data.get('apply'))}",
+        f"copy={len(raw_copy) if isinstance(raw_copy, list) else 0}",
+        f"enabled={len(raw_enabled) if isinstance(raw_enabled, list) else 0}",
+        f"excluded={joined(data.get('excluded'))}",
+        f"extras={joined(extras)}",
+        f"missing_enabled_ids={joined(data.get('missing_enabled_ids'))}",
+        f"duplicate_ids={joined(duplicates)}",
+    ])
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -805,6 +1009,7 @@ def _build_parser() -> argparse.ArgumentParser:
     migrate.add_argument("--target", required=True, type=Path)
     migrate.add_argument("--link", action="store_true", help="用目录联接代替复制")
     migrate.add_argument("--apply", action="store_true", help="真正写盘（默认只规划）")
+    migrate.add_argument("--text", action="store_true", help="以 key=value 输出摘要")
     route_b = sub.add_parser(
         "route-b", help="规划/执行路线 B（FR 0.9.7rc2 + Java 28，默认 dry-run）")
     route_b.add_argument("--root", required=True, type=Path)
@@ -830,7 +1035,10 @@ def main(argv: list[str] | None = None) -> int:
                 data = apply_migrate(plan)
             else:
                 data = plan
-            print(json.dumps(data, ensure_ascii=False, indent=2))
+            if args.text:
+                print(_format_migrate_text(data))
+            else:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
             return 0
         if args.command == "route-b":
             plan = plan_route_b(
