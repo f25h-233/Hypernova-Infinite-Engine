@@ -28,6 +28,10 @@
      `starsector-core/starfarer.api.jar`；已按 260mods 的已知可用配置替换，
      并在回滚时恢复原 jar。
 - 用户 gate 全部 pending；菜单到达不等于战役/战斗/读档/输入/字体通过。
+- 路线 B 的日志还显示**日志级自动读档 + 战斗**：141 s 读取 260mods 的
+  `save_123_...`，141–222 s `HYPERNOVA_TICK 1→3001`、战斗渲染插件注册、
+  武器/导弹贴图加载。这是日志级证据，**不是用户实机 gate 通过**；存档来源
+  是 260mods 既有存档，不是实验根新建存档（见 4.4）。
 
 ## 2. 环境
 
@@ -118,7 +122,7 @@
   未出现主菜单锚点。按协议记为 **timeout-not-menu**，不是崩溃。
 - 证据：`evidence/fixloop1/route-a-run4-timeout/`、
   `route-a-run3-oom/`、`route-a-run2-missing-jars/`、
-  `route-a-run4-extended*-status.txt`。
+  `route-a-run3-status.txt`（2 GB OOM 轮询状态）。
 
 ### 3.4 no-Hypernova 对照
 
@@ -205,7 +209,54 @@
   complete=true`。
 - 按 PID 46480 结束游戏；运行期间无 Fatal/OOM。
 
-### 4.4 F3：上一轮 360 s 时间线（不是游戏自身崩溃）
+### 4.4 自动化读档 + 战斗（日志级证据，非用户 gate）
+
+B 菜单运行的日志还显示：游戏在读档后实际进入了战斗。这是**日志级自动化
+证据**，不是用户视觉/输入 gate。
+
+关键 log（`evidence/fixloop1/route-b-menu/starsector.log` / `.log.1`）：
+
+- `:141208 Reading save data from [D:\github\...\Starsector-098-260mods\starsector-core\..\saves\save_123_8126140098359840818\descriptor.xml]`
+- `:141206 aEP_CombatEffectPlugin Registered in CombatLayeredRenderingPlugin`
+- `:141399 Hypernova main thread bound at advance: main`
+- `:141403 HYPERNOVA_TICK 1 ... ticks=1`
+- `:141611 'BoxUtil' Combat rendering plugin join layer: 'ABOVE_PARTICLES_LOWER'`
+- `:146542 / :151473 / ... / :222674 KE_EtherCombatPlugin ...`
+  （以太之潮 tick 持续到 222 s+）
+- `:192183 HYPERNOVA_TICK 3001 ... ticks=3001, nanosLastTick=2700, backlog=0`
+- 141–222 s 仍有武器/导弹/材质贴图加载。
+
+**触发器**：
+
+- 本轮**没有** agent 脚本点击、SendInput/PostMessage 或手工菜单操作；
+  唯一自动化是进程启动（`launchDirect`）和非交互的
+  `SetForegroundWindow`/`PrintWindow` 截图。
+- 主菜单音乐锚点在 105.769 s，首次 save descriptor 读取在 106.036 s
+  （+267 ms）；141.208 s 再次读取并进入战斗。这个时序更像**自动
+  continue/读档**，而不是菜单点击。
+- 无法从日志证明具体是 `launchDirect` 分支还是某个 mod 的 auto-continue；
+  也不能完全排除用户物理键鼠输入，但没有任何 agent 注入。
+
+**存档来源**：
+
+- 日志路径是 `Starsector-098-260mods\starsector-core\..\saves\save_123_...`；
+  实验根 `saves/` 在 B 前后都是空的，**没有由我们复制过存档**。
+- B 日志里 `SS098_Hypernova...` 路径出现 65,757 次，
+  `Starsector-098-260mods` 只出现 1 次（就是这条 save 路径）——游戏本体
+  确实从实验根运行。
+- `save_123` 的 `descriptor.xml`/`campaign.xml` 内含绝对 260mods mod 路径；
+  这是**260mods 的既有存档**，不是实验根新建的存档。具体由游戏 save index
+  还是 descriptor 记录的原路径解析到 260mods，本轮**没有证明**；作为
+  provenance caveat 记录。
+
+**判定**：
+
+- 可作为“B 栈能加载既有存档并运行战斗”的**日志级自动化证据**；
+  Hypernova 主线程绑定、`HYPERNOVA_TICK 1→3001`、战斗渲染插件注册均出现。
+- **不能**写成用户实机 gate 通过：没有视觉/UI/输入/字体/稳定性验证，
+  存档来源也不是实验根的新存档。用户 gate 仍全部 pending。
+
+### 4.5 F3：上一轮 360 s 时间线（不是游戏自身崩溃）
 
 上一轮 2 GB 运行在 325 s 轮询结束后，日志继续记录到 360 s，然后再被 PID
 结束。该时间片的关键行：
@@ -223,12 +274,15 @@ starsector.log 360639 ms ERROR com.fs.starfarer.combat.CombatMain
 
 - 这些行出现在 325 s 轮询之后、按 PID 结束的时间窗内；**疑似由结束进程
   触发的上下文销毁导致**，不能当作游戏自身崩溃。
+- **口径补充**：`m6_log_audit` 的五类错误模式**不覆盖**
+  `ERROR lazy: materialize failed`；因此 audit `total=0` 不能用来否认这条
+  ERROR，只能说明它不在审计模式集合内。本节直接引用原始日志行。
 - fix loop 的 8G/10G 菜单运行中 lazy `failed=0`，无 materialize 失败，
   支持“上一轮是结束过程/内存不足共同作用”的判断。
 - 证据：`evidence/m7-route-b/scripts-agent.log`（失败切片）、
   `evidence/fixloop1/route-b-menu/`（成功切片）。
 
-### 4.5 F4：超时原因分析
+### 4.6 F4：超时原因分析
 
 - 旧运行 `-Xmx2048m`，256 mod；360 s 时 Hypernova `liveBytes≈2.7 GB`，
   超出 2 GB heap/直接内存默认上限；这是超时的**候选原因**。
@@ -237,14 +291,14 @@ starsector.log 360639 ms ERROR com.fs.starfarer.combat.CombatMain
   时间是主因”一致，但同时还有 normal-map 缓存、LunaLib 设置修复、`jc_sf`
   禁用等变化，**不是单变量对照**；不宣称性能收益。
 
-### 4.6 F5：B 的 no-Hypernova 对照
+### 4.7 F5：B 的 no-Hypernova 对照
 
 - fix loop 的 B **已到达主菜单**，因此没有触发“仍未到菜单则做
   no-Hypernova 对照”的条件；本轮**未做**该对照。
 - 如后续需要严格归因，可在同一 8G/10G 环境移除 Hypernova agent 重跑，
   比较到达菜单的时间；本轮不把菜单到达归功于 Hypernova。
 
-### 4.7 回滚
+### 4.8 回滚
 
 - label：`m7-route-b-20261104-024921-195133`。
 - `rollback --apply`（绝对 root）：`restored=2 deleted=20 ok=true`。
@@ -269,6 +323,10 @@ starsector.log 360639 ms ERROR com.fs.starfarer.combat.CombatMain
 | 8 | 稳定性（20–30 分钟） | pending |
 
 **B 的菜单到达不等于战役、战斗、读档、中文输入或字体视觉通过。**
+B 的 141–222 s 读档/战斗是**日志级自动化证据**（见 4.4）：存档来自 260mods
+既有 `save_123`，不是实验根新建存档；Hypernova tick 和战斗插件注册只能
+证明加载链/战斗引擎跑过，不能证明视觉、输入、字体或稳定性。场景 #3/#4
+仍为 **pending**，不标通过。
 A 的菜单未到达，不能用任何自动化指标替代用户 gate。
 
 ## 6. 失败归因
@@ -367,6 +425,10 @@ A 的菜单未到达，不能用任何自动化指标替代用户 gate。
   超时候选。
 - **F5**：B 已到菜单，未做 no-Hypernova 对照；不宣称 Hypernova 是菜单到达的
   原因。
+- **读档/战斗证据的边界**：B 的 141–222 s 读档/战斗是**日志级**；存档来自
+  260mods 既有 `save_123`，实验根 `saves/` 为空；没有 agent 点击，时序像
+  自动 continue，但具体触发器未证明。它不证明视觉/输入/字体/稳定性，也不把
+  场景 #3/#4 标通过。
 - **用户 gate 全 pending**：战役、战斗、读档、中文输入、字体视觉、稳定性
   均未验证。
 - **第三方合规**：不重新分发任何第三方文件；AoTD jar/LunaSettings 仅从用户
