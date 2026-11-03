@@ -66,3 +66,10 @@ SS098_Hypernova_Compat_AuditTest/vendor/
 # route-* --apply 生成的启动器，不是仓库预置文件
 SS098_Hypernova_Compat_AuditTest/scripts/launch-route-a.bat
 SS098_Hypernova_Compat_AuditTest/scripts/launch-route-b.bat
+
+# M7 运行证据：大日志/备份/测试生成物不入库（本地保留）
+SS098_Hypernova_Compat_AuditTest/evidence/**/*.log.*
+SS098_Hypernova_Compat_AuditTest/evidence/**/core-jar-backup/
+SS098_Hypernova_Compat_AuditTest/evidence/**/manifest-test*/
+SS098_Hypernova_Compat_AuditTest/evidence/**/lazy-skip-*.txt
+SS098_Hypernova_Compat_AuditTest/evidence/**/manifest-v1.json
