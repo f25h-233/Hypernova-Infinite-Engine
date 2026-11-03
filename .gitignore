@@ -43,3 +43,10 @@ dist/
 # Python 缓存（pytest 会在 tools/ 与 tests/ 下生成）
 __pycache__/
 *.pyc
+
+# ---- M6 审计工作区：只提交脚本清单与证据摘要 ----
+SS098_Hypernova_Compat_AuditTest/mods/
+SS098_Hypernova_Compat_AuditTest/vmparams/
+SS098_Hypernova_Compat_AuditTest/backups/
+SS098_Hypernova_Compat_AuditTest/evidence/*.csv
+SS098_Hypernova_Compat_AuditTest/evidence/**/*.log

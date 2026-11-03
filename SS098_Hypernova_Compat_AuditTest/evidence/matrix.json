@@ -1,0 +1,1712 @@
+{
+  "chinese_input_fix": {
+    "enabled": false,
+    "present": true,
+    "version": "2.0.0"
+  },
+  "cjk_mode": true,
+  "default_font": "graphics/fonts/insignia15LTaa.fnt",
+  "font_ui_mods": [
+    {
+      "enabled": false,
+      "folder": "alice cesCC",
+      "fonts": false,
+      "mod_id": "ALICE",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "amazigh锻船厂",
+      "fonts": false,
+      "mod_id": "A_S-F",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "渊深星辰",
+      "fonts": false,
+      "mod_id": "Abyss",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "ApproLight",
+      "fonts": true,
+      "mod_id": "ApproLight",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "ArcLightBureau",
+      "fonts": false,
+      "mod_id": "ArcLightBureau",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "ArcLightBureauPlus",
+      "fonts": false,
+      "mod_id": "ArcLightBureauPlus",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Legacy of Arkgneisis 1.9.14 CN",
+      "fonts": false,
+      "mod_id": "ArkLeg",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "avali_explorer_v0.6.7s2",
+      "fonts": false,
+      "mod_id": "Avali_Mod_Core",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "在英仙座的哥特舰队",
+      "fonts": false,
+      "mod_id": "BFGiP",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "BSC 0.1.98.7",
+      "fonts": false,
+      "mod_id": "BSC",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "BlueSeaFisher",
+      "fonts": false,
+      "mod_id": "BlueSeaFisher",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Boarding Attack",
+      "fonts": false,
+      "mod_id": "Boarding Attack",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "BoxUtil",
+      "fonts": true,
+      "mod_id": "BoxUtil",
+      "strings": true,
+      "ui": true
+    },
+    {
+      "enabled": true,
+      "folder": "Carter's Freetraders 3.2.4",
+      "fonts": false,
+      "mod_id": "CFT",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "CRSIDtest",
+      "fonts": false,
+      "mod_id": "CRSIDtest",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "CRS",
+      "fonts": false,
+      "mod_id": "CRS_Mod_Core",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": false,
+      "folder": "ChineseInputFix",
+      "fonts": false,
+      "mod_id": "ChineseInputFix",
+      "strings": false,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "CjyToyBox",
+      "fonts": false,
+      "mod_id": "CjyToyBox",
+      "strings": true,
+      "ui": true
+    },
+    {
+      "enabled": true,
+      "folder": "Ashes of  The Domain - Dreams of Past",
+      "fonts": false,
+      "mod_id": "Cryo_but_better",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Caymon's Ship Pack",
+      "fonts": false,
+      "mod_id": "Csp",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "CuratedShips",
+      "fonts": false,
+      "mod_id": "CuratedShips",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "TheBlueGlacier",
+      "fonts": false,
+      "mod_id": "Dia_TheBlueGlacier",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Emergent Threats-IX Revival",
+      "fonts": false,
+      "mod_id": "EmergentThreats_IX_Revival",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Emergent Threats",
+      "fonts": false,
+      "mod_id": "EmergentThreats_Vice",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Erexeus Tech Complex",
+      "fonts": false,
+      "mod_id": "Erexeus_Tech_Complex_FactionMod",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "EridaniCombine1.4.4noli",
+      "fonts": false,
+      "mod_id": "Eridani_Combine",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "FDS_ROTS",
+      "fonts": false,
+      "mod_id": "FDS_ROTS",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "FPE",
+      "fonts": false,
+      "mod_id": "FPE",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "FSF_MilitaryCorporation",
+      "fonts": false,
+      "mod_id": "FSF_MilitaryCorporation",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": false,
+      "folder": "FWLib",
+      "fonts": false,
+      "mod_id": "FWLib",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Fantasy_manufacturing",
+      "fonts": false,
+      "mod_id": "FantasyM",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "FarsightDrive",
+      "fonts": false,
+      "mod_id": "FarsightDrive",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Final_battleship 神仙打架，凡人误入1.2.7",
+      "fonts": false,
+      "mod_id": "Final_battleship_Genesis",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "狐狐船包",
+      "fonts": false,
+      "mod_id": "FoxTwoShipPack",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "GrytpypeMoriarty",
+      "fonts": false,
+      "mod_id": "GMDA",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Galactic_Constellate",
+      "fonts": false,
+      "mod_id": "GalacticConstellate",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Gerat_Republic",
+      "fonts": false,
+      "mod_id": "Gerat_Republic",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Goat_Aviation_Bureau",
+      "fonts": false,
+      "mod_id": "Goat_Aviation_Bureau",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "GrandColonies",
+      "fonts": false,
+      "mod_id": "GrandColonies",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "_HHE",
+      "fonts": false,
+      "mod_id": "HHE",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "HazardMiningIncorporated",
+      "fonts": false,
+      "mod_id": "HMI",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "HMI Supervillains",
+      "fonts": false,
+      "mod_id": "HMI_SV",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "BrightonFederation",
+      "fonts": false,
+      "mod_id": "HMI_brighton",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "HaloDynamicsShipIndustry",
+      "fonts": false,
+      "mod_id": "HaloDynamicsShipIndustry",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Hdbyunm",
+      "fonts": false,
+      "mod_id": "Hdbyunm",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "家园",
+      "fonts": false,
+      "mod_id": "HomeworldShip",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Interstellar Imperium",
+      "fonts": false,
+      "mod_id": "Imperium",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "IndEvo",
+      "fonts": false,
+      "mod_id": "IndEvo",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "JKF",
+      "fonts": false,
+      "mod_id": "JKF",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Junk Yard Dogs 3.7.0",
+      "fonts": false,
+      "mod_id": "JYD",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Ore Refinery 1.0",
+      "fonts": false,
+      "mod_id": "JYDR",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Jadeite_design_1.05",
+      "fonts": false,
+      "mod_id": "Jadeite_design",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "KT_Association",
+      "fonts": false,
+      "mod_id": "KT_Association",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": false,
+      "folder": "Kalian Remake",
+      "fonts": false,
+      "mod_id": "Kalian",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Kwin'sExpand",
+      "fonts": false,
+      "mod_id": "KwinExpand",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "LLI",
+      "fonts": false,
+      "mod_id": "LLI",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Legio_LXVI 1.05a",
+      "fonts": false,
+      "mod_id": "Legio_LXVI",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Make Fighters Great Again",
+      "fonts": false,
+      "mod_id": "MFGA",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "MagicLib",
+      "fonts": false,
+      "mod_id": "MagicLib",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Mayasuran Navy",
+      "fonts": false,
+      "mod_id": "Mayasuran Navy",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Wondrous Weapons",
+      "fonts": false,
+      "mod_id": "Meatball-Wondrous_Weapons",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Minesector_1.6e",
+      "fonts": false,
+      "mod_id": "Minesector",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "MoreMilitaryMissions",
+      "fonts": false,
+      "mod_id": "MoreMilitaryMissions",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Musashi Manufactorum",
+      "fonts": false,
+      "mod_id": "Musashimanufactor",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "NSP_3.0.2",
+      "fonts": false,
+      "mod_id": "NSP",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "NeighborPost_for0.98_v0.10.9",
+      "fonts": false,
+      "mod_id": "NeighborPost",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Neutrino corp 1.87-RC3",
+      "fonts": false,
+      "mod_id": "Neutrino",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Nightcross",
+      "fonts": false,
+      "mod_id": "Nightcross",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Robben",
+      "fonts": false,
+      "mod_id": "No101ships",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "ORA_REsonance",
+      "fonts": false,
+      "mod_id": "ORA_REsonance",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Oculian Armada",
+      "fonts": false,
+      "mod_id": "OcuA",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "PAGSM",
+      "fonts": false,
+      "mod_id": "PAGSM",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "海盗多用途船包",
+      "fonts": false,
+      "mod_id": "PUP",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Polaris_Prime",
+      "fonts": false,
+      "mod_id": "Polaris_Prime",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "PrasrityScrapmaster 0.7.1",
+      "fonts": false,
+      "mod_id": "Prasrity_Scrap_Master",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Red Stripe",
+      "fonts": false,
+      "mod_id": "Red_stripe",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "RetroLib",
+      "fonts": false,
+      "mod_id": "RetroLib",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Strike Craft Expansion",
+      "fonts": false,
+      "mod_id": "SCEnSFL",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "ScyNation",
+      "fonts": false,
+      "mod_id": "SCY",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "SEEKER",
+      "fonts": false,
+      "mod_id": "SEEKER",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "XXVIIBattleGroup",
+      "fonts": false,
+      "mod_id": "SGB",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "SUZUKI",
+      "fonts": false,
+      "mod_id": "SUZUKI",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Scrapyard Armories",
+      "fonts": false,
+      "mod_id": "Scrapyard",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Seafood Shipworks",
+      "fonts": false,
+      "mod_id": "Seafood",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "StarCraftSector",
+      "fonts": false,
+      "mod_id": "StarCraftSector",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "AzureFederation",
+      "fonts": false,
+      "mod_id": "Starlight1130",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Stop Gap Measure 1.2.5",
+      "fonts": false,
+      "mod_id": "StopGapMeasures3",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "sylphon",
+      "fonts": false,
+      "mod_id": "Sylphon_RnD",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "mod-TDSHM+",
+      "fonts": false,
+      "mod_id": "TDSHM",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Torchships",
+      "fonts": false,
+      "mod_id": "TORCHSHIPS",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "速子特勤局",
+      "fonts": false,
+      "mod_id": "TTSC",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "[0.98]万泽时代：Tinysaurus的原版万泽扩展 1.2",
+      "fonts": false,
+      "mod_id": "TVVFW",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Templars_Archived",
+      "fonts": false,
+      "mod_id": "Templars",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Terraforming and Station Construction",
+      "fonts": false,
+      "mod_id": "Terraforming & Station Construction",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Saya",
+      "fonts": false,
+      "mod_id": "The Song of Saya",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "VolantianReclamationInitiative",
+      "fonts": false,
+      "mod_id": "TouchOfVanilla_vri",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "UDMCreateTestList",
+      "fonts": false,
+      "mod_id": "UDM_C_T",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Unknown Skies",
+      "fonts": false,
+      "mod_id": "US",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Warhammer 40K Ship Pack",
+      "fonts": false,
+      "mod_id": "WH40K_shippack",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": false,
+      "folder": "Witch Citadel-Ver1.0c-0.98a",
+      "fonts": false,
+      "mod_id": "Witch_Citadel",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "XhanEmpire",
+      "fonts": false,
+      "mod_id": "XhanEmpire",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Rumours of Neoteric Design",
+      "fonts": false,
+      "mod_id": "advent_seven",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "SubstanceAbuse",
+      "fonts": false,
+      "mod_id": "alcoholism",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Ashes of The Domain - Question Of Loyalty",
+      "fonts": false,
+      "mod_id": "aotd_qol",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Ashes of  The Domain -Seats Of Power",
+      "fonts": false,
+      "mod_id": "aotd_sop",
+      "strings": false,
+      "ui": true
+    },
+    {
+      "enabled": true,
+      "folder": "Ashes of  The Domain - Theory of Toolbox",
+      "fonts": false,
+      "mod_id": "aotd_theory_of_toolbox",
+      "strings": false,
+      "ui": true
+    },
+    {
+      "enabled": true,
+      "folder": "Ashes of  The Domain- Vaults of Knowledge",
+      "fonts": false,
+      "mod_id": "aotd_vok",
+      "strings": true,
+      "ui": true
+    },
+    {
+      "enabled": true,
+      "folder": "Apex Design Collective",
+      "fonts": false,
+      "mod_id": "apex_design",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "蜂群协会（Apocrita Association）",
+      "fonts": false,
+      "mod_id": "apocrita_association",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "ArmaArmatura_V3.2.5",
+      "fonts": false,
+      "mod_id": "armaa",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "外置模块补给船",
+      "fonts": false,
+      "mod_id": "armor_supply",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Random-Assortment-of-Things",
+      "fonts": false,
+      "mod_id": "assortment_of_things",
+      "strings": true,
+      "ui": true
+    },
+    {
+      "enabled": true,
+      "folder": "Asteroid ship pack 1.4e",
+      "fonts": false,
+      "mod_id": "astroidships",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Sephira Conclave",
+      "fonts": false,
+      "mod_id": "bb_plus",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Blackrock Drive Yards",
+      "fonts": false,
+      "mod_id": "blackrock_driveyards",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "捕获军官船员CaptureCrew",
+      "fonts": false,
+      "mod_id": "capturecrew",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "战斗骚话",
+      "fonts": false,
+      "mod_id": "chatter",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "code：“bluesuperhound”remnantexpand",
+      "fonts": false,
+      "mod_id": "code：“bluesuperhound”remnantexpand",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "ConsoleFrontend",
+      "fonts": false,
+      "mod_id": "console_frontend",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "DemandIndicators",
+      "fonts": false,
+      "mod_id": "demandIndicators",
+      "strings": false,
+      "ui": true
+    },
+    {
+      "enabled": true,
+      "folder": "Domain Explorarium Expansion",
+      "fonts": false,
+      "mod_id": "dex",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Diable_avionics_rogo",
+      "fonts": false,
+      "mod_id": "diableavionics",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Diamond_clear_1.9a",
+      "fonts": false,
+      "mod_id": "diamond",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Diamond_mix_faction_0.95",
+      "fonts": false,
+      "mod_id": "diamond_faction",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "DMODServices-v3.0.1",
+      "fonts": false,
+      "mod_id": "dmodservices",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "人之领历史协会",
+      "fonts": false,
+      "mod_id": "domhistCN",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "[势力]奇巧设计局 ED Shipyard",
+      "fonts": false,
+      "mod_id": "edshipyard",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "HeggleTale",
+      "fonts": false,
+      "mod_id": "eluxor_hegtales",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "ExoticaTechnologies",
+      "fonts": false,
+      "mod_id": "exoticatechnologies",
+      "strings": true,
+      "ui": true
+    },
+    {
+      "enabled": true,
+      "folder": "EXPSP_Release",
+      "fonts": false,
+      "mod_id": "exshippack",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "qwq",
+      "fonts": false,
+      "mod_id": "fairyempire",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Foundation Of Borken",
+      "fonts": false,
+      "mod_id": "fob",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Gudalanmu",
+      "fonts": false,
+      "mod_id": "gudalanmu",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Gundam-UC",
+      "fonts": false,
+      "mod_id": "gundam_uc",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Trails of Tooth and Claw",
+      "fonts": false,
+      "mod_id": "gwyvern_trailstc",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "希格拉后裔_Hiigaran_Descendants_2.2.4_CN_0.98a-RC8",
+      "fonts": false,
+      "mod_id": "hiigaran_descendants",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "homemadeship",
+      "fonts": false,
+      "mod_id": "homemadeship",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "DME",
+      "fonts": false,
+      "mod_id": "istl_dassaultmikoyan",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "SF-幽灵部队",
+      "fonts": false,
+      "mod_id": "jc_sf",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "junkship",
+      "fonts": false,
+      "mod_id": "junkship",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Kadur Remnant",
+      "fonts": false,
+      "mod_id": "kadur_remnant",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "No Such Org - Phase Ships",
+      "fonts": false,
+      "mod_id": "kayse_phaseships",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Kazeron Navarchy 1.7.0",
+      "fonts": false,
+      "mod_id": "kazeron",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "天工联合船舶设计局",
+      "fonts": false,
+      "mod_id": "kk",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Kyeltziv Technocracy",
+      "fonts": false,
+      "mod_id": "kyeltziv",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Orky Sector - Arma Addon (CN)",
+      "fonts": false,
+      "mod_id": "looted_sector_arma_cn",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "绿皮星域 -0.71",
+      "fonts": false,
+      "mod_id": "looted_sector_cn",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Luddic_Enhancement(绿皮小子焊化)",
+      "fonts": false,
+      "mod_id": "luddenhance",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Luddic_Enhancement_IED(绿皮小子焊化)",
+      "fonts": false,
+      "mod_id": "luddenhanceied",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "lunalib",
+      "fonts": false,
+      "mod_id": "lunalib",
+      "strings": true,
+      "ui": true
+    },
+    {
+      "enabled": true,
+      "folder": "ConsoleCommands",
+      "fonts": true,
+      "mod_id": "lw_console",
+      "strings": false,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Sephira Labs ADD",
+      "fonts": false,
+      "mod_id": "m_sladd",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Magellan Protectorate Plus-v1.3",
+      "fonts": false,
+      "mod_id": "mag_protect",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Magellan Shenanigans",
+      "fonts": false,
+      "mod_id": "mag_protect_soldier",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "MikanInstituteofKnowledge",
+      "fonts": false,
+      "mod_id": "mik",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "MISAIER",
+      "fonts": false,
+      "mod_id": "misaier",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "迷失防御无人机",
+      "fonts": false,
+      "mod_id": "missing_defense_drones",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "迷失霸主辅助船包",
+      "fonts": false,
+      "mod_id": "missinghegemonyauxiliaryships",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "迷失中科船包",
+      "fonts": false,
+      "mod_id": "missingmidlineships",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "迷失左径船包",
+      "fonts": false,
+      "mod_id": "missingpatherships",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "迷失非势力团体舰船",
+      "fonts": false,
+      "mod_id": "missingshipscivilian",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "迷失异见者船包",
+      "fonts": false,
+      "mod_id": "missingshipsdeprecated",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "迷失海盗船包",
+      "fonts": false,
+      "mod_id": "missingshipspirate",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "迷失武器包",
+      "fonts": false,
+      "mod_id": "missingshipsweapons",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "迷失超级船包",
+      "fonts": false,
+      "mod_id": "missingsuperships",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "More-Ship-Names",
+      "fonts": false,
+      "mod_id": "more_ship_names",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "迷失额外超级舰船",
+      "fonts": false,
+      "mod_id": "msmcommunity",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "塔尼亚海权领",
+      "fonts": false,
+      "mod_id": "navarchy_of_tania",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Nes's SAW",
+      "fonts": false,
+      "mod_id": "ness_saw",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Nexerelin",
+      "fonts": false,
+      "mod_id": "nexerelin",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "More Planetary Conditions",
+      "fonts": false,
+      "mod_id": "niko_morePlanetaryConditions",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Station Refitting",
+      "fonts": false,
+      "mod_id": "niko_stationRefitting",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "OuterTheBanstar",
+      "fonts": false,
+      "mod_id": "outer_the_banstar",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "pigeonpun_bionicalteration",
+      "fonts": false,
+      "mod_id": "pigeonpun_bionicalteration",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "PlanetSearch",
+      "fonts": false,
+      "mod_id": "planet_search",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "P9殖民领",
+      "fonts": false,
+      "mod_id": "pn",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "战俘营地 Take No Prisoners v0.17.1",
+      "fonts": false,
+      "mod_id": "presmattdamon_takenoprisoners",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "primitive_weapon_pack",
+      "fonts": false,
+      "mod_id": "primitive_weapon_pack",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "prv Starworks星工场",
+      "fonts": false,
+      "mod_id": "prv",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "prv Extraworks额外内容",
+      "fonts": false,
+      "mod_id": "prvExtra",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "prv Path左径船包",
+      "fonts": false,
+      "mod_id": "prvPath",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "QoLPack",
+      "fonts": false,
+      "mod_id": "pt_qolpack",
+      "strings": false,
+      "ui": true
+    },
+    {
+      "enabled": true,
+      "folder": "qsmx",
+      "fonts": false,
+      "mod_id": "qsmx",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "[0.95.1a][C](拓展)浣熊的军备拓展Arsenal Expansion 1.5.5",
+      "fonts": false,
+      "mod_id": "raccoonarms",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "RoiderUnion",
+      "fonts": false,
+      "mod_id": "roider",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "scalartech-solutions-0.9.3b",
+      "fonts": false,
+      "mod_id": "scalartech",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "ScanThoseGates",
+      "fonts": false,
+      "mod_id": "scan_those_gates",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Secrets of the Frontier",
+      "fonts": false,
+      "mod_id": "secretsofthefrontier",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Shadowyards_Wisp",
+      "fonts": false,
+      "mod_id": "shadow_ships",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "圣艾瑞斯联邦",
+      "fonts": false,
+      "mod_id": "sikr",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "SpeedUp",
+      "fonts": false,
+      "mod_id": "speedUp",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "FED",
+      "fonts": false,
+      "mod_id": "star_federation",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "星际领主",
+      "fonts": false,
+      "mod_id": "starlords",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Star Wars 2020",
+      "fonts": false,
+      "mod_id": "sw",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Ship and Weapon Pack",
+      "fonts": false,
+      "mod_id": "swp",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Shadowverse",
+      "fonts": true,
+      "mod_id": "szb",
+      "strings": true,
+      "ui": true
+    },
+    {
+      "enabled": true,
+      "folder": "tahlan-shipworks",
+      "fonts": false,
+      "mod_id": "tahlan",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "THREAT TECH",
+      "fonts": false,
+      "mod_id": "threattech",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Commissioned Crews",
+      "fonts": false,
+      "mod_id": "timid_commissioned_hull_mods",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Iron Shell",
+      "fonts": false,
+      "mod_id": "timid_xiv",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Underworld",
+      "fonts": false,
+      "mod_id": "underworld",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "Valkyrians",
+      "fonts": false,
+      "mod_id": "valkyrian",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "VIC",
+      "fonts": false,
+      "mod_id": "vic",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "墨麒麟",
+      "fonts": false,
+      "mod_id": "ywj_work",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "远行之路",
+      "fonts": false,
+      "mod_id": "yxz",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "战地记者",
+      "fonts": false,
+      "mod_id": "zd",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "知识管理者",
+      "fonts": false,
+      "mod_id": "zg",
+      "strings": true,
+      "ui": false
+    },
+    {
+      "enabled": true,
+      "folder": "更多的大教堂v1.9.1",
+      "fonts": false,
+      "mod_id": "更多的大教堂",
+      "strings": true,
+      "ui": false
+    }
+  ],
+  "game_root": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods",
+  "hypernova": {
+    "enabled": true,
+    "eviction": false,
+    "lazy": false,
+    "scene_unload": false,
+    "textures_enabled": true
+  },
+  "locale_override": "en_US",
+  "mods": {
+    "duplicate_ids": {
+      "lw_console": [
+        "ConsoleCommands",
+        "lw_console"
+      ],
+      "lw_lazylib": [
+        "LazyLib",
+        "lw_lazylib"
+      ],
+      "particleengine": [
+        "Particle Engine",
+        "particleengine"
+      ],
+      "shaderLib": [
+        "GraphicsLib",
+        "shaderLib"
+      ]
+    },
+    "enabled_count": 256,
+    "parse_errors": {},
+    "scanned_count": 254
+  },
+  "strings": {
+    "cjk_ratio": 1.0,
+    "cjk_strings": 229,
+    "total_strings": 229
+  }
+}
