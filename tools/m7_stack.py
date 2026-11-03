@@ -1,10 +1,12 @@
-"""M7 统一部署包：实验根盘点、256 mod 迁移与路线 B 安装。
+"""M7 统一部署包：实验根盘点、256 mod 迁移与路线 A/B 安装。
 
 Task 1 只读盘点；Task 2 迁移规划；Task 3 增加路线 B（FR 0.9.7rc2 +
-jdk-28+13 + Hypernova，可选 Prepatcher）。路线 B 必须由显式
-``jdk-28+13/bin/java.exe @route-b.vmparams`` 启动器启动：``starsector.exe``
-与 ``fr.bat`` 都硬编码随包 JRE 17，不能用来跑 Java 28。所有写操作都必须
-显式 ``--apply``，默认 dry-run；apply 前生成 M7 自己的回滚清单。
+jdk-28+13 + Hypernova，可选 Prepatcher）；Task 4 增加路线 A（MixinFR
+1.2.5 + JRE 17 + StarsectorParallel + Hypernova，绝不混入 FR 0.9.7，
+也不装 Prepatcher）。两条路线都必须由显式 ``java.exe @route-*.vmparams``
+启动器启动：``starsector.exe`` 与 ``fr.bat`` 都硬编码随包 JRE 17，不能用
+来跑 Java 28。所有写操作都必须显式 ``--apply``，默认 dry-run；apply 前
+生成 M7 自己的回滚清单。
 """
 from __future__ import annotations
 
@@ -95,6 +97,25 @@ ROUTE_B_FLAGS = (
     "-Dhypernova.textures.lazy.eviction=true",
     "-Dhypernova.textures.lazy.eviction.sceneUnload=false",
 )
+# ---- 路线 A 常量（Task 4）----
+# MixinFR 的 install.bat 从 mod 文件夹名推导 agent 路径，因此目标文件夹
+# 固定为 MixinFR（不能含空格）；Parallel 同理，由我们固定命名。
+JRE_DIR_NAME = "jre"
+JRE_JAVA_TOKEN = "..\\jre\\bin\\java.exe"
+ROUTE_A_VMPARAMS_NAME = "route-a.vmparams"
+ROUTE_A_LAUNCHER_NAME = "launch-route-a.bat"
+MIXINFR_MOD_FOLDER = "MixinFR"
+PARALLEL_MOD_FOLDER = "StarsectorParallel"
+MIXINFR_MOD_ID = "MixinLib"
+PARALLEL_MOD_ID = "starsectorparallel"
+MIXIN_AGENT_TOKEN = (
+    "-javaagent:..\\mods\\MixinFR\\jars\\MixinLib-bridge.jar"
+)
+# 路线 A 与 B 共用同一组 Hypernova 惰性纹理开关；路线 A 不写 -Dmixinfr.*。
+ROUTE_A_FLAGS = ROUTE_B_FLAGS
+ROUTE_A_MANAGED_MOD_IDS = (HYPERNOVA_MOD_ID, MIXINFR_MOD_ID, PARALLEL_MOD_ID)
+# CLI 未显式传 --hypernova-mod 时使用仓库根（build/ 产物所在处）。
+DEFAULT_HYPERNOVA_MOD = Path(__file__).resolve().parent.parent
 # 回滚清单至少覆盖的配置/启动文件；apply 还会追加本次所有写入目标。
 ROUTE_SNAPSHOT_PATHS = (
     VMPARAMS_PATH,
@@ -626,6 +647,7 @@ def snapshot_route(
     *,
     paths: list[str | Path] | None = None,
     dest: str | Path | None = None,
+    route: str = "b",
 ) -> dict[str, object]:
     """M7 自建回滚快照：逐路径记录 existed_before / 备份 / sha256。
 
@@ -687,7 +709,7 @@ def snapshot_route(
 
     meta = {
         "version": 1,
-        "route": "b",
+        "route": route,
         "root": str(base),
         "label": label,
         "created": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -848,6 +870,42 @@ def _hypernova_agent_source(hypernova_mod: str | Path) -> Path:
     return base / "build" / "agent" / "hypernova.agent.jar"
 
 
+def _copy_entry(
+    src: Path, dst: Path, kind: str = "file"
+) -> dict[str, object]:
+    exists = src.is_dir() if kind == "tree" else src.is_file()
+    return {"src": str(src), "dst": str(dst), "kind": kind,
+            "exists": exists}
+
+
+def _hypernova_copies(
+    root: Path, hypernova_mod: str | Path
+) -> list[dict[str, object]]:
+    """路线 A/B 共用的 Hypernova 复制清单（mod + 淘汰占位图）。"""
+    hn = Path(hypernova_mod)
+    mod_dir = root / HYPERNOVA_MOD_REL
+    core = root / "starsector-core"
+    copies: list[dict[str, object]] = [
+        _copy_entry(hn / "mod_info.json", mod_dir / "mod_info.json"),
+    ]
+    packaged = (hn / "jars" / "hypernova.jar").is_file()
+    if packaged:
+        copies.append(_copy_entry(hn / "jars", mod_dir / "jars", "tree"))
+    else:
+        copies.append(_copy_entry(hn / "build" / "java" / "hypernova.jar",
+                                  mod_dir / "jars" / "hypernova.jar"))
+        copies.append(_copy_entry(_hypernova_agent_source(hn),
+                                  mod_dir / "jars" / "hypernova.agent.jar"))
+    copies.append(_copy_entry(hn / "data", mod_dir / "data", "tree"))
+    copies.append(_copy_entry(hn / "graphics", mod_dir / "graphics", "tree"))
+    # 淘汰占位图必须同时在 starsector-core（agent-only 安装下 mod 目录
+    # 不保证被 FileLoader 扫描）；见 tools/java/install-manifest.sh。
+    copies.append(_copy_entry(
+        hn / "graphics" / "hypernova" / "blank.png",
+        core / "graphics" / "hypernova" / "blank.png"))
+    return copies
+
+
 def _route_b_copies(
     root: Path,
     fr_dir: str | Path,
@@ -856,42 +914,19 @@ def _route_b_copies(
     prepatcher_dir: str | Path | None,
 ) -> list[dict[str, object]]:
     """列出路线 B 的复制清单（只描述意图，不写盘）。"""
-
-    def entry(src: Path, dst: Path, kind: str = "file") -> dict[str, object]:
-        exists = src.is_dir() if kind == "tree" else src.is_file()
-        return {"src": str(src), "dst": str(dst), "kind": kind,
-                "exists": exists}
-
     copies: list[dict[str, object]] = []
     core = root / "starsector-core"
     fr = Path(fr_dir)
     if fr.is_dir():
         for item in sorted(fr.iterdir(), key=lambda path: path.name.lower()):
             if item.is_file():
-                copies.append(entry(item, core / item.name))
+                copies.append(_copy_entry(item, core / item.name))
 
-    copies.append(entry(Path(jdk_dir), root / JDK_DIR_NAME, "tree"))
-
-    hn = Path(hypernova_mod)
-    mod_dir = root / HYPERNOVA_MOD_REL
-    copies.append(entry(hn / "mod_info.json", mod_dir / "mod_info.json"))
-    packaged = (hn / "jars" / "hypernova.jar").is_file()
-    if packaged:
-        copies.append(entry(hn / "jars", mod_dir / "jars", "tree"))
-    else:
-        copies.append(entry(hn / "build" / "java" / "hypernova.jar",
-                            mod_dir / "jars" / "hypernova.jar"))
-        copies.append(entry(_hypernova_agent_source(hn),
-                            mod_dir / "jars" / "hypernova.agent.jar"))
-    copies.append(entry(hn / "data", mod_dir / "data", "tree"))
-    copies.append(entry(hn / "graphics", mod_dir / "graphics", "tree"))
-    # 淘汰占位图必须同时在 starsector-core（agent-only 安装下 mod 目录
-    # 不保证被 FileLoader 扫描）；见 tools/java/install-manifest.sh。
-    copies.append(entry(hn / "graphics" / "hypernova" / "blank.png",
-                        core / "graphics" / "hypernova" / "blank.png"))
+    copies.append(_copy_entry(Path(jdk_dir), root / JDK_DIR_NAME, "tree"))
+    copies.extend(_hypernova_copies(root, hypernova_mod))
     if prepatcher_dir is not None:
-        copies.append(entry(Path(prepatcher_dir),
-                            root / PREPATCHER_MOD_REL, "tree"))
+        copies.append(_copy_entry(Path(prepatcher_dir),
+                                  root / PREPATCHER_MOD_REL, "tree"))
     return copies
 
 
@@ -962,12 +997,13 @@ def _route_b_snapshot_plan(root: Path) -> dict[str, object]:
     }
 
 
-def _route_b_arguments(tokens: list[str]) -> list[str]:
+def _tokenless_arguments(tokens: list[str]) -> list[str]:
     """生成 token-less 参数序列：丢掉原启动档的 argv[0]。
 
     原 vmparams 的首 token 是给 ``starsector.exe`` 的 argv[0]，不是 JVM
     参数；直接喂给 ``java @argfile`` 会被当作主类。若输入本身已 token-less
     （首 token 以 ``-`` 开头或就是主类），原样保留，保证幂等。
+    路线 A/B 共用（两者都由显式 ``java.exe @argfile`` 启动）。
     """
     args = list(tokens)
     if args and not args[0].startswith("-") and args[0] != MAIN_CLASS:
@@ -1039,7 +1075,7 @@ def plan_route_b(
         raise ValueError(f"empty vmparams: {vmparams}")
 
     _reject_route_a_components(base, tokens)
-    args = _route_b_arguments(tokens)
+    args = _tokenless_arguments(tokens)
     new_line = " ".join(
         _route_b_tokens(args, prepatcher=prepatcher_dir is not None))
     route_b_vmparams = base / ROUTE_B_VMPARAMS_NAME
@@ -1426,6 +1462,578 @@ def apply_route_b(plan: dict[str, object]) -> dict[str, object]:
     }
 
 
+# ---- 路线 A（Task 4）：MixinFR 1.2.5 + JRE 17 + StarsectorParallel ----
+
+
+def _agent_basename(token: str) -> str:
+    name = token.split(":", 1)[1] if ":" in token else token
+    return name.replace("\\", "/").rsplit("/", 1)[-1].lower()
+
+
+def _reject_route_a_inputs(root: Path, tokens: list[str]) -> None:
+    """路线 A 隔离闸门：拒绝 FR 0.9.7 与 StarsectorPrepatcher。
+
+    MixinFR 自带 FR 0.9.5；再叠加 FR 0.9.7 的 agent/fr.jar 会双重注入。
+    Prepatcher 在 MixinLib 的 TargetClassLoader 下 20/34 目标被
+    ``SKIPPED_LOADER``，且 Java 27+ 还会 ``FatalCompatibilityException``。
+    """
+    if (root / "starsector-core" / "fr.jar").is_file():
+        raise ValueError("route A must not mix FR 0.9.7")
+    for token in tokens:
+        lowered = token.lower()
+        if lowered.startswith("-javaagent:"):
+            name = _agent_basename(token)
+            if name in {"fr.agent.jar", "fr.jar"}:
+                raise ValueError("route A must not mix FR 0.9.7")
+            if name == _PREPATCHER_AGENT_NAME or "prepatcher" in name:
+                raise ValueError(
+                    "route A must not install StarsectorPrepatcher")
+        for part in lowered.split(";"):
+            if part.replace("\\", "/").rsplit("/", 1)[-1] == "fr.jar":
+                raise ValueError("route A must not mix FR 0.9.7")
+    mods = root / "mods"
+    if mods.is_dir():
+        for entry in mods.iterdir():
+            if (entry.is_dir()
+                    and entry.name.lower() == "starsectorprepatcher"):
+                raise ValueError(
+                    "route A must not install StarsectorPrepatcher")
+
+
+def _route_a_tokens(tokens: list[str]) -> list[str]:
+    """清洗旧注入并生成路线 A 的 token-less 参数序列。
+
+    agent 顺序固定：``MixinLib-bridge.jar`` 先建立 Mixin 运行时，
+    ``hypernova.agent.jar`` 后注入；两者都在 classpath/主类之前。
+    """
+    out: list[str] = []
+    for token in tokens:
+        lowered = token.lower()
+        if lowered.startswith("-javaagent:"):
+            name = _agent_basename(token)
+            if (name in _HYPERNOVA_AGENT_NAMES
+                    or name == "mixinlib-bridge.jar"):
+                continue
+        if lowered.startswith("-dhypernova."):
+            continue
+        out.append(token)
+
+    if MAIN_CLASS not in out:
+        raise ValueError(f"vmparams has no main class: {MAIN_CLASS}")
+
+    insert_at = out.index(MAIN_CLASS)
+    for index, token in enumerate(out):
+        if token in ("-classpath", "-cp"):
+            insert_at = index
+            break
+
+    options = list(ROUTE_A_FLAGS) + [MIXIN_AGENT_TOKEN, HYPERNOVA_AGENT_TOKEN]
+    return out[:insert_at] + options + out[insert_at:]
+
+
+def _route_a_copies(
+    root: Path,
+    mixinfr_dir: str | Path,
+    parallel_dir: str | Path,
+    hypernova_mod: str | Path,
+) -> list[dict[str, object]]:
+    """列出路线 A 的复制清单（只描述意图，不写盘）。"""
+    copies = [
+        _copy_entry(Path(mixinfr_dir),
+                    root / "mods" / MIXINFR_MOD_FOLDER, "tree"),
+        _copy_entry(Path(parallel_dir),
+                    root / "mods" / PARALLEL_MOD_FOLDER, "tree"),
+    ]
+    copies.extend(_hypernova_copies(root, hypernova_mod))
+    return copies
+
+
+def _route_a_launcher_path(root: str | Path) -> Path:
+    return _audit_root(root) / "scripts" / ROUTE_A_LAUNCHER_NAME
+
+
+def _route_a_launcher_text(root: str | Path) -> str:
+    scripts = _route_a_launcher_path(root).parent
+    core = Path(root).resolve() / "starsector-core"
+    core_rel = os.path.relpath(core, scripts.resolve()).replace("/", "\\")
+    lines = [
+        "@echo off",
+        "setlocal",
+        "rem M7 Route A: explicit JRE 17 launcher.",
+        "rem starsector.exe always starts ..\\jre\\bin\\java.exe (JRE 17);",
+        "rem this script carries the route A javaagents instead of vmparams.",
+        f'cd /d "%~dp0{core_rel}"',
+        f'"{JRE_JAVA_TOKEN}" @..\\{ROUTE_A_VMPARAMS_NAME}',
+    ]
+    return "\r\n".join(lines) + "\r\n"
+
+
+def _route_a_managed_mods(
+    root: Path,
+    mixinfr_dir: str | Path,
+    parallel_dir: str | Path,
+    hypernova_mod: str | Path,
+) -> list[dict[str, object]]:
+    """按启用顺序（Hypernova → MixinLib → starsectorparallel）校验 mod id。"""
+    specs = [
+        (HYPERNOVA_MOD_ID, Path(hypernova_mod), root / HYPERNOVA_MOD_REL),
+        (MIXINFR_MOD_ID, Path(mixinfr_dir),
+         root / "mods" / MIXINFR_MOD_FOLDER),
+        (PARALLEL_MOD_ID, Path(parallel_dir),
+         root / "mods" / PARALLEL_MOD_FOLDER),
+    ]
+    managed: list[dict[str, object]] = []
+    for mod_id, src, dst in specs:
+        info = src / "mod_info.json"
+        entry: dict[str, object] = {
+            "id": mod_id,
+            "src": str(src),
+            "dst": str(dst),
+            "mod_info": str(info),
+            "verified": False,
+            "source_id": None,
+            "error": None,
+        }
+        try:
+            actual = _read_mod_id(info)
+        except Exception as exc:  # noqa: BLE001 - dry-run 只告警
+            entry["error"] = str(exc)
+        else:
+            entry["source_id"] = actual
+            if actual == mod_id:
+                entry["verified"] = True
+            else:
+                entry["error"] = (
+                    f"mod_info id mismatch: {actual!r}, expected {mod_id!r}")
+        managed.append(entry)
+    return managed
+
+
+def _route_a_enabled_spec(
+    root: Path, managed: list[dict[str, object]]
+) -> dict[str, object]:
+    path = root / ENABLED_MODS_PATH
+    state = _enabled_mods_state(path)
+    current = state["ids"] if state["state"] == "ok" else []
+    assert isinstance(current, list)
+    verified = [str(item["id"]) for item in managed if item.get("verified")]
+    managed_lower = {str(item["id"]).lower() for item in managed}
+    lower = {str(item).lower() for item in current}
+    return {
+        "path": str(path),
+        "present": path.is_file(),
+        "state": state["state"],
+        "error": state["error"],
+        "current_count": len(current),
+        "add": [mod_id for mod_id in verified
+                if mod_id.lower() not in lower],
+        # 最终顺序：保留既有 mod 的相对顺序，再把路线 A 三个 id 依
+        # Hypernova → MixinLib → starsectorparallel 追加到末尾。
+        "order": [str(item) for item in current
+                  if str(item).lower() not in managed_lower] + verified,
+    }
+
+
+def _route_a_snapshot_plan(root: Path) -> dict[str, object]:
+    resolved = root.resolve()
+    label = "m7-route-a-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    return {
+        "game_root": str(resolved),
+        "dest": str(_default_backups(resolved)),
+        "label": label,
+        "route": "a",
+        "m6_files": list(m6_env_snapshot.SNAPSHOT_FILES),
+        "rollback_manifest": ROUTE_ROLLBACK_MANIFEST,
+        "route_files": list(ROUTE_SNAPSHOT_PATHS),
+    }
+
+
+def plan_route_a(
+    root: str | Path,
+    *,
+    mixinfr_dir: str | Path,
+    parallel_dir: str | Path,
+    hypernova_mod: str | Path,
+) -> dict[str, object]:
+    """规划路线 A（MixinFR 1.2.5 + JRE 17 + StarsectorParallel + Hypernova）。
+
+    只读：返回 token-less argfile 行、显式 JRE 17 启动器与复制清单。写盘
+    必须显式调用 ``apply_route_a`` 并先经过 M6/M7 快照。根 ``vmparams``
+    不改写；``starsector-core/fr.jar`` 或 vmparams 里的 FR token 直接拒绝。
+    """
+    base = Path(root)
+    if not base.is_dir():
+        raise FileNotFoundError(f"install root not found: {base}")
+    vmparams = base / VMPARAMS_PATH
+    if not vmparams.is_file():
+        raise FileNotFoundError(f"vmparams not found: {vmparams}")
+    original = vmparams.read_text(encoding="utf-8-sig", errors="replace")
+    tokens = original.split()
+    if not tokens:
+        raise ValueError(f"empty vmparams: {vmparams}")
+
+    _reject_route_a_inputs(base, tokens)
+    args = _tokenless_arguments(tokens)
+    new_line = " ".join(_route_a_tokens(args))
+
+    route_a_vmparams = base / ROUTE_A_VMPARAMS_NAME
+    launcher_path = _route_a_launcher_path(base)
+    launcher_text = _route_a_launcher_text(base)
+    copies = _route_a_copies(base, mixinfr_dir, parallel_dir, hypernova_mod)
+    managed = _route_a_managed_mods(
+        base, mixinfr_dir, parallel_dir, hypernova_mod)
+
+    jre_version = _jre_version(base)
+    java_exe = base / JRE_DIR_NAME / "bin" / "java.exe"
+    agent_source = _hypernova_agent_source(hypernova_mod)
+    hypernova_json = (Path(hypernova_mod) / "data" / "config" /
+                      "hypernova" / "hypernova.json")
+    mixin_agent = Path(mixinfr_dir) / "jars" / "MixinLib-bridge.jar"
+    mixin_fr = Path(mixinfr_dir) / "jars" / "fr.jar"
+    vram_present = (base / "mods" / "VramOptimizer").is_dir()
+    enabled_mods = _route_a_enabled_spec(base, managed)
+
+    warnings: list[str] = []
+    for item in copies:
+        if not item["exists"]:
+            warnings.append(f"missing source: {item['src']}")
+    if not agent_source.is_file():
+        warnings.append(f"missing agent jar: {agent_source}")
+    if not hypernova_json.is_file():
+        warnings.append(f"missing hypernova.json: {hypernova_json}")
+    if not mixin_agent.is_file():
+        warnings.append(f"missing MixinLib bridge agent: {mixin_agent}")
+    if not mixin_fr.is_file():
+        warnings.append(f"missing bundled MixinFR fr.jar: {mixin_fr}")
+    if not java_exe.is_file():
+        warnings.append(f"jre java.exe not found: {java_exe}")
+    if jre_version is None:
+        warnings.append(
+            f"cannot read bundled JRE version from "
+            f"{base / JRE_RELEASE_PATH}")
+    elif not str(jre_version).startswith("17"):
+        warnings.append(
+            f"bundled JRE is {jre_version}, route A expects 17.x")
+    for item in managed:
+        if not item.get("verified"):
+            warnings.append(
+                f"cannot verify mod id {item['id']} from "
+                f"{item['mod_info']}: {item['error']}")
+    if enabled_mods["state"] == "missing":
+        warnings.append(
+            "enabled_mods.json missing; run the 256-mod migration (Task 2) "
+            "before applying route A")
+    elif enabled_mods["state"] == "error":
+        warnings.append(
+            "enabled_mods.json is unreadable/invalid; apply will refuse to "
+            f"write it: {enabled_mods['error']}")
+    if not vram_present:
+        warnings.append(
+            "VramOptimizer not present in target mods; apply the 256-mod "
+            "migration (Task 2) before route A")
+    warnings.append(
+        "StarsectorPrepatcher is excluded from route A: under MixinLib's "
+        "TargetClassLoader 20/34 targets are SKIPPED_LOADER and Java 27+ "
+        "adds FatalCompatibilityException")
+    warnings.append(
+        "starsector.exe hardcodes ..\\jre\\bin\\java.exe (JRE 17); use the "
+        "generated launch-route-a.bat for the explicit route A entry point")
+
+    rollback_paths = [
+        VMPARAMS_PATH,
+        ROUTE_A_VMPARAMS_NAME,
+        str(launcher_path),
+        ENABLED_MODS_PATH,
+        "starsector-core/data/config/settings.json",
+        str(base / HYPERNOVA_MOD_REL),
+        str(base / HYPERNOVA_MOD_REL / "data/config/hypernova/hypernova.json"),
+        str(base / "mods" / MIXINFR_MOD_FOLDER),
+        str(base / "mods" / PARALLEL_MOD_FOLDER),
+    ]
+    rollback_paths.extend(str(item["dst"]) for item in copies)
+
+    writes = [
+        {"path": str(route_a_vmparams), "kind": "file",
+         "content": new_line + "\n"},
+        {"path": str(launcher_path), "kind": "file",
+         "content": launcher_text},
+    ]
+
+    return {
+        "route": "a",
+        "name": ROUTES["a"]["name"],
+        "root": str(base),
+        "apply": False,
+        "java": JRE_JAVA_TOKEN,
+        "java_target": str(java_exe),
+        "jre_version": jre_version,
+        "intended_java": {
+            "release": str(base / JRE_RELEASE_PATH),
+            "java_exe": str(java_exe),
+            "java_exe_present": java_exe.is_file(),
+            "java_version": jre_version,
+            "launcher_java": JRE_JAVA_TOKEN,
+            "target": str(java_exe),
+        },
+        "effective_java": {
+            "verified": False,
+            "java_version": None,
+            "evidence": None,
+            "note": "runtime JVM version is not proven; collect java -version "
+                    "or -Xlog evidence in smoke before claiming JRE 17",
+        },
+        "launcher": {
+            "kind": "explicit-java",
+            "java": JRE_JAVA_TOKEN,
+            "java_target": str(java_exe),
+            "bat": str(launcher_path),
+            "bat_content": launcher_text,
+            "cwd": str(base / "starsector-core"),
+            "argfile": f"..\\{ROUTE_A_VMPARAMS_NAME}",
+            "argfile_path": str(route_a_vmparams),
+            "command": f"{JRE_JAVA_TOKEN} @..\\{ROUTE_A_VMPARAMS_NAME}",
+            "note": "starsector.exe hardcodes ..\\jre\\bin\\java.exe "
+                    "(JRE 17); this explicit launcher is the route A entry "
+                    "point",
+        },
+        "starsector_exe": {
+            "java": "..\\jre\\bin\\java.exe",
+            "jre_version": jre_version,
+            "route_a": False,
+            "note": "hardcoded lpApplicationName; fallback/control only",
+        },
+        "root_vmparams_path": str(vmparams),
+        "root_vmparams_modified": False,
+        "source_vmparams_sha256": _sha256_file(vmparams),
+        "hypernova_config": str(hypernova_json),
+        "vmparams_path": str(route_a_vmparams),
+        "vmparams": new_line,
+        "vmparams_tokenless": True,
+        "agents": [MIXIN_AGENT_TOKEN, HYPERNOVA_AGENT_TOKEN],
+        "flags": list(ROUTE_A_FLAGS),
+        "writes": writes,
+        "copies": copies,
+        "copy_count": len(copies),
+        "missing_sources": [str(item["src"]) for item in copies
+                            if not item["exists"]],
+        "agent_jar": str(agent_source),
+        "mixinfr": {
+            "id": MIXINFR_MOD_ID,
+            "source": str(mixinfr_dir),
+            "dst": str(base / "mods" / MIXINFR_MOD_FOLDER),
+            "agent": MIXIN_AGENT_TOKEN,
+            "agent_source": str(mixin_agent),
+            "agent_present": mixin_agent.is_file(),
+            "bundled_fr": str(mixin_fr),
+            "bundled_fr_present": mixin_fr.is_file(),
+            "bundled_fr_version": "0.9.5",
+            "note": "MixinFR bundles FR 0.9.5; never add FR 0.9.7 on route A",
+        },
+        "parallel": {
+            "id": PARALLEL_MOD_ID,
+            "source": str(parallel_dir),
+            "dst": str(base / "mods" / PARALLEL_MOD_FOLDER),
+            "requires": MIXINFR_MOD_ID,
+        },
+        "enabled_mods": enabled_mods,
+        "managed_mods": managed,
+        "mod_ids": {
+            str(item["id"]): str(item["mod_info"]) for item in managed
+        },
+        "vram_optimizer": {
+            "present": vram_present,
+            "source": "256-mod migration (Task 2)",
+        },
+        "prepatcher": {
+            "installed": False,
+            "excluded": True,
+            "reason": "StarsectorPrepatcher 0.18.4 is SKIPPED_LOADER 20/34 "
+                      "under MixinLib TargetClassLoader and fatal on Java 27+; "
+                      "route A never installs it",
+        },
+        "snapshot": _route_a_snapshot_plan(base),
+        "rollback_paths": rollback_paths,
+        "warnings": warnings,
+    }
+
+
+def _apply_route_a_enabled_mods(
+    root: Path,
+    spec: dict[str, object],
+    managed: list[dict[str, object]],
+) -> dict[str, object]:
+    """按 Hypernova → MixinLib → starsectorparallel 合并启用列表。
+
+    写入前逐一校验目标 ``mod_info.json``，避免写悬空 id。
+    """
+    path_text = spec.get("path")
+    path = Path(str(path_text)) if path_text else root / ENABLED_MODS_PATH
+    state = _enabled_mods_state(path)
+    if state["state"] == "error":
+        raise ValueError(
+            "refusing to overwrite invalid enabled_mods.json: "
+            f"{state['error']}")
+    verified = [item for item in managed if item.get("verified")]
+    if len(verified) != len(managed):
+        missing = [str(item["id"]) for item in managed
+                   if not item.get("verified")]
+        raise ValueError(
+            "refusing to enable route A ids without verified mods: "
+            + ", ".join(missing))
+    for item in verified:
+        info = Path(str(item["dst"])) / "mod_info.json"
+        actual = _read_mod_id(info)
+        if actual != item["id"]:
+            raise ValueError(
+                f"mod_info id mismatch after copy: {info} is {actual!r}, "
+                f"expected {item['id']!r}")
+
+    ids = list(state["ids"]) if isinstance(state["ids"], list) else []
+    payload = state.get("payload")
+    base_payload = dict(payload) if isinstance(payload, dict) else {}
+    managed_lower = {str(item["id"]).lower() for item in verified}
+    previous_lower = {item.lower() for item in ids}
+    ordered = [str(item) for item in ids
+               if item.lower() not in managed_lower]
+    ordered.extend(str(item["id"]) for item in verified)
+    added = [mod_id for mod_id in ordered
+             if mod_id.lower() not in previous_lower]
+    base_payload["enabledMods"] = ordered
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(
+        json.dumps(base_payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(tmp, path)
+    return {"path": str(path), "added": added, "order": ordered,
+            "count": len(ordered)}
+
+
+def apply_route_a(plan: dict[str, object]) -> dict[str, object]:
+    """执行路线 A 计划。默认 dry-run；只有 ``plan["apply"]`` 为真才写盘。
+
+    写盘顺序：校验源与 enabled_mods → M6 快照（全局约束）+ M7 回滚快照
+    → token-less argfile + 显式 JRE 17 启动器 → 复制 MixinFR/Parallel/
+    Hypernova → 合并 enabled_mods → manifest。根 ``vmparams`` 不改写，
+    也不调用 ``install_agent``（agent 已在本路线的 argfile 里）。
+    """
+    if not plan.get("apply"):
+        return {"applied": False, "root": plan.get("root")}
+
+    root = Path(str(plan["root"]))
+    raw_copies = plan.get("copies")
+    copies = raw_copies if isinstance(raw_copies, list) else []
+    missing = [str(Path(str(item["src"])).resolve()) for item in copies
+               if not Path(str(item["src"])).exists()]
+    agent_jar = Path(str(plan.get("agent_jar") or "")).resolve()
+    if not agent_jar.is_file() and str(agent_jar) not in missing:
+        missing.append(str(agent_jar))
+    java_exe = Path(str(plan.get("java_target") or
+                        root / JRE_DIR_NAME / "bin" / "java.exe"))
+    if not java_exe.is_file() and str(java_exe) not in missing:
+        missing.append(str(java_exe))
+    hypernova_config = Path(str(plan.get("hypernova_config") or ""))
+    if not hypernova_config.is_file() and str(hypernova_config) not in missing:
+        missing.append(str(hypernova_config))
+    if missing:
+        raise FileNotFoundError(
+            "missing route-a sources: " + ", ".join(missing))
+
+    expected_vm_sha = plan.get("source_vmparams_sha256")
+    if expected_vm_sha:
+        source_vmparams = root / VMPARAMS_PATH
+        if (not source_vmparams.is_file()
+                or _sha256_file(source_vmparams) != str(expected_vm_sha)):
+            raise ValueError(
+                "source vmparams changed after planning; replan route-a")
+
+    raw_enabled = plan.get("enabled_mods")
+    enabled_spec = raw_enabled if isinstance(raw_enabled, dict) else {}
+    enabled_path = Path(str(enabled_spec.get("path") or
+                            root / ENABLED_MODS_PATH))
+    _snapshot_paths(root, [enabled_path])
+    state = _enabled_mods_state(enabled_path)
+    if state["state"] == "error":
+        raise ValueError(
+            "refusing to apply with invalid enabled_mods.json: "
+            f"{state['error']}")
+
+    raw_managed = plan.get("managed_mods")
+    managed = ([item for item in raw_managed if isinstance(item, dict)]
+               if isinstance(raw_managed, list) else [])
+    if not managed:
+        raise ValueError("route-a plan has no managed mods")
+
+    raw_writes = plan.get("writes")
+    writes = raw_writes if isinstance(raw_writes, list) else []
+    if not writes:
+        raise ValueError("route-a plan has no generated files")
+    raw_rollback = plan.get("rollback_paths")
+    rollback_paths = (raw_rollback if isinstance(raw_rollback, list)
+                      else list(ROUTE_SNAPSHOT_PATHS))
+
+    raw_snapshot = plan.get("snapshot")
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    dest = snapshot.get("dest")
+    label = snapshot.get("label")
+    if not dest or not label:
+        raise ValueError("route-a plan has no snapshot dest/label")
+    dest_path = Path(str(dest))
+    snapshot_meta = m6_env_snapshot.snapshot(root, str(dest_path), str(label))
+    snapshot_dir = dest_path.resolve() / str(label)
+    rollback_meta = snapshot_route(
+        root, str(label), paths=rollback_paths, dest=dest_path, route="a")
+
+    generated: list[str] = []
+    for item in writes:
+        if not isinstance(item, dict) or not item.get("path"):
+            raise ValueError("invalid route-a generated file entry")
+        target = Path(str(item["path"]))
+        _snapshot_paths(root, [target])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(str(item.get("content", "")))
+        generated.append(str(target))
+
+    copied: list[str] = []
+    for item in copies:
+        src = Path(str(item["src"])).resolve()
+        dst = Path(str(item["dst"]))
+        _snapshot_paths(root, [dst])
+        if item.get("kind") == "tree":
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        copied.append(str(dst))
+
+    enabled = _apply_route_a_enabled_mods(root, enabled_spec, managed)
+    manifest = _apply_install_manifest(root)
+    ok = bool(manifest.get("ok"))
+    return {
+        "applied": True,
+        "ok": ok,
+        "root": str(root),
+        "snapshot": snapshot_meta,
+        "rollback": {
+            "dest": str(snapshot_dir.parent),
+            "label": str(label),
+            "manifest": str(snapshot_dir / ROUTE_ROLLBACK_MANIFEST),
+            "entries": len(rollback_meta.get("entries", [])),
+        },
+        "generated": generated,
+        "vmparams": plan["vmparams"],
+        "root_vmparams_modified": False,
+        "copied": copied,
+        "enabled_mods": enabled,
+        "manifest": manifest,
+        "launcher": plan.get("launcher"),
+        "java": plan.get("java"),
+        "jre_version": plan.get("jre_version"),
+    }
+
+
 def _format_text(data: dict[str, object]) -> str:
     loc = data["localization"]
     vmp = data["vmparams"]
@@ -1559,6 +2167,58 @@ def _format_route_b_text(data: dict[str, object]) -> str:
     ])
 
 
+def _format_route_a_text(data: dict[str, object]) -> str:
+    def flag(value: object) -> str:
+        return "true" if value else "false"
+
+    def joined(value: object) -> str:
+        items = value if isinstance(value, list) else []
+        return ",".join(str(item) for item in items) or "-"
+
+    if "applied" in data:
+        raw_rollback = data.get("rollback")
+        rollback = raw_rollback if isinstance(raw_rollback, dict) else {}
+        generated = data.get("generated")
+        copied = data.get("copied")
+        return "\n".join([
+            f"applied={flag(data.get('applied'))}",
+            f"ok={flag(data.get('ok'))}",
+            f"root={data.get('root')}",
+            f"rollback.label={rollback.get('label')}",
+            f"rollback.manifest={rollback.get('manifest')}",
+            f"generated={len(generated) if isinstance(generated, list) else 0}",
+            f"copied={len(copied) if isinstance(copied, list) else 0}",
+            f"root_vmparams_modified="
+            f"{flag(data.get('root_vmparams_modified'))}",
+        ])
+
+    raw_launcher = data.get("launcher")
+    launcher = raw_launcher if isinstance(raw_launcher, dict) else {}
+    raw_enabled = data.get("enabled_mods")
+    enabled = raw_enabled if isinstance(raw_enabled, dict) else {}
+    raw_warnings = data.get("warnings")
+    raw_copies = data.get("copies")
+    raw_agents = data.get("agents")
+    return "\n".join([
+        f"route={data.get('route')}",
+        f"root={data.get('root')}",
+        f"java={data.get('java')}",
+        f"jre_version={data.get('jre_version')}",
+        f"launcher.java={launcher.get('java')}",
+        f"launcher.bat={launcher.get('bat')}",
+        f"launcher.argfile={launcher.get('argfile')}",
+        f"vmparams={data.get('vmparams_path')}",
+        f"agents={joined(raw_agents)}",
+        f"root_vmparams_modified="
+        f"{flag(data.get('root_vmparams_modified'))}",
+        f"copies={len(raw_copies) if isinstance(raw_copies, list) else 0}",
+        f"enabled_mods.state={enabled.get('state')}",
+        f"enabled_mods.add={joined(enabled.get('add'))}",
+        f"enabled_mods.order={joined(enabled.get('order'))}",
+        f"warnings={len(raw_warnings) if isinstance(raw_warnings, list) else 0}",
+    ])
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1572,6 +2232,22 @@ def _build_parser() -> argparse.ArgumentParser:
     migrate.add_argument("--link", action="store_true", help="用目录联接代替复制")
     migrate.add_argument("--apply", action="store_true", help="真正写盘（默认只规划）")
     migrate.add_argument("--text", action="store_true", help="以 key=value 输出摘要")
+    route_a = sub.add_parser(
+        "route-a",
+        help="规划/执行路线 A（MixinFR + JRE 17 + Parallel，默认 dry-run）")
+    route_a.add_argument("--root", required=True, type=Path)
+    route_a.add_argument("--mixinfr", required=True, type=Path)
+    route_a.add_argument("--parallel", required=True, type=Path)
+    route_a.add_argument("--hypernova-mod", type=Path,
+                         default=DEFAULT_HYPERNOVA_MOD)
+    route_a.add_argument("--backups", type=Path,
+                         help="快照根目录（默认为 <audit>/backups）")
+    route_a.add_argument("--text", action="store_true",
+                         help="以 key=value 输出摘要")
+    route_a.add_argument("--json-out", "--out", dest="json_out", type=Path,
+                         help="把 JSON 结果写入该文件（evidence）")
+    route_a.add_argument("--apply", action="store_true",
+                         help="真正写盘（默认只规划）")
     route_b = sub.add_parser(
         "route-b", help="规划/执行路线 B（FR 0.9.7rc2 + Java 28，默认 dry-run）")
     route_b.add_argument("--root", required=True, type=Path)
@@ -1605,6 +2281,43 @@ def main(argv: list[str] | None = None) -> int:
                 print(_format_migrate_text(data))
             else:
                 print(json.dumps(data, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "route-a":
+            plan = plan_route_a(
+                args.root,
+                mixinfr_dir=args.mixinfr,
+                parallel_dir=args.parallel,
+                hypernova_mod=args.hypernova_mod,
+            )
+            if args.backups is not None:
+                plan["snapshot"]["dest"] = str(args.backups)  # type: ignore[index]
+            if args.apply:
+                plan["apply"] = True
+                data = apply_route_a(plan)
+            else:
+                data = plan
+            if args.json_out is not None:
+                args.json_out.parent.mkdir(parents=True, exist_ok=True)
+                args.json_out.write_text(
+                    json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+            if args.text:
+                print(_format_route_a_text(data))
+            else:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+            if args.apply and not data.get("ok"):
+                manifest = data.get("manifest")
+                manifest = manifest if isinstance(manifest, dict) else {}
+                rollback = data.get("rollback")
+                rollback = rollback if isinstance(rollback, dict) else {}
+                print(
+                    "FATAL: route-a apply failed "
+                    f"(manifest={manifest.get('critical') or manifest.get('error')}, "
+                    f"rollback_label={rollback.get('label')})",
+                    file=sys.stderr,
+                )
+                return 1
             return 0
         if args.command == "route-b":
             plan = plan_route_b(

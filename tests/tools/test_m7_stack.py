@@ -8,10 +8,12 @@ import pytest
 
 from m7_stack import (
     apply_migrate,
+    apply_route_a,
     apply_route_b,
     inspect_root,
     main,
     plan_migrate,
+    plan_route_a,
     plan_route_b,
     rollback_route,
     snapshot_route,
@@ -551,3 +553,208 @@ def test_cli_route_b_text_and_json_out(tmp_path, capsys):
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["vmparams_tokenless"] is True
     assert data["root_vmparams_modified"] is False
+
+
+# ---- 路线 A（Task 4）：MixinFR 1.2.5 + JRE 17 + StarsectorParallel ----
+
+
+def test_plan_route_a_has_two_agents_and_jre17(tmp_path):
+    root = tmp_path / "install"
+    _write(root / "vmparams", "java.exe com.fs.starfarer.StarfarerLauncher\n")
+    plan = plan_route_a(root, mixinfr_dir=tmp_path / "mixin",
+                        parallel_dir=tmp_path / "par",
+                        hypernova_mod=tmp_path / "hn")
+    line = plan["vmparams"]
+    agents = [tok for tok in line.split() if tok.startswith("-javaagent:")]
+    assert len(agents) == 2
+    assert any("MixinLib-bridge.jar" in a for a in agents)
+    # 实际工时 jar 名为 hypernova.agent.jar（点号）；brief 里的
+    # "hypernova-agent.jar" 是笔误，按真实工件修正。
+    assert any("hypernova.agent.jar" in a for a in agents)
+    assert "jdk-28" not in plan["java"]
+
+
+def test_plan_route_a_rejects_mixing_fr097(tmp_path):
+    root = tmp_path / "install"
+    _write(root / "vmparams", "java.exe com.fs.starfarer.StarfarerLauncher\n")
+    (root / "starsector-core").mkdir(parents=True)
+    (root / "starsector-core/fr.jar").write_bytes(b"x")
+    with pytest.raises(ValueError):
+        plan_route_a(root, mixinfr_dir=tmp_path / "mixin",
+                     parallel_dir=tmp_path / "par",
+                     hypernova_mod=tmp_path / "hn")
+
+
+@pytest.mark.parametrize("vmparams", [
+    "java.exe -javaagent:fr.agent.jar "
+    "com.fs.starfarer.StarfarerLauncher\n",
+    "java.exe -classpath fr.jar;janino.jar "
+    "com.fs.starfarer.StarfarerLauncher\n",
+])
+def test_plan_route_a_rejects_vmparams_fr097_tokens(tmp_path, vmparams):
+    root = tmp_path / "install"
+    _write(root / "vmparams", vmparams)
+    with pytest.raises(ValueError, match="FR 0.9.7"):
+        plan_route_a(root, mixinfr_dir=tmp_path / "mixin",
+                     parallel_dir=tmp_path / "par",
+                     hypernova_mod=tmp_path / "hn")
+
+
+@pytest.mark.parametrize("vmparams", [
+    "java.exe com.fs.starfarer.StarfarerLauncher\n",
+    "java.exe -javaagent:..\\mods\\StarsectorPrepatcher\\agent\\"
+    "StarsectorPrepatcherAgent.jar com.fs.starfarer.StarfarerLauncher\n",
+])
+def test_plan_route_a_rejects_prepatcher(tmp_path, vmparams):
+    root = tmp_path / "install"
+    _write(root / "vmparams", vmparams)
+    if "-javaagent:" not in vmparams:
+        (root / "mods/StarsectorPrepatcher").mkdir(parents=True)
+    with pytest.raises(ValueError, match="Prepatcher"):
+        plan_route_a(root, mixinfr_dir=tmp_path / "mixin",
+                     parallel_dir=tmp_path / "par",
+                     hypernova_mod=tmp_path / "hn")
+
+
+def test_plan_route_a_tokenless_ordered_agents_and_jre_launcher(tmp_path):
+    root = tmp_path / "install"
+    _write(root / "vmparams",
+           "java.exe -Xmx2g -classpath janino.jar "
+           "com.fs.starfarer.StarfarerLauncher\n")
+    plan = plan_route_a(root, mixinfr_dir=tmp_path / "mixin",
+                        parallel_dir=tmp_path / "par",
+                        hypernova_mod=tmp_path / "hn")
+    line = plan["vmparams"]
+    first = line.split()[0]
+    assert "java.exe" not in first.lower()
+    assert line.index("MixinLib-bridge.jar") < line.index(
+        "hypernova.agent.jar")
+    assert line.index("hypernova.agent.jar") < line.index("-classpath")
+    assert plan["vmparams_tokenless"] is True
+    assert plan["root_vmparams_modified"] is False
+    assert plan["vmparams_path"].endswith("route-a.vmparams")
+    assert plan["root_vmparams_path"].endswith("vmparams")
+    assert plan["launcher"]["java"] == "..\\jre\\bin\\java.exe"
+    assert "@..\\route-a.vmparams" in plan["launcher"]["bat_content"]
+    assert plan["launcher"]["bat"].endswith("launch-route-a.bat")
+
+
+def _route_a_sources(tmp_path, *, enabled=("mod_a",)):
+    root = tmp_path / "install"
+    _write(root / "vmparams",
+           "java.exe -Xmx2g -classpath janino.jar "
+           "com.fs.starfarer.StarfarerLauncher\n")
+    _write(root / "starsector-core/data/config/settings.json", '{"x":1}\n')
+    _write(root / "jre/release", 'JAVA_VERSION="17.0.10"\n')
+    (root / "jre/bin").mkdir(parents=True, exist_ok=True)
+    (root / "jre/bin/java.exe").write_bytes(b"x")
+    if enabled is not None:
+        _write(root / "mods/enabled_mods.json",
+               json.dumps({"enabledMods": list(enabled)}))
+
+    mixin = tmp_path / "mixin"
+    _write(mixin / "mod_info.json", '{"id":"MixinLib"}')
+    (mixin / "jars").mkdir(parents=True, exist_ok=True)
+    (mixin / "jars/MixinLib-bridge.jar").write_bytes(b"agent")
+    (mixin / "jars/fr.jar").write_bytes(b"fr-0.9.5")
+
+    par = tmp_path / "par"
+    _write(par / "mod_info.json", '{"id":"starsectorparallel"}')
+    (par / "jars").mkdir(parents=True, exist_ok=True)
+    (par / "jars/starsectorparallel.jar").write_bytes(b"par")
+
+    hn = tmp_path / "hn"
+    _write(hn / "mod_info.json", '{"id":"hypernova_infinite_engine"}')
+    _write(hn / "data/config/hypernova/hypernova.json", '{"enabled":true}\n')
+    (hn / "graphics/hypernova").mkdir(parents=True, exist_ok=True)
+    (hn / "graphics/hypernova/blank.png").write_bytes(b"png")
+    (hn / "build/java").mkdir(parents=True, exist_ok=True)
+    (hn / "build/java/hypernova.jar").write_bytes(b"jar")
+    (hn / "build/agent").mkdir(parents=True, exist_ok=True)
+    (hn / "build/agent/hypernova.agent.jar").write_bytes(b"agent")
+    return root, mixin, par, hn
+
+
+def test_plan_route_a_enabled_mods_ordered_after_hypernova(tmp_path):
+    root, mixin, par, hn = _route_a_sources(tmp_path)
+    plan = plan_route_a(root, mixinfr_dir=mixin, parallel_dir=par,
+                        hypernova_mod=hn)
+    enabled = plan["enabled_mods"]
+    assert enabled["add"] == [
+        "hypernova_infinite_engine", "MixinLib", "starsectorparallel"]
+    assert enabled["order"] == [
+        "mod_a", "hypernova_infinite_engine", "MixinLib",
+        "starsectorparallel"]
+    assert plan["mixinfr"]["id"] == "MixinLib"
+    assert plan["parallel"]["id"] == "starsectorparallel"
+
+
+def test_plan_route_a_skips_unverified_mod_ids(tmp_path):
+    root = tmp_path / "install"
+    _write(root / "vmparams", "java.exe com.fs.starfarer.StarfarerLauncher\n")
+    _write(root / "mods/enabled_mods.json", '{"enabledMods":["mod_a"]}')
+    plan = plan_route_a(root, mixinfr_dir=tmp_path / "mixin",
+                        parallel_dir=tmp_path / "par",
+                        hypernova_mod=tmp_path / "hn")
+    assert plan["enabled_mods"]["add"] == []
+    assert plan["enabled_mods"]["order"] == ["mod_a"]
+
+
+def test_apply_route_a_dry_run_writes_nothing(tmp_path):
+    root, mixin, par, hn = _route_a_sources(tmp_path)
+    original = (root / "vmparams").read_text(encoding="utf-8")
+    plan = plan_route_a(root, mixinfr_dir=mixin, parallel_dir=par,
+                        hypernova_mod=hn)
+    result = apply_route_a(plan)
+    assert result["applied"] is False
+    assert not (root / "route-a.vmparams").exists()
+    assert not (tmp_path / "scripts/launch-route-a.bat").exists()
+    assert (root / "vmparams").read_text(encoding="utf-8") == original
+
+
+def test_apply_route_a_writes_and_rollback_removes_created(tmp_path):
+    root, mixin, par, hn = _route_a_sources(tmp_path)
+    original = (root / "vmparams").read_text(encoding="utf-8")
+    plan = plan_route_a(root, mixinfr_dir=mixin, parallel_dir=par,
+                        hypernova_mod=hn)
+    plan["apply"] = True
+    result = apply_route_a(plan)
+    assert result["applied"] is True
+    assert (root / "route-a.vmparams").is_file()
+    assert (tmp_path / "scripts/launch-route-a.bat").is_file()
+    assert (root / "mods/MixinFR/jars/MixinLib-bridge.jar").is_file()
+    assert (root / "mods/StarsectorParallel/mod_info.json").is_file()
+    assert (root / "vmparams").read_text(encoding="utf-8") == original
+    enabled = json.loads(
+        (root / "mods/enabled_mods.json").read_text(encoding="utf-8"))
+    assert enabled["enabledMods"] == [
+        "mod_a", "hypernova_infinite_engine", "MixinLib",
+        "starsectorparallel"]
+
+    rollback = result["rollback"]
+    assert Path(rollback["manifest"]).is_file()
+    rolled = rollback_route(
+        root, rollback["label"], dest=rollback["dest"], apply=True)
+    assert rolled["ok"] is True
+    assert not (root / "route-a.vmparams").exists()
+    assert not (tmp_path / "scripts/launch-route-a.bat").exists()
+    assert not (root / "mods/MixinFR").exists()
+    assert not (root / "mods/StarsectorParallel").exists()
+    assert not (root / "mods/hypernova_infinite_engine").exists()
+    assert (root / "vmparams").read_text(encoding="utf-8") == original
+    assert json.loads(
+        (root / "mods/enabled_mods.json").read_text(encoding="utf-8")
+    ) == {"enabledMods": ["mod_a"]}
+
+
+def test_cli_route_a_text_summary(tmp_path, capsys):
+    root, mixin, par, hn = _route_a_sources(tmp_path)
+    rc = main([
+        "route-a", "--root", str(root), "--mixinfr", str(mixin),
+        "--parallel", str(par), "--hypernova-mod", str(hn), "--text",
+    ])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "route=a" in captured.out
+    assert "launcher.java=..\\jre\\bin\\java.exe" in captured.out
+    assert "agents=" in captured.out
