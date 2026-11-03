@@ -282,3 +282,40 @@ def test_main_normalization_matches_gate():
         "hypernova agent premain\n" + summary + "\n",
         "Fast Rendering: v0.9.7rc2\n" + FRAME + "\n")
     assert report["health"]["lazy_main_bound"] is False
+
+
+AGENT_FRAME = ("2026-11-03T00:00:00Z INFO frame probe: enabled\n"
+               "2026-11-03T00:00:01Z INFO frame probe: samples started from BaseGameState\n"
+               + FRAME + "\n")
+
+
+def test_agent_frame_probe_is_used_when_game_has_none(tmp_path):
+    agent, log = _write_session(
+        tmp_path, "Fast Rendering: v0.9.7rc2\nno frame here\n")
+    agent.write_text("hypernova agent premain\n" + AGENT_FRAME, encoding="utf-8")
+    report = report_mod.build_report(
+        agent.read_text(encoding="utf-8"), log.read_text(encoding="utf-8"))
+    assert report["frame_probe"]["present"] is True
+    assert report["frame_probe"]["source"] == "agent"
+    assert report["frame_probe"]["frames"] == 600
+
+
+def test_agent_frame_probe_is_preferred_when_both_exist(tmp_path):
+    agent, log = _write_session(
+        tmp_path, "Fast Rendering: v0.9.7rc2\n" + FRAME.replace("frames=600", "frames=700") + "\n")
+    agent.write_text("hypernova agent premain\n" + AGENT_FRAME, encoding="utf-8")
+    report = report_mod.build_report(
+        agent.read_text(encoding="utf-8"), log.read_text(encoding="utf-8"))
+    assert report["frame_probe"]["source"] == "agent"
+    assert report["frame_probe"]["frames"] == 600
+
+
+def test_require_frame_accepts_agent_source(tmp_path):
+    agent, log = _write_session(
+        tmp_path, "Fast Rendering: v0.9.7rc2\nno frame here\n")
+    # main() fail-closed also requires a valid lazy summary (286186c).
+    agent.write_text("hypernova agent premain\n" + AGENT_FRAME + SUMMARY + "\n",
+                     encoding="utf-8")
+    out = tmp_path / "report.json"
+    assert report_mod.main(["--agent-log", str(agent), "--starsector-log", str(log),
+                            "--out", str(out), "--require-frame"]) == 0

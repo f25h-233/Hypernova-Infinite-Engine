@@ -58,10 +58,11 @@ def _lazy_value_ok(key: str, value) -> bool:
     return _is_int(value)
 
 
-def find_frame_probe(text: str, offset: int = 0) -> dict:
+def find_frame_probe(text: str, line_base: int = 0) -> dict:
     """返回给定会话切片里最后一条 HYPERNOVA_FRAME 行。
 
-    `line` 是切片内行号；提供会话起点 offset 时，`file_line` 换算成绝对行号。
+    `line` 是切片内行号；`line_base` 是切片第一行的 0-based 行号，
+    `file_line = line + line_base` 换算成原文件的绝对行号。
     """
     found: dict[str, int | str] | None = None
     found_line = None
@@ -84,12 +85,25 @@ def find_frame_probe(text: str, offset: int = 0) -> dict:
     frames = found.get("frames")
     if _is_int(frames) and frames <= 0 and "frames" not in invalid:
         invalid.append("frames")
-    if offset > 0:
-        file_line = offset + found_line - 1
-    else:
-        file_line = found_line
+    file_line = found_line + line_base
     return {"present": True, "line": found_line, "file_line": file_line,
             "missing_keys": missing, "invalid_keys": invalid, **found}
+
+
+def agent_session_text(text: str) -> tuple[str, int | None, int]:
+    """返回最后一个 agent 会话切片及其行基。
+
+    切片从最后一个 `hypernova agent premain` 之后开始；第二个返回值是
+    切片第一行的 0-based 行号（可直接作为 `find_frame_probe` 的
+    `line_base`），无 anchor 时为 None。
+    """
+    lines = text.splitlines(keepends=True)
+    anchors = [i for i, line in enumerate(lines)
+               if AGENT_SESSION_ANCHOR in line]
+    if not anchors:
+        return text, None, 0
+    index = anchors[-1]
+    return "".join(lines[index + 1:]), index + 1, len(anchors)
 
 
 def find_lazy_summary(text: str) -> dict:
@@ -137,8 +151,21 @@ def build_report(agent_text: str, starsector_text: str,
     session, anchor_found, anchor_line, anchor_count = gate.last_session(
         starsector_text)
     errors = gate.count_texture_errors(session)
-    frame = find_frame_probe(
-        session, offset=anchor_line if anchor_found else 0)
+    game_frame = find_frame_probe(
+        session, line_base=(anchor_line - 1) if anchor_found else 0)
+    agent_session, agent_anchor_line, agent_anchor_count = agent_session_text(
+        agent_text)
+    agent_frame = find_frame_probe(
+        agent_session, line_base=agent_anchor_line or 0)
+    if agent_anchor_count and agent_frame["present"]:
+        frame = agent_frame
+        frame["source"] = "agent"
+    elif game_frame["present"]:
+        frame = game_frame
+        frame["source"] = "game"
+    else:
+        frame = game_frame
+        frame["source"] = "none"
     lazy = find_lazy_summary(agent_text)
     summary = lazy.get("summary", {})
     health = {
@@ -177,8 +204,9 @@ def human_text(report: dict) -> str:
     lazy = report["lazy"]
     lines = []
     if frame["present"]:
-        lines.append("frame: frames={} over200={} max={}ms p99={}ms "
-                     "last={}ms longGaps={}".format(
+        lines.append("frame: source={} frames={} over200={} max={}ms "
+                     "p99={}ms last={}ms longGaps={}".format(
+                         frame.get("source", "none"),
                          frame.get("frames", "?"), frame.get("over200", "?"),
                          frame.get("maxMs", "?"), frame.get("p99Ms", "?"),
                          frame.get("lastMs", "?"), frame.get("longGaps", "?")))
