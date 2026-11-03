@@ -25,15 +25,30 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _validate_label(label: str) -> str:
+    """Reject labels that are not a single, relative path component."""
+    if not isinstance(label, str) or not label or label in {".", ".."}:
+        raise ValueError(f"invalid snapshot label: {label!r}")
+    if "/" in label or "\\" in label:
+        raise ValueError(f"invalid snapshot label: {label!r}")
+    candidate = Path(label)
+    if candidate.is_absolute() or candidate.drive or candidate.name != label:
+        raise ValueError(f"invalid snapshot label: {label!r}")
+    return label
+
+
 def snapshot(game_root: str | Path, dest: str | Path, label: str) -> dict:
     root = Path(game_root).resolve()
+    label = _validate_label(label)
     snap = Path(dest).resolve() / label
     if snap.exists():
         raise FileExistsError(f"snapshot already exists: {snap}")
     files = []
+    missing = []
     for rel in SNAPSHOT_FILES:
         src = root / rel
         if not src.is_file():
+            missing.append(rel)
             continue
         copy = snap / "files" / rel
         copy.parent.mkdir(parents=True, exist_ok=True)
@@ -48,6 +63,7 @@ def snapshot(game_root: str | Path, dest: str | Path, label: str) -> dict:
         "created": datetime.now().astimezone().isoformat(timespec="seconds"),
         "game_root": str(root),
         "files": files,
+        "missing": missing,
     }
     snap.mkdir(parents=True, exist_ok=True)
     (snap / "manifest.json").write_text(
@@ -62,15 +78,26 @@ def restore(snapshot_dir: str | Path, *, force: bool = False) -> dict:
     if not manifest_path.is_file():
         raise FileNotFoundError(f"missing manifest: {manifest_path}")
     meta = json.loads(manifest_path.read_text(encoding="utf-8"))
-    root = Path(meta["game_root"])
+    root = Path(meta["game_root"]).resolve()
+    files_root = (snap / "files").resolve()
     conflicts = []
     for item in meta["files"]:
-        target = root / item["path"]
-        source = snap / "files" / item["path"]
+        rel = item.get("path")
+        if rel not in SNAPSHOT_FILES:
+            raise ValueError(f"unexpected path in manifest: {rel!r}")
+        target = root / rel
+        source = snap / "files" / rel
         if not source.is_file():
             raise FileNotFoundError(f"missing snapshot file: {source}")
-        if target.is_file() and sha256_file(target) != item["sha256"]:
-            conflicts.append(item["path"])
+        if not source.resolve().is_relative_to(files_root):
+            raise ValueError(f"snapshot source escapes snapshot dir: {source}")
+        if not target.resolve().is_relative_to(root):
+            raise ValueError(f"target escapes game root: {target}")
+        expected = item.get("sha256")
+        if not isinstance(expected, str) or sha256_file(source) != expected:
+            raise ValueError(f"snapshot payload sha256 mismatch: {source}")
+        if target.is_file() and sha256_file(target) != expected:
+            conflicts.append(rel)
     if conflicts and not force:
         raise FileExistsError(
             "current files differ from snapshot; use --force to overwrite: "
@@ -96,15 +123,20 @@ def main(argv: list[str] | None = None) -> int:
     rest.add_argument("--snapshot", required=True, type=Path)
     rest.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
+    missing: list[str] = []
     try:
         if args.command == "snapshot":
             result = snapshot(args.game_root, args.dest, args.label)
+            missing = list(result.get("missing") or [])
         else:
             result = restore(args.snapshot, force=args.force)
     except Exception as exc:  # noqa: BLE001 - fail-closed
         print(f"FATAL: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    if missing:
+        print("WARNING: missing " + ", ".join(missing), file=sys.stderr)
+        return 1
     return 0
 
 
