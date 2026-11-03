@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from m7_stack import inspect_root
+from m7_stack import apply_migrate, inspect_root, plan_migrate
 
 
 def _write(path: Path, text: str) -> None:
@@ -47,3 +47,29 @@ def test_inspect_root_detects_agents_and_flags(mini_install):
     assert data["vmparams"]["has_agent"] is True
     assert "MixinLib-bridge.jar" in data["vmparams"]["agents"][0]
     assert "frameProbe" in data["vmparams"]["hypernova_flags"][0]
+
+
+def test_plan_migrate_excludes_route_mods(tmp_path):
+    src = tmp_path / "src"
+    for name in ("mod_a", "VramOptimizer", "ChineseInputFix",
+                 "hypernova_infinite_engine", "MixinFR", "StarsectorParallel"):
+        (src / name).mkdir(parents=True)
+        (src / name / "mod_info.json").write_text(
+            '{"id":"%s"}' % name, encoding="utf-8")
+    (src / "enabled_mods.json").write_text(
+        '{"enabledMods":["mod_a","VramOptimizer","ChineseInputFix",'
+        '"hypernova_infinite_engine","MixinLib","starsectorparallel"]}',
+        encoding="utf-8")
+    plan = plan_migrate(src, tmp_path / "dst", link=False)
+    assert set(plan["copy"]) == {"mod_a", "VramOptimizer", "ChineseInputFix"}
+    assert plan["enabled"] == ["mod_a", "VramOptimizer", "ChineseInputFix"]
+    assert plan["excluded"] == ["MixinFR", "StarsectorParallel",
+                                "hypernova_infinite_engine"]
+
+
+def test_apply_migrate_dry_run_writes_nothing(tmp_path):
+    src = tmp_path / "src"; (src / "mod_a").mkdir(parents=True)
+    plan = plan_migrate(src, tmp_path / "dst", link=False)
+    result = apply_migrate(plan)
+    assert result["applied"] is False
+    assert not (tmp_path / "dst").exists()
