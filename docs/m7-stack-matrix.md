@@ -29,6 +29,8 @@
 | **A**：MixinFR + JRE 17 + Parallel | JRE **17.0.10**（`jre/release`；启动器显式 `..\jre\bin\java.exe`；Task 7 日志实测 17.0.10） | **0.9.5**（MixinFR 内置） | **1.2.5**（mod id `MixinLib`；含 `MixinFRImeFix.jar`） | **0.1.0**（依赖 MixinLib） | **1.0.45**（由 256-mod 迁移带入） | **0.1.0** agent + mod；`lazy` / DDS / file-index 受 FR 0.9.5 门禁关闭；scripts / normal-cache 待实机 | **推断**（上游声明：MixinFR README 明确 2026.10.15） | **推断**（上游声明：1.2.4 重定向、1.2.5 修竖条；待实机看 `REMAP-OK`） | **推断**（上游声明：`MixinFRImeFix`）；备选 `disable-ime` + ChineseInputFix | **不支持**（0.18.4 在 MixinLib 下 20/34 `SKIPPED_LOADER`；Java 27+ fatal） | `实测（timeout-not-menu，约 1200 s；用户 gate pending）` |
 | **B**：FR 0.9.7rc2 + Java 28 | Temurin **28-beta+13-ea**（`jdk-28+13`；启动器显式；Task 7 日志实测 28-beta） | **0.9.7rc2** | 无 | 无（缺 MixinLib 依赖） | **1.0.45** | **0.1.0** agent + mod；`lazy` / DDS / file-index 可用（M7 Task 7 菜单 105.8 s；M6 **260mods 单环境 agent-only** 另有证据） | **推断**（21835 明确说优化版自带启动加速，与 plain FR 会打架；M7 目标根是优化版） | **不支持**（plain FR 不重定向矢量字体；上游 21705 说明） | 无 `MixinFRImeFix`；用 `disable-ime` + ChineseInputFix | **推断**（可选 0.18.4；实验；Java 28 未声明） | `实测（菜单 105.8 s；用户 gate pending）` |
 | **B + Prepatcher**（可选） | 28（Prepatcher **未声明** Java 28） | 0.9.7rc2 | 无 | 无 | 1.0.45 | 0.1.0 | 同上（实验） | 不支持 | ChineseInputFix | **0.18.4**；agent 顺序 Hypernova → FR → Prepatcher；`SKIPPED_LOADER` 需实机看 | `dry-run 结构`（Prepatcher 未实机；B 本体菜单 105.8 s） |
+| **A+**（组件补齐） | JRE 17.0.10 | 0.9.5（MixinFR 内置） | **1.2.5** + `MixinFRImeFix.jar` | **0.1.0** | 1.0.45 | 0.1.0 | 优化版 | MixinFRImeFix（jar 被发现；未到菜单，无 `REMAP-OK` 判定） | MixinFRImeFix；备选 CIF | **排除** | `实测（600 s timeout；Parallel CombatAiHotspotMixin NOT-INJECTED；用户 gate pending）` |
+| **B+**（组件补齐） | Temurin **28-beta+13-ea** | **0.9.7rc2** | 无 | 无 | 1.0.45 | 0.1.0 | 优化版（实验） | 不支持 | **ChineseInputFix 2.0.0**（日志 v2.2；启用，不 rename `ssime.dll`） | **0.18.4**；agent 顺序 Hypernova → FR → Prepatcher | `实测（菜单 355.3 s；Prepatcher 16 classes/21 patches/4 skipped；纹理错误 0；用户 gate pending）` |
 
 ### 表注
 
@@ -53,6 +55,16 @@
    JRE 17；强制 28 的结果是静默跳过或硬失败，不是“可能也行”。
 5. **Prepatcher 是路线 B 的可选项，不是路线 A 的补丁**。路线 A 的
    `plan_route_a` 会在检测到 `mods/StarsectorPrepatcher` 或其 agent 时直接拒绝。
+6. **Mikihime 配置器只有 Jdk27/Jdk28，没有 JRE17**。
+   `mikihime/configurator/shared/java-versions.properties` 只列
+   Jdk27/Jdk28；`Miko_Lite.txt` 是 Mikihime 的 **JDK28** 参数（8G/10G）。
+   因此 A+ 只能从 `Miko_Lite.txt` 挑 **JRE17 兼容的通用 -XX/内存项**
+   （实测采用 16 项，JRE17 拒绝 4 项：`UseCompactObjectHeaders`、
+   `HotCodeHeap`、`AlwaysPreTouchStacks`、`ErrorLogSecondaryErrorDetails`；
+   另 32 项 Mikihime 路径/classpath 专属项不采用）。B+ 用完整 47 项
+   JDK28 调优，但 Mikihime 的 `mikohime/` 运行时路径（`-Djava.library.path`、
+   `-Dlog4j.configuration`、`-XX:CompilerDirectivesFile` 等）未复制，
+   保留游戏源 `native\windows`/classpath。详见 `docs/m7-results.md` §9.3。
 
 ## 2. 逐项证据
 

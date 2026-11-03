@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -145,6 +146,19 @@ ROUTE_B_JAVA28_REMOVED_TOKENS = frozenset({
 _MEMORY_VALUE_RE = re.compile(r"^\d+[kKmMgG]$")
 DEFAULT_ROUTE_B_XMS = "8G"
 DEFAULT_ROUTE_B_XMX = "10G"
+# Mikihime/Miko_Lite 参数。A+ 只取通用 -XX/内存项（JRE17），B+ 取完整
+# JDK28 调优项；classpath/main/javaagent 永远由路线自己生成。
+MIKOHIME_PROFILE_JRE17 = "jre17"
+MIKOHIME_PROFILE_FULL = "full"
+_MIKOHIME_PATH_DEPENDENT_PREFIXES = (
+    "-Djava.library.path",
+    "-Dlog4j.configuration",
+    "-Djava.xml.config.file",
+    "-Dcom.fs.starfarer.launcher_bg",
+    "-Dcom.fs.starfarer.settings.paths.",
+    "-XX:CompilerDirectivesFile",
+)
+_MIKOHIME_JRE17_PREFIXES = ("-XX:", "-Xms", "-Xmx", "-Xss")
 # ---- 路线 A 常量（Task 4）----
 # MixinFR 的 install.bat 从 mod 文件夹名推导 agent 路径，因此目标文件夹
 # 固定为 MixinFR（不能含空格）；Parallel 同理，由我们固定命名。
@@ -1170,6 +1184,150 @@ def _memory_values(tokens: list[str]) -> tuple[str | None, str | None]:
     return xms, xmx
 
 
+def _read_mikohime_jvm_options(path: str | Path) -> list[str]:
+    """Read a Miko_Lite-style argfile, returning JVM options only.
+
+    Agents, classpath and main class are route-owned and are dropped here.
+    Lines starting with ``#`` are comments.
+    """
+    tokens: list[str] = []
+    for line in Path(path).read_text(
+            encoding="utf-8-sig", errors="replace").splitlines():
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        for token in text.split():
+            if token in ("-classpath", "-cp") or token == MAIN_CLASS:
+                return tokens
+            if token.lower().startswith("-javaagent:"):
+                continue
+            tokens.append(token)
+    return tokens
+
+
+def _select_mikohime_options(
+    options: list[str], profile: str
+) -> tuple[list[str], list[str]]:
+    """Select JRE17-generic or full JDK28 Mikihime tuning options."""
+    selected: list[str] = []
+    excluded: list[str] = []
+    for token in options:
+        if profile == MIKOHIME_PROFILE_JRE17:
+            if any(token.startswith(prefix)
+                   for prefix in _MIKOHIME_PATH_DEPENDENT_PREFIXES):
+                excluded.append(token)
+            elif token.startswith(_MIKOHIME_JRE17_PREFIXES):
+                selected.append(token)
+            else:
+                excluded.append(token)
+            continue
+        lowered = token.lower()
+        if any(token.startswith(prefix)
+               for prefix in _MIKOHIME_PATH_DEPENDENT_PREFIXES):
+            excluded.append(token)
+        elif (lowered.startswith("-javaagent:")
+              or token in ("-classpath", "-cp")
+              or token == MAIN_CLASS):
+            excluded.append(token)
+        else:
+            selected.append(token)
+    return selected, excluded
+
+
+def _filter_java_options(
+    options: list[str], java_exe: str | Path, cwd: str | Path
+) -> tuple[list[str], list[str], str | None]:
+    """Drop options the target JVM rejects, by running ``java -version``.
+
+    Runs in a temporary directory so ``-Xlog:file=...`` test output does not
+    pollute the game root.
+    """
+    java = Path(java_exe)
+    if not java.is_file():
+        return list(options), [], f"java not found: {java}"
+    remaining = list(options)
+    removed: list[str] = []
+    last_error: str | None = None
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            for _ in range(len(remaining) + 1):
+                try:
+                    proc = subprocess.run(
+                        [str(java), *remaining, "-version"],
+                        cwd=tmp, capture_output=True, text=True, timeout=60,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    return remaining, removed, str(exc)
+                output = (proc.stderr or "") + (proc.stdout or "")
+                if proc.returncode == 0:
+                    return remaining, removed, None
+                last_error = output[:2000]
+                bad: str | None = None
+                for line in output.splitlines():
+                    line = line.strip()
+                    match = re.match(r"Unrecognized option: (\S+)", line)
+                    if match:
+                        bad = match.group(1)
+                        break
+                    match = re.match(r"Unrecognized VM option '([^']+)'", line)
+                    if match:
+                        name = match.group(1)
+                        bad = next((token for token in remaining
+                                    if name in token), None)
+                        break
+                    match = re.match(r"Unknown -XX:(\S+) option", line)
+                    if match:
+                        name = match.group(1)
+                        bad = next((token for token in remaining
+                                    if name in token), None)
+                        break
+                    match = re.match(
+                        r"Improperly specified VM option '([^']+)'", line)
+                    if match:
+                        name = match.group(1)
+                        bad = next((token for token in remaining
+                                    if name in token), None)
+                        break
+                    if "Invalid maximum heap size" in line:
+                        bad = next((token for token in remaining
+                                    if token.startswith("-Xmx")), None)
+                        break
+                    if "Invalid initial heap size" in line:
+                        bad = next((token for token in remaining
+                                    if token.startswith("-Xms")), None)
+                        break
+                if bad is None or bad not in remaining:
+                    return remaining, removed, last_error
+                remaining.remove(bad)
+                removed.append(bad)
+    except OSError as exc:  # pragma: no cover - defensive
+        return remaining, removed, str(exc)
+    return remaining, removed, last_error
+
+
+def _apply_mikohime_options(
+    tokens: list[str], selected: list[str], *, replace_log: bool
+) -> list[str]:
+    """Replace source JVM tuning with selected Mikihime options."""
+    if "-classpath" in tokens:
+        index = tokens.index("-classpath")
+    elif "-cp" in tokens:
+        index = tokens.index("-cp")
+    else:
+        index = tokens.index(MAIN_CLASS)
+    kept: list[str] = []
+    for token in tokens[:index]:
+        if (token.startswith("-XX:")
+                or token.startswith("-Xms")
+                or token.startswith("-Xmx")
+                or token.startswith("-Xss")):
+            continue
+        if replace_log and token.startswith("-Xlog"):
+            continue
+        kept.append(token)
+    return kept + list(selected) + tokens[index:]
+
+
 def _route_b_tokens(tokens: list[str], *, prepatcher: bool,
                     xms: str | None = None,
                     xmx: str | None = None) -> list[str]:
@@ -1253,6 +1411,9 @@ def plan_route_b(
     prepatcher_dir: str | Path | None = None,
     xms: str | None = None,
     xmx: str | None = None,
+    mikohime_args: str | Path | None = None,
+    enable_cif: bool = False,
+    cif_source: str | Path | None = None,
 ) -> dict[str, object]:
     """规划路线 B（FR 0.9.7rc2 + jdk-28+13 + Hypernova）。
 
@@ -1278,10 +1439,71 @@ def plan_route_b(
 
     _reject_route_a_components(base, tokens)
     args = _tokenless_arguments(tokens)
+    java_exe = Path(jdk_dir) / "bin" / "java.exe"
+    mikohime_meta: dict[str, object] | None = None
+    mikohime_warnings: list[str] = []
+    selected: list[str] = []
+    if mikohime_args is not None:
+        raw_options = _read_mikohime_jvm_options(mikohime_args)
+        selected, profile_excluded = _select_mikohime_options(
+            raw_options, MIKOHIME_PROFILE_FULL)
+        selected, java_removed, filter_error = _filter_java_options(
+            selected, java_exe, base / "starsector-core")
+        args = _apply_mikohime_options(
+            args, selected, replace_log=True)
+        mikohime_meta = {
+            "path": str(Path(mikohime_args).resolve()),
+            "profile": MIKOHIME_PROFILE_FULL,
+            "adopted": selected,
+            "excluded_profile": profile_excluded,
+            "excluded_java": java_removed,
+            "filter_error": filter_error,
+            "java_exe": str(java_exe),
+        }
+        if java_removed:
+            mikohime_warnings.append(
+                "Mikihime JDK28 filter removed unsupported option(s): "
+                + ", ".join(java_removed))
+        if filter_error:
+            mikohime_warnings.append(
+                f"Mikihime JDK28 filter could not validate options: {filter_error}")
+    source_xms, source_xmx = _memory_values(args)
+    miko_xms, miko_xmx = (
+        _memory_values(selected) if mikohime_args is not None
+        else (None, None))
+    requested_xms = xms if xms is not None else (miko_xms or source_xms)
+    requested_xmx = xmx if xmx is not None else (miko_xmx or source_xmx)
     new_line = " ".join(
         _route_b_tokens(
             args, prepatcher=prepatcher_dir is not None,
-            xms=xms, xmx=xmx))
+            xms=requested_xms, xmx=requested_xmx))
+    cif_meta: dict[str, object] | None = None
+    cif_warnings: list[str] = []
+    if enable_cif:
+        cif_meta = _cif_state(base, cif_source)
+        if cif_meta["verified"]:
+            jna_source = (Path(str(cif_meta["source"]))
+                          / "lib" / "jna-5.14.0.jar")
+            jna_target = (base / CIF_MOD_REL
+                          / "lib" / "jna-5.14.0.jar")
+            if jna_source.is_file() or jna_target.is_file():
+                tokens_now = new_line.split()
+                if "-classpath" in tokens_now:
+                    cp_index = tokens_now.index("-classpath") + 1
+                    jna_token = f"..\\mods\\{CIF_MOD_FOLDER}\\lib\\jna-5.14.0.jar"
+                    parts = tokens_now[cp_index].split(";")
+                    if jna_token not in parts:
+                        tokens_now[cp_index] = (
+                            tokens_now[cp_index] + ";" + jna_token)
+                        new_line = " ".join(tokens_now)
+            else:
+                cif_warnings.append(
+                    "ChineseInputFix has no lib/jna-5.14.0.jar; "
+                    "not adding it to the classpath")
+        else:
+            cif_warnings.append(
+                f"ChineseInputFix not verified; --enable-cif skipped: "
+                f"{cif_meta['error']}")
     final_xms, final_xmx = _memory_values(new_line.split())
     route_b_vmparams = base / ROUTE_B_VMPARAMS_NAME
     launcher_path = _route_launcher_path(base)
@@ -1289,12 +1511,18 @@ def plan_route_b(
 
     copies = _route_b_copies(base, fr_dir, jdk_dir, hypernova_mod,
                              prepatcher_dir)
+    if (enable_cif and cif_meta and cif_meta.get("verified")
+            and cif_meta.get("need_copy")):
+        copies.append(_copy_entry(
+            Path(str(cif_meta["source"])), base / CIF_MOD_REL, "tree"))
     intended_java = _route_b_intended_java(jdk_dir)
     intended_java["launcher_java"] = JDK_JAVA_TOKEN
     intended_java["target"] = str(base / JDK_DIR_NAME / "bin" / "java.exe")
     fr_version = _route_b_fr_version(fr_dir)
 
     warnings: list[str] = []
+    warnings.extend(mikohime_warnings)
+    warnings.extend(cif_warnings)
     for item in copies:
         if not item["exists"]:
             warnings.append(f"missing source: {item['src']}")
@@ -1384,6 +1612,11 @@ def plan_route_b(
     if prepatcher_dir is not None:
         mod_ids["starsector_prepatcher"] = str(
             Path(prepatcher_dir) / "mod_info.json")
+    if enable_cif and cif_meta and cif_meta.get("verified"):
+        cif_info = (Path(str(cif_meta["source"])) / "mod_info.json"
+                    if cif_meta.get("need_copy")
+                    else base / CIF_MOD_REL / "mod_info.json")
+        mod_ids[CIF_MOD_ID] = str(cif_info)
     for mod_id, info_path in mod_ids.items():
         try:
             actual = _read_mod_id(Path(info_path))
@@ -1397,6 +1630,10 @@ def plan_route_b(
 
     enabled_mods = _route_b_enabled_mods(
         base, prepatcher_dir is not None)
+    if enable_cif and cif_meta and cif_meta.get("verified"):
+        raw_add = enabled_mods.get("add")
+        if isinstance(raw_add, list):
+            raw_add.append(CIF_MOD_ID)
     if enabled_mods["state"] == "missing":
         warnings.append(
             "enabled_mods.json missing; run the 256-mod migration (Task 2) "
@@ -1481,8 +1718,11 @@ def plan_route_b(
             "xmx": final_xmx,
             "overridden": xms is not None or xmx is not None,
             "source": ("override" if (xms is not None or xmx is not None)
-                       else "inherited"),
+                       else ("mikohime" if mikohime_args is not None
+                             else "inherited")),
         },
+        "mikohime": mikohime_meta,
+        "cif": cif_meta,
         "java28_removed_tokens": sorted(ROUTE_B_JAVA28_REMOVED_TOKENS),
         "ddscache": ddscache,
         "lunalib_settings": lunalib,
@@ -1721,6 +1961,8 @@ def apply_route_b(plan: dict[str, object]) -> dict[str, object]:
         "memory": plan.get("memory"),
         "ddscache": plan.get("ddscache"),
         "lunalib_settings": plan.get("lunalib_settings"),
+        "mikohime": plan.get("mikohime"),
+        "cif": plan.get("cif"),
         "root_vmparams_modified": False,
         "copied": copied,
         "enabled_mods": enabled,
@@ -1938,6 +2180,7 @@ def plan_route_a(
     mixinfr_dir: str | Path,
     parallel_dir: str | Path,
     hypernova_mod: str | Path,
+    mikohime_args: str | Path | None = None,
 ) -> dict[str, object]:
     """规划路线 A（MixinFR 1.2.5 + JRE 17 + StarsectorParallel + Hypernova）。
 
@@ -1958,6 +2201,33 @@ def plan_route_a(
 
     _reject_route_a_inputs(base, tokens)
     args = _tokenless_arguments(tokens)
+    java_exe = base / JRE_DIR_NAME / "bin" / "java.exe"
+    mikohime_meta: dict[str, object] | None = None
+    mikohime_warnings: list[str] = []
+    if mikohime_args is not None:
+        raw_options = _read_mikohime_jvm_options(mikohime_args)
+        selected, profile_excluded = _select_mikohime_options(
+            raw_options, MIKOHIME_PROFILE_JRE17)
+        selected, java_removed, filter_error = _filter_java_options(
+            selected, java_exe, base / "starsector-core")
+        args = _apply_mikohime_options(
+            args, selected, replace_log=False)
+        mikohime_meta = {
+            "path": str(Path(mikohime_args).resolve()),
+            "profile": MIKOHIME_PROFILE_JRE17,
+            "adopted": selected,
+            "excluded_profile": profile_excluded,
+            "excluded_java": java_removed,
+            "filter_error": filter_error,
+            "java_exe": str(java_exe),
+        }
+        if java_removed:
+            mikohime_warnings.append(
+                "Mikihime JRE17 filter removed unsupported option(s): "
+                + ", ".join(java_removed))
+        if filter_error:
+            mikohime_warnings.append(
+                f"Mikihime JRE17 filter could not validate options: {filter_error}")
     new_line = " ".join(_route_a_tokens(args))
 
     route_a_vmparams = base / ROUTE_A_VMPARAMS_NAME
@@ -1978,6 +2248,7 @@ def plan_route_a(
     enabled_mods = _route_a_enabled_spec(base, managed)
 
     warnings: list[str] = []
+    warnings.extend(mikohime_warnings)
     for item in copies:
         if not item["exists"]:
             warnings.append(f"missing source: {item['src']}")
@@ -2108,6 +2379,7 @@ def plan_route_a(
         "vmparams_tokenless": True,
         "agents": [MIXIN_AGENT_TOKEN, HYPERNOVA_AGENT_TOKEN],
         "flags": list(ROUTE_A_FLAGS),
+        "mikohime": mikohime_meta,
         "writes": writes,
         "copies": copies,
         "copy_count": len(copies),
@@ -2338,6 +2610,7 @@ def apply_route_a(plan: dict[str, object]) -> dict[str, object]:
         "jre_version": plan.get("jre_version"),
         "mixinfr": plan.get("mixinfr"),
         "parallel": plan.get("parallel"),
+        "mikohime": plan.get("mikohime"),
         "warnings": list(plan.get("warnings") or []),
     }
 
@@ -3272,6 +3545,10 @@ def _format_route_b_text(data: dict[str, object]) -> str:
         ddscache = raw_ddscache if isinstance(raw_ddscache, dict) else {}
         raw_lunalib = data.get("lunalib_settings")
         lunalib = raw_lunalib if isinstance(raw_lunalib, dict) else {}
+        raw_mikohime = data.get("mikohime")
+        mikohime = raw_mikohime if isinstance(raw_mikohime, dict) else {}
+        raw_cif = data.get("cif")
+        cif = raw_cif if isinstance(raw_cif, dict) else {}
         created = data.get("created_dirs")
         return "\n".join([
             f"applied={flag(data.get('applied'))}",
@@ -3284,6 +3561,9 @@ def _format_route_b_text(data: dict[str, object]) -> str:
             f"created_dirs={len(created) if isinstance(created, list) else 0}",
             f"memory.xms={memory.get('xms')}",
             f"memory.xmx={memory.get('xmx')}",
+            f"mikohime.profile={mikohime.get('profile')}",
+            f"mikohime.adopted={len(mikohime.get('adopted') or [])}",
+            f"cif.verified={flag(cif.get('verified'))}",
             f"ddscache.blocked={flag(ddscache.get('blocked'))}",
             f"lunalib_settings.suspicious={flag(lunalib.get('suspicious'))}",
             f"root_vmparams_modified="
@@ -3304,6 +3584,10 @@ def _format_route_b_text(data: dict[str, object]) -> str:
     ddscache = raw_ddscache if isinstance(raw_ddscache, dict) else {}
     raw_lunalib = data.get("lunalib_settings")
     lunalib = raw_lunalib if isinstance(raw_lunalib, dict) else {}
+    raw_mikohime = data.get("mikohime")
+    mikohime = raw_mikohime if isinstance(raw_mikohime, dict) else {}
+    raw_cif = data.get("cif")
+    cif = raw_cif if isinstance(raw_cif, dict) else {}
     return "\n".join([
         f"route={data.get('route')}",
         f"root={data.get('root')}",
@@ -3316,6 +3600,11 @@ def _format_route_b_text(data: dict[str, object]) -> str:
         f"memory.xms={memory.get('xms')}",
         f"memory.xmx={memory.get('xmx')}",
         f"memory.source={memory.get('source')}",
+        f"mikohime.profile={mikohime.get('profile')}",
+        f"mikohime.adopted={len(mikohime.get('adopted') or [])}",
+        f"mikohime.excluded_java={len(mikohime.get('excluded_java') or [])}",
+        f"cif.verified={flag(cif.get('verified'))}",
+        f"cif.need_copy={flag(cif.get('need_copy'))}",
         f"ddscache.present={flag(ddscache.get('present'))}",
         f"ddscache.will_create={flag(ddscache.get('will_create'))}",
         f"lunalib_settings.present={flag(lunalib.get('present'))}",
@@ -3348,6 +3637,8 @@ def _format_route_a_text(data: dict[str, object]) -> str:
         mixinfr = raw_mixinfr if isinstance(raw_mixinfr, dict) else {}
         raw_parallel = data.get("parallel")
         parallel = raw_parallel if isinstance(raw_parallel, dict) else {}
+        raw_mikohime = data.get("mikohime")
+        mikohime = raw_mikohime if isinstance(raw_mikohime, dict) else {}
         raw_warnings = data.get("warnings")
         return "\n".join([
             f"applied={flag(data.get('applied'))}",
@@ -3361,6 +3652,8 @@ def _format_route_a_text(data: dict[str, object]) -> str:
             f"mixinfr.version_ok={flag(mixinfr.get('version_ok'))}",
             f"parallel.version={parallel.get('version')}",
             f"parallel.version_ok={flag(parallel.get('version_ok'))}",
+            f"mikohime.profile={mikohime.get('profile')}",
+            f"mikohime.adopted={len(mikohime.get('adopted') or [])}",
             f"warnings={len(raw_warnings) if isinstance(raw_warnings, list) else 0}",
             f"root_vmparams_modified="
             f"{flag(data.get('root_vmparams_modified'))}",
@@ -3377,6 +3670,8 @@ def _format_route_a_text(data: dict[str, object]) -> str:
     mixinfr = raw_mixinfr if isinstance(raw_mixinfr, dict) else {}
     raw_parallel = data.get("parallel")
     parallel = raw_parallel if isinstance(raw_parallel, dict) else {}
+    raw_mikohime = data.get("mikohime")
+    mikohime = raw_mikohime if isinstance(raw_mikohime, dict) else {}
     return "\n".join([
         f"route={data.get('route')}",
         f"root={data.get('root')}",
@@ -3391,6 +3686,9 @@ def _format_route_a_text(data: dict[str, object]) -> str:
         f"mixinfr.version_ok={flag(mixinfr.get('version_ok'))}",
         f"parallel.version={parallel.get('version')}",
         f"parallel.version_ok={flag(parallel.get('version_ok'))}",
+        f"mikohime.profile={mikohime.get('profile')}",
+        f"mikohime.adopted={len(mikohime.get('adopted') or [])}",
+        f"mikohime.excluded_java={len(mikohime.get('excluded_java') or [])}",
         f"root_vmparams_modified="
         f"{flag(data.get('root_vmparams_modified'))}",
         f"copies={len(raw_copies) if isinstance(raw_copies, list) else 0}",
@@ -3422,6 +3720,9 @@ def _build_parser() -> argparse.ArgumentParser:
     route_a.add_argument("--parallel", required=True, type=Path)
     route_a.add_argument("--hypernova-mod", type=Path,
                          default=DEFAULT_HYPERNOVA_MOD)
+    route_a.add_argument(
+        "--mikohime-args", type=Path,
+        help="Miko_Lite 风格 argfile；只取 JRE17 可接受的通用 -XX/内存项")
     route_a.add_argument("--backups", type=Path,
                          help="快照根目录（默认为 <audit>/backups）")
     route_a.add_argument("--text", action="store_true",
@@ -3444,6 +3745,15 @@ def _build_parser() -> argparse.ArgumentParser:
     route_b.add_argument(
         "--xmx", type=str, default=None,
         help="覆盖 -Xmx（如 10G/10240m；256 mod 建议 8–12G）")
+    route_b.add_argument(
+        "--mikohime-args", type=Path,
+        help="Miko_Lite 风格 argfile；采用完整 JDK28 调优项")
+    route_b.add_argument(
+        "--enable-cif", action="store_true",
+        help="复制/启用 ChineseInputFix（不改 ssime.dll）")
+    route_b.add_argument(
+        "--cif-source", type=Path,
+        help="ChineseInputFix 源目录（默认 260mods/mods/ChineseInputFix）")
     route_b.add_argument("--backups", type=Path,
                          help="快照根目录（默认为 <audit>/backups）")
     route_b.add_argument("--text", action="store_true",
@@ -3511,6 +3821,7 @@ def main(argv: list[str] | None = None) -> int:
                 mixinfr_dir=args.mixinfr,
                 parallel_dir=args.parallel,
                 hypernova_mod=args.hypernova_mod,
+                mikohime_args=args.mikohime_args,
             )
             if args.backups is not None:
                 plan["snapshot"]["dest"] = str(args.backups)  # type: ignore[index]
@@ -3551,6 +3862,9 @@ def main(argv: list[str] | None = None) -> int:
                 prepatcher_dir=args.prepatcher,
                 xms=args.xms,
                 xmx=args.xmx,
+                mikohime_args=args.mikohime_args,
+                enable_cif=args.enable_cif,
+                cif_source=args.cif_source,
             )
             if args.backups is not None:
                 plan["snapshot"]["dest"] = str(args.backups)  # type: ignore[index]

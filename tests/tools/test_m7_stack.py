@@ -1174,6 +1174,173 @@ def test_plan_route_b_prechecks_ddscache_and_lunalib(tmp_path):
     assert not (root / "mods/DDSCache").exists()
 
 
+# ---- A+/B+ fix loop ----
+
+
+def _miko_args(tmp_path):
+    path = tmp_path / "Miko_Lite.txt"
+    path.write_text(
+        "# comment line\n"
+        "-XX:+UnlockDiagnosticVMOptions\n"
+        "-XX:+UseG1GC\n"
+        "-XX:+UseCompactObjectHeaders\n"
+        "-XX:CompilerDirectivesFile=..\\\\mikohime/.rouge_owo\n"
+        "-Djava.library.path=\"..\\\\mikohime/windows\"\n"
+        "-Dlog4j.configuration=..\\\\mikohime/mikohime.properties\n"
+        "-Xlog:async\n"
+        "-Xms1g\n"
+        "-Xmx2g\n"
+        "-Xss4m\n"
+        "-javaagent:../mods/hypernova_infinite_engine/jars/hypernova.agent.jar\n"
+        "-classpath fr.jar;janino.jar\n"
+        "com.fs.starfarer.StarfarerLauncher\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_mikohime_parser_and_profiles(tmp_path):
+    path = _miko_args(tmp_path)
+    raw = m7_stack._read_mikohime_jvm_options(path)
+    assert "-XX:+UseG1GC" in raw
+    assert "-Xlog:async" in raw
+    assert not any(token.startswith("-javaagent:") for token in raw)
+    assert "-classpath" not in raw
+    assert "com.fs.starfarer.StarfarerLauncher" not in raw
+
+    jre17, jre17_excluded = m7_stack._select_mikohime_options(
+        raw, m7_stack.MIKOHIME_PROFILE_JRE17)
+    assert "-Xms1g" in jre17 and "-Xmx2g" in jre17
+    assert "-XX:+UseG1GC" in jre17
+    assert "-XX:+UseCompactObjectHeaders" in jre17
+    assert "-XX:CompilerDirectivesFile=..\\\\mikohime/.rouge_owo" not in jre17
+    assert "-Xlog:async" not in jre17
+    assert "-Djava.library.path=\"..\\\\mikohime/windows\"" not in jre17
+    assert "-Xlog:async" in jre17_excluded
+
+    full, full_excluded = m7_stack._select_mikohime_options(
+        raw, m7_stack.MIKOHIME_PROFILE_FULL)
+    assert "-Xlog:async" in full
+    assert "-XX:CompilerDirectivesFile=..\\\\mikohime/.rouge_owo" not in full
+    assert "-Djava.library.path=\"..\\\\mikohime/windows\"" not in full
+    assert "-Dlog4j.configuration=..\\\\mikohime/mikohime.properties" not in full
+    assert "-Xms1g" in full
+    assert any("CompilerDirectivesFile" in item for item in full_excluded)
+
+
+def test_apply_mikohime_options_replaces_source_tuning(tmp_path):
+    source = [
+        "-Xmx2048m", "-Xlog:async", "-XX:+UseShenandoahGC",
+        "-Dkeep=1", "-classpath", "a.jar", "Main",
+    ]
+    out = m7_stack._apply_mikohime_options(
+        source, ["-Xms1g", "-Xmx2g", "-XX:+UseG1GC"],
+        replace_log=True)
+    assert out == [
+        "-Dkeep=1", "-Xms1g", "-Xmx2g", "-XX:+UseG1GC",
+        "-classpath", "a.jar", "Main",
+    ]
+
+
+def test_filter_java_options_removes_rejected_vm_option(tmp_path, monkeypatch):
+    fake_java = tmp_path / "java.exe"
+    fake_java.write_bytes(b"x")
+
+    def fake_run(cmd, **kwargs):
+        options = cmd[1:-1]
+        if "-XX:+Bad" in options:
+            return subprocess.CompletedProcess(
+                cmd, 1, "", "Unrecognized VM option 'Bad'\n")
+        return subprocess.CompletedProcess(cmd, 0, "openjdk version test\n", "")
+
+    monkeypatch.setattr("m7_stack.subprocess.run", fake_run)
+    kept, removed, error = m7_stack._filter_java_options(
+        ["-XX:+Bad", "-Xmx2g"], fake_java, tmp_path)
+    assert kept == ["-Xmx2g"]
+    assert removed == ["-XX:+Bad"]
+    assert error is None
+
+
+def test_plan_route_a_mikohime_jre17(tmp_path, monkeypatch):
+    root, mixin, par, hn = _route_a_sources(tmp_path)
+    miko = _miko_args(tmp_path)
+    monkeypatch.setattr(
+        "m7_stack._filter_java_options",
+        lambda options, java_exe, cwd: (list(options), [], None))
+    plan = plan_route_a(root, mixinfr_dir=mixin, parallel_dir=par,
+                        hypernova_mod=hn, mikohime_args=miko)
+    tokens = plan["vmparams"].split()
+    assert "-Xms1g" in tokens and "-Xmx2g" in tokens
+    assert "-XX:+UseG1GC" in tokens
+    assert "-Xlog:async" not in tokens
+    assert tokens.count("-Xmx2g") == 1
+    assert plan["mikohime"]["profile"] == "jre17"
+    assert "-XX:+UseG1GC" in plan["mikohime"]["adopted"]
+
+
+def test_plan_route_b_mikohime_cif_prepatcher(tmp_path, monkeypatch):
+    root, fr, jdk, hn = _route_b_sources(tmp_path)
+    pp = tmp_path / "pp"
+    _write(pp / "mod_info.json", '{"id":"starsector_prepatcher"}')
+    (pp / "agent").mkdir(parents=True, exist_ok=True)
+    (pp / "agent/StarsectorPrepatcherAgent.jar").write_bytes(b"agent")
+    _write(pp / "prepatcher.properties", "enabled=true\npatch.foo=true\n")
+    cif = tmp_path / "cif"
+    _write(cif / "mod_info.json", '{"id":"ChineseInputFix"}')
+    (cif / "lib").mkdir(parents=True, exist_ok=True)
+    (cif / "lib/jna-5.14.0.jar").write_bytes(b"jna")
+    miko = _miko_args(tmp_path)
+    monkeypatch.setattr(
+        "m7_stack._filter_java_options",
+        lambda options, java_exe, cwd: (list(options), [], None))
+
+    plan = plan_route_b(
+        root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn,
+        prepatcher_dir=pp, mikohime_args=miko, enable_cif=True,
+        cif_source=cif)
+    tokens = plan["vmparams"].split()
+    assert plan["mikohime"]["profile"] == "full"
+    assert "-Xms1g" in tokens and "-Xmx2g" in tokens
+    assert tokens.count("-Xms1g") == 1
+    assert tokens.count("-Xmx2g") == 1
+    assert "-XX:+UseCompactObjectHeaders" in tokens
+    hypernova = next(i for i, token in enumerate(tokens)
+                     if "hypernova.agent.jar" in token)
+    fr_agent = next(i for i, token in enumerate(tokens)
+                    if token == "-javaagent:fr.agent.jar")
+    prepatcher = next(i for i, token in enumerate(tokens)
+                      if "StarsectorPrepatcherAgent.jar" in token)
+    classpath = tokens.index("-classpath")
+    assert hypernova < fr_agent < prepatcher < classpath
+    assert "..\\mods\\ChineseInputFix\\lib\\jna-5.14.0.jar" in tokens[
+        classpath + 1]
+    assert plan["cif"]["verified"] is True
+    assert plan["cif"]["need_copy"] is True
+    assert "ChineseInputFix" in plan["enabled_mods"]["add"]
+    assert any(item["dst"].endswith("ChineseInputFix")
+               for item in plan["copies"])
+
+    plan["apply"] = True
+    result = apply_route_b(plan)
+    assert result["applied"] is True
+    assert (root / "mods/ChineseInputFix/mod_info.json").is_file()
+    assert (root / "mods/StarsectorPrepatcher").is_dir()
+    enabled = json.loads(
+        (root / "mods/enabled_mods.json").read_text(encoding="utf-8"))
+    assert "ChineseInputFix" in enabled["enabledMods"]
+    assert "starsector_prepatcher" in enabled["enabledMods"]
+
+    rolled = rollback_route(
+        root, result["rollback"]["label"],
+        dest=result["rollback"]["dest"], apply=True)
+    assert rolled["ok"] is True
+    assert not (root / "mods/ChineseInputFix").exists()
+    assert not (root / "mods/StarsectorPrepatcher").exists()
+    assert json.loads(
+        (root / "mods/enabled_mods.json").read_text(encoding="utf-8")
+    ) == {"enabledMods": ["mod_a", "mod_b"]}
+
+
 # ---- 终审 must-fix：fail-closed / 单参数内存 / 版本断言 ----
 
 

@@ -1,14 +1,16 @@
-# M7 玩家教程：路线 A / 路线 B
+# M7 玩家教程：路线 A / A+ / B / B+
 
 > 适用：Starsector **0.98a-RC8**（Windows），远星汉化**优化测试版
 > v2026.10.15**。其他版本 / 其他汉化包不要照抄。
 >
 > **验证状态（先看这一行）**：M7 的 Task 1–7 已完成工具、测试和实机验证。
-> **Task 7 已跑**：路线 B 到主菜单 **105.8 s**（日志 / 截图）；路线 A 在
-> 600 s 上限 + 两次延长（约 1200 s）后仍未到主菜单，记为
-> **timeout-not-menu**。用户实机 gate（战役、战斗、读档、中文输入、字体
-> 视觉、稳定性）仍 **pending**；菜单到达不是整套通过。本教程写“应该看到 /
-> 预期”的地方是实测日志或结构证据，不是用户视觉验收。
+> 基础路线：B 到主菜单 **105.8 s**；A 在 600 s 上限 + 两次延长（约 1200 s）
+> 后仍未到主菜单（timeout-not-menu）。组件补齐复跑：**B+ 到主菜单
+> 355.3 s**（CIF + Prepatcher + 完整 Mikihime JDK28 参数）；**A+ 600 s
+> 内未到主菜单**，且 Parallel 热点 mixin 实测 `NOT-INJECTED`。
+> 用户实机 gate（战役、战斗、读档、中文输入、字体视觉、稳定性）仍
+> **pending**；菜单到达不是整套通过。本教程写“应该看到 / 预期”的地方是
+> 实测日志或结构证据，不是用户视觉验收。
 >
 > 本教程不重新分发任何第三方文件。所有组件请从作者官方来源下载；论坛附件
 > 需要登录，不要用来路不明的网盘转载包。
@@ -33,6 +35,30 @@ M7 提供两套**严格隔离**的路线。它们不能装在同一个安装目�
 **一句话取舍**：M7 目前没有一条路线同时给全“Parallel + 完整 Hypernova
 纹理链 + 高清字体 + IME 修复”。要并行和高清字体选 A；要 Java 28 和完整
 Hypernova 选 B。
+
+### 0.1 A+ / B+（组件补齐复跑）
+
+A+ / B+ 不是新的混装路线，而是把 A/B 的组件补齐后再跑一次：
+
+| 路线 | 组件 | 实机结果 |
+|---|---|---|
+| **A+** | MixinFR 1.2.5（含 MixinFRImeFix）+ StarsectorParallel 0.1.0 + VramOpt 1.0.45 + Hypernova 0.1.0 + **Mikihime 风格 JRE17 兼容参数**；Prepatcher 排除 | 600 s 内未到主菜单（617 s 仍在 rules/scripts）；无 Fatal/OOM；Parallel 的 `CombatAiHotspotMixin` 实测 `NOT-INJECTED`（FR 重写 `CombatEngine`） |
+| **B+** | FR 0.9.7rc2 + VramOpt 1.0.45 + Hypernova 0.1.0 + **完整 Mikihime JDK28 参数** + **ChineseInputFix** + **StarsectorPrepatcher 0.18.4**；不装 Parallel/MixinFR | **到主菜单 355.3 s**；Prepatcher `16 classes / 21 patches / 4 skipped`；CIF v2.2 加载并子类化窗口；纹理错误 0 |
+
+**Mikihime 限制（重要）**：`mikihime/configurator/shared/
+java-versions.properties` 只有 **Jdk27/Jdk28**，**没有 JRE17**；
+`Miko_Lite.txt` 是 Mikihime 的 JDK28 参数（8G/10G）。因此：
+
+- A+ 不能直接套用 Mikihime 配置器；只能从 `Miko_Lite.txt` 挑选 JRE17
+  可接受的通用 `-XX`/内存项。实测采用 16 项，JRE17 拒绝 4 项
+  （`UseCompactObjectHeaders`、`HotCodeHeap`、`AlwaysPreTouchStacks`、
+  `ErrorLogSecondaryErrorDetails`），另 32 项 Mikihime 路径/classpath
+  专属项不采用。
+- B+ 使用完整 47 项 JDK28 调优；Mikihime 的 `mikohime/` 运行时路径
+  （`-Djava.library.path=..\mikohime/windows`、`-Dlog4j.configuration`、
+  `-XX:CompilerDirectivesFile` 等）没有复制，保留游戏源 `native\windows`
+  与 classpath。Prepatcher 在 Java 28 仍未声明，属实验项。
+- 详细采用/剔除清单见 `docs/m7-results.md` §9.3。
 
 ---
 

@@ -12,6 +12,8 @@
 |---|---|---|---|
 | A（MixinFR 1.2.5 + JRE 17 + StarsectorParallel） | fix loop `route-a --apply` 为 `applied=true ok=true`，manifest 就地生成成功 | **未到达** | 临时禁用 3 个声明 jar 缺失的 mod 后，MixinFR/Parallel/Hypernova 全部加载，无 Fatal/OOM；但在 600 s 上限 + 两次延长（总计约 1200 s）内仍停留在规则/脚本加载阶段，按协议记为 **timeout-not-menu**。 |
 | B（FR 0.9.7rc2 + Java 28 + Hypernova） | fix loop `route-b --apply` 为 `applied=true ok=true`，manifest 就地生成成功 | **已到达（105.8 s）** | `--xms 8G --xmx 10G`；Java 28、FR 0.9.7rc2、Hypernova agent/lazy/file index/scripts cache 全部加载；VOpt Loaded；五类纹理错误 0；最终 lazy probe `misses=0 failed=0`。需要禁用 `jc_sf`（幽灵部队自检失败）并应用 AoTD 要求的 `starfarer.api.jar` 替换；两者均记录为环境/模组前提。 |
+| **A+（组件补齐）** | `route-a --apply` `ok=true`；MixinFR 1.2.5 + Parallel 0.1.0 + VOpt 1.0.45 + Hypernova + MixinFRImeFix + Mikihime JRE17 子集 | **未到达** | 600 s 内未到菜单；617 s 仍在 rules/scripts，无 Fatal/OOM，纹理错误 0。Parallel/`CombatAiHotspotMixin` 为 `NOT-INJECTED`（FR 重写 `CombatEngine`）。 |
+| **B+（组件补齐）** | `route-b --apply` `ok=true`；FR 0.9.7rc2 + VOpt + Hypernova + 完整 Mikihime JDK28 参数 + CIF + Prepatcher 0.18.4 | **已到达（355.3 s）** | Java 28；Prepatcher `16 classes / 21 patches / 4 skipped`；CIF v2.2 加载并子类化窗口；Hypernova lazy `misses=0 failed=0`；纹理错误 0。 |
 
 关键事实：
 
@@ -442,7 +444,208 @@ A 的菜单未到达，不能用任何自动化指标替代用户 gate。
   260mods 既有 `save_123`，实验根 `saves/` 为空；没有 agent 点击，时序像
   自动 continue，但具体触发器未证明。它不证明视觉/输入/字体/稳定性，也不把
   场景 #3/#4 标通过。
+- **A+ 未到菜单**：600 s 内仍在 rules/scripts；MixinFRImeFix 只确认 jar
+  被发现，未产生可判定的 `REMAP-OK`/IME bridge；Parallel 热点 mixin
+  `NOT-INJECTED`，不能把“组件已装”写成“Parallel 已生效”。
+- **B+ 菜单但有前提**：Prepatcher 0.18.4 在 Java 28 未声明（4 个 patch
+  skipped）；`jc_sf` 禁用、AoTD 核心 jar 替换仍是模组前提；CIF 只证明
+  加载/窗口子类化，不代表用户输入/候选框验收；不宣称收益。
 - **用户 gate 全 pending**：战役、战斗、读档、中文输入、字体视觉、稳定性
   均未验证。
 - **第三方合规**：不重新分发任何第三方文件；AoTD jar/LunaSettings 仅从用户
   已有的 260mods 读取。
+
+## 9. A+ / B+ 组件补齐复跑（2026-11-04）
+
+### 9.1 组件表
+
+| 路线 | Java | FR | MixinFR | Parallel | VramOpt | Hypernova | CIF | Prepatcher | MixinFRImeFix | Mikihime |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **A+** | JRE 17.0.10 | MixinFR 内置 0.9.5 | 1.2.5 | 0.1.0 | 1.0.45 | 0.1.0 | 否 | **排除** | 是（MixinFR 包内） | JRE17 兼容子集（16 项） |
+| **B+** | Temurin 28-beta+13 | 0.9.7rc2 | 无 | 无 | 1.0.45 | 0.1.0 | **启用**（2.0.0，日志 v2.2） | **0.18.4** | 否 | 完整 JDK28 调优（47 项） |
+
+### 9.2 启动结果
+
+#### A+
+
+- apply：`applied=true ok=true`；manifest
+  `L1=6624 L2=18290 L3=55231 skip=72944`，Critical=0；
+  rollback label `m7-route-a-20261104-050308-745309`。
+- 为通过 MixinFR `LaunchSnapshot`，实验根临时禁用 3 个声明 jar 缺失的
+  mod（`missingshipsweapons`、`CRS_Mod_Core`、`StopGapMeasures3`）；
+  这是 mod 包问题，不是 M7 组件缺失。
+- 启动 600 s：**未到达主菜单**。617 s 时仍在加载 `Pch_*` rules/scripts；
+  无 Fatal/OOM；`m6_log_audit total=0`；五类纹理错误 0。
+- `starsector.log`：`Java version: 17.0.10 (64-bit)`；
+  `mixinlib.log`：`integration=MixinFR+FastRendering phase=fr`；
+  `Handoff - game JVM started pid=55840 enabledMods=256 jars=228`。
+- MixinFRImeFix：`discovered mixinfr.imefix.mixin.json from .../MixinFRImeFix.jar`；
+  因未到菜单，`mixinfr-fonthd.log`/`mixinfr-ime-fix.log` 没有产生可判定的
+  `REMAP-OK`/IME bridge 行。
+- StarsectorParallel：mod 与 `starsectorparallel.mixin.json` 已加载，
+  `APPLY ... CombatAiHotspotMixin` 后
+  `PROBE ... verdict=NOT-INJECTED`；原因：
+  `[MixinGovernance] WARN target is rewritten by Fast Rendering:
+  com.fs.starfarer.combat.CombatEngine ... the mixin will likely not apply`。
+  **Parallel 组件存在但热点 mixin 未实际注入。**
+- Hypernova：`premain` 正常；`lazy: unsupported FR version 0.9.5; disabled`、
+  `file index: unsupported FR version 0.9.5; disabled`、
+  `scripts cache transformer registered`（cold，`preloaded=0`）。
+- rollback：`restored=1 deleted=12 ok=true`。
+
+#### B+
+
+- apply：`applied=true ok=true`；manifest
+  `L1=6518 L2=18323 L3=55102 skip=72847`，Critical=0；
+  `copied=16`（含 Prepatcher），`created_dirs=[mods/DDSCache]`；
+  enabled 258 = 255（`jc_sf` 禁用）+ Hypernova + Prepatcher + CIF；
+  rollback label `m7-route-b-20261104-051743-293497`。
+- 启动 **到达主菜单**：
+  `starsector.log:355296 [Thread-18] INFO sound.H - Playing music with id [miscallenous_main_menu.ogg]`
+  → **355.3 s**（600 s 内）。
+- `starsector.log`：`Java version: 28-beta (64-bit)`；
+  `Fast Rendering: v0.9.7rc2`；`VOpt Loaded`；
+  `Suitable FR Version found`。
+- CIF：`[CIF] 中文输入修复 v2.2 已加载`；
+  `[CIF] [SysIME] 窗口子类化成功 ... client=1707x1067`；
+  `ReflectionUtils 初始化成功`。**未执行 `disable-ime`**，
+  `ssime.dll` 保持原状；只启用了 CIF mod。
+- Prepatcher：
+  `StarsectorPrepatcher 0.18.4: status=transformer-installed,
+  patchedClassesSoFar=16, appliedPatchesSoFar=21, skippedPatchesSoFar=4`。
+  没有大量 `SKIPPED_LOADER`；Java 28 未声明的 warning 仍保留在 plan/文档。
+- Hypernova：`premain`、`file index transformer registered`、
+  `lazy: transformers registered`、`scripts cache transformer registered`；
+  菜单/读档期 lazy probe `index=72847`、`misses=0 degraded=0 failed=0
+  disabled=0 main=main`、`liveBytes≈2.9 GB`。
+- 五类纹理错误：`starsector.log`+`.1` 均 0；`m6_log_audit total=0
+  complete=true`。
+- 菜单锚点后日志还出现 260mods 既有 `save_123` 的读档与战斗
+  （`Reading save data`、BoxUtil/aEP 战斗插件、`HYPERNOVA_TICK 1`），
+  与上一轮 B 相同：**日志级自动化证据，不是用户实机 gate**；
+  存档来源仍是 260mods 既有存档，实验根 `saves/` 为空。
+- rollback：`restored=2 deleted=21 ok=true`；`mods/DDSCache`、
+  Prepatcher、JDK、FR、Hypernova 均删除；核心 `starfarer.api.jar`
+  手工恢复到原优化版 `769c8e94…`；enabled 恢复为原始 256。
+
+### 9.3 Mikihime 参数清单
+
+事实：`mikohime/configurator/shared/java-versions.properties` 只有
+`Jdk27/Jdk28`，**没有 JRE17**；`Miko_Lite.txt` 是 Mikihime 的 JDK28 参数
+（`-Xms8192m -Xmx10240m`，G1）。
+
+验证方法：对每个候选参数跑
+`java <options> -version`（目标 JRE/JDK，临时目录），迭代移除 JVM 拒绝的
+参数；采用项 = 目标 Java 接受，剔除项 = 目标 Java 拒绝或
+Mikihime 路径/classpath 专属。证据：
+`evidence/fixloop2/mikohime-jre17.json`、
+`evidence/fixloop2/mikohime-full.json`。
+
+#### A+：JRE17 兼容子集（采用 16 项）
+
+```text
+-XX:+UnlockDiagnosticVMOptions
+-XX:+UnlockExperimentalVMOptions
+-XX:+TieredCompilation
+-XX:TieredStopAtLevel=4
+-XX:+UseCompressedOops
+-XX:+UseG1GC
+-XX:+UseStringDeduplication
+-XX:ReservedCodeCacheSize=512m
+-XX:-BytecodeVerificationLocal
+-XX:-BytecodeVerificationRemote
+-XX:+ShowCodeDetailsInExceptionMessages
+-XX:+ExtensiveErrorReports
+-XX:+PrintCommandLineFlags
+-Xss4m
+-Xms8192m
+-Xmx10240m
+```
+
+JRE17 明确拒绝的 4 项（`java -version` 报 Unrecognized VM option）：
+
+```text
+-XX:+UseCompactObjectHeaders
+-XX:+HotCodeHeap
+-XX:+AlwaysPreTouchStacks
+-XX:+ErrorLogSecondaryErrorDetails
+```
+
+另外 32 项未采用（`excluded_profile`）：Mikihime 专属
+`-Xlog:gc*:file=gc-miko.log...`、`-XX:CompilerDirectivesFile=..\mikohime/...`、
+`-Dlog4j*`/`-Djava.xml.config.file`/`-Dcom.fs.starfarer.launcher_bg`/
+`-Djava.library.path=..\mikohime/windows`、`--add-opens`/`--add-exports`
+（源 argfile 已有游戏所需 opens/exports）、`--enable-*` 等。
+A+ 保留源 `-Djava.library.path=native\windows`、源 classpath/main。
+
+#### B+：完整 JDK28 调优（采用 47 项）
+
+采用项（全部被 Temurin 28+13 接受；`excluded_java=0`）：
+
+```text
+-XX:+UnlockDiagnosticVMOptions
+-XX:+UnlockExperimentalVMOptions
+-Xlog:async
+-Xlog:gc*:file=gc-miko.log:time,uptime,level,tags:filecount=3,filesize=20M
+-XX:+TieredCompilation
+-XX:TieredStopAtLevel=4
+-XX:+UseCompactObjectHeaders
+-XX:+UseCompressedOops
+-XX:+HotCodeHeap
+-XX:+UseG1GC
+-XX:+UseStringDeduplication
+-XX:+AlwaysPreTouchStacks
+-XX:ReservedCodeCacheSize=512m
+-XX:-BytecodeVerificationLocal
+-XX:-BytecodeVerificationRemote
+-Dlog4j1.compatibility=true
+-DLog4jContextSelector=org.apache.logging.log4j.core.async.AsyncLoggerContextSelector
+-Dlog4j2.enableThreadlocals=true
+-Dlog4j2.enableDirectEncoders=true
+-Dlog4j2.garbagefreeThreadContextMap=true
+-Djava.util.Arrays.useLegacyMergeSort=true
+-Dsun.java2d.renderer.useRef=weak
+--add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+--add-opens=java.base/java.nio=ALL-UNNAMED
+--add-opens=java.base/java.util=ALL-UNNAMED
+--add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+--add-opens=java.base/java.util.concurrent.locks=ALL-UNNAMED
+--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED
+--add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+--add-opens=java.base/java.lang.ref=ALL-UNNAMED
+--add-opens=java.base/java.lang=ALL-UNNAMED
+--add-opens=java.management/javax.management=ALL-UNNAMED
+--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
+--add-opens=java.base/java.text=ALL-UNNAMED
+--add-opens=java.desktop/java.awt.font=ALL-UNNAMED
+--add-opens=java.desktop/java.awt=ALL-UNNAMED
+--enable-native-access=ALL-UNNAMED
+--enable-final-field-mutation=ALL-UNNAMED
+-XX:+ShowCodeDetailsInExceptionMessages
+-XX:+ExtensiveErrorReports
+-XX:+ErrorLogSecondaryErrorDetails
+-XX:+PrintCommandLineFlags
+-Xlog:gc+init
+-Dsun.java2d.renderer.useLogger=true
+-Xss4m
+-Xms8192m
+-Xmx10240m
+```
+
+未采用的 5 项（`excluded_profile`，Mikihime 路径专属，实验根没有
+`mikohime/` 运行时；保留源游戏的 `native\windows`/log4j 配置）：
+
+```text
+-XX:CompilerDirectivesFile=..\mikohime/.rouge_owo
+-Djava.library.path="..\mikohime/windows"
+-Dlog4j.configuration=..\mikohime/mikohime.properties
+-Djava.xml.config.file=..\mikohime/miko_jxp.properties
+-Dcom.fs.starfarer.launcher_bg=..\mikohime/launcher_bg.jpg
+```
+
+### 9.4 用户实机 gate
+
+A+ **未到主菜单**；B+ **到主菜单**但只有日志级证据。战役、战斗、读档、
+中文输入、字体视觉、分辨率、稳定性仍全部 **pending**。B+ 的 CIF/Prepatcher
+加载状态是组件级证据，不等于 IME 候选框/字体视觉/Prepatcher 行为已由用户
+验收；不宣称性能或显存收益。
