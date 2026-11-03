@@ -659,13 +659,14 @@ def _route_a_sources(tmp_path, *, enabled=("mod_a",)):
                json.dumps({"enabledMods": list(enabled)}))
 
     mixin = tmp_path / "mixin"
-    _write(mixin / "mod_info.json", '{"id":"MixinLib"}')
+    _write(mixin / "mod_info.json", '{"id":"MixinLib","version":"1.2.5"}')
     (mixin / "jars").mkdir(parents=True, exist_ok=True)
     (mixin / "jars/MixinLib-bridge.jar").write_bytes(b"agent")
     (mixin / "jars/fr.jar").write_bytes(b"fr-0.9.5")
 
     par = tmp_path / "par"
-    _write(par / "mod_info.json", '{"id":"starsectorparallel"}')
+    _write(par / "mod_info.json",
+           '{"id":"starsectorparallel","version":"0.1.0"}')
     (par / "jars").mkdir(parents=True, exist_ok=True)
     (par / "jars/starsectorparallel.jar").write_bytes(b"par")
 
@@ -893,6 +894,14 @@ def test_plan_disable_mixinfr_fonts_reports_no_switch(tmp_path):
     result = apply_disable_mixinfr_fonts(plan)
     assert result["applied"] is False
     assert result["changed"] is False
+
+
+def test_plan_disable_mixinfr_fonts_missing_mod_info(tmp_path):
+    root = tmp_path / "install"
+    (root / "mods/MixinFR").mkdir(parents=True)
+    plan = plan_disable_mixinfr_fonts(root)
+    assert plan["applicable"] is True
+    assert plan["version"] is None
 
 
 def test_disable_mixinfr_fonts_edits_explicit_switch_and_rolls_back(tmp_path):
@@ -1163,3 +1172,143 @@ def test_plan_route_b_prechecks_ddscache_and_lunalib(tmp_path):
         dest=result["rollback"]["dest"], apply=True)
     assert rolled["ok"] is True
     assert not (root / "mods/DDSCache").exists()
+
+
+# ---- 终审 must-fix：fail-closed / 单参数内存 / 版本断言 ----
+
+
+def test_apply_route_b_refuses_missing_enabled_mods(tmp_path, capsys):
+    root, fr, jdk, hn = _route_b_sources(tmp_path, enabled=None)
+    plan = plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn)
+    assert plan["enabled_mods"]["state"] == "missing"
+    assert any("enabled_mods.json missing" in warning
+               for warning in plan["warnings"])
+    plan["apply"] = True
+    with pytest.raises(ValueError, match="enabled_mods.json"):
+        apply_route_b(plan)
+    assert not (root / "route-b.vmparams").exists()
+    assert not (root / "mods/enabled_mods.json").exists()
+    assert not (tmp_path / "scripts/launch-route-b.bat").exists()
+
+    rc = main([
+        "route-b", "--root", str(root), "--fr-dir", str(fr),
+        "--jdk-dir", str(jdk), "--hypernova-mod", str(hn),
+        "--apply", "--text",
+    ])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.err.startswith("FATAL:")
+    assert "enabled_mods.json" in captured.err
+    assert not (root / "route-b.vmparams").exists()
+    assert not (root / "mods/enabled_mods.json").exists()
+
+
+def test_apply_route_a_refuses_missing_enabled_mods(tmp_path, capsys):
+    root, mixin, par, hn = _route_a_sources(tmp_path, enabled=None)
+    plan = plan_route_a(root, mixinfr_dir=mixin, parallel_dir=par,
+                        hypernova_mod=hn)
+    assert plan["enabled_mods"]["state"] == "missing"
+    assert any("enabled_mods.json missing" in warning
+               for warning in plan["warnings"])
+    plan["apply"] = True
+    with pytest.raises(ValueError, match="enabled_mods.json"):
+        apply_route_a(plan)
+    assert not (root / "route-a.vmparams").exists()
+    assert not (root / "mods/enabled_mods.json").exists()
+    assert not (tmp_path / "scripts/launch-route-a.bat").exists()
+
+    rc = main([
+        "route-a", "--root", str(root), "--mixinfr", str(mixin),
+        "--parallel", str(par), "--hypernova-mod", str(hn),
+        "--apply", "--text",
+    ])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.err.startswith("FATAL:")
+    assert "enabled_mods.json" in captured.err
+    assert not (root / "route-a.vmparams").exists()
+    assert not (root / "mods/enabled_mods.json").exists()
+
+
+@pytest.mark.parametrize("kwargs, expected_xms, expected_xmx", [
+    ({"xms": "8G"}, "8G", "4g"),
+    ({"xmx": "10G"}, "2g", "10G"),
+])
+def test_plan_route_b_single_memory_override_preserves_other(
+        tmp_path, kwargs, expected_xms, expected_xmx):
+    root, fr, jdk, hn = _route_b_sources(tmp_path)
+    _write(root / "vmparams",
+           "java.exe -Xms2g -Xmx4g -classpath janino.jar "
+           "com.fs.starfarer.StarfarerLauncher\n")
+    plan = plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn,
+                        **kwargs)
+    tokens = plan["vmparams"].split()
+    assert f"-Xms{expected_xms}" in tokens
+    assert f"-Xmx{expected_xmx}" in tokens
+    if "xms" in kwargs:
+        assert "-Xms2g" not in tokens   # 显式项被替换
+        assert "-Xmx4g" in tokens       # 另一项保留源值
+    else:
+        assert "-Xmx4g" not in tokens
+        assert "-Xms2g" in tokens
+    assert plan["memory"]["xms"] == expected_xms
+    assert plan["memory"]["xmx"] == expected_xmx
+    assert plan["memory"]["overridden"] is True
+    assert plan["memory"]["source"] == "override"
+
+
+def test_plan_route_b_space_separated_memory_override(tmp_path):
+    root, fr, jdk, hn = _route_b_sources(tmp_path)
+    _write(root / "vmparams",
+           "java.exe -Xms 2g -Xmx 4g -classpath janino.jar "
+           "com.fs.starfarer.StarfarerLauncher\n")
+    plan = plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn,
+                        xms="8G")
+    tokens = plan["vmparams"].split()
+    assert "-Xms8G" in tokens
+    assert "-Xmx4g" in tokens
+    assert "2g" not in tokens
+    assert "4g" not in tokens   # 被合并成 -Xmx4g
+    assert plan["memory"]["xms"] == "8G"
+    assert plan["memory"]["xmx"] == "4g"
+
+
+@pytest.mark.parametrize("device, payload, label, expected", [
+    ("mixinfr", '{"id":"MixinLib","version":"1.2.4"}', "MixinFR", "1.2.5"),
+    ("parallel", '{"id":"starsectorparallel","version":"0.0.9"}',
+     "StarsectorParallel", "0.1.0"),
+])
+def test_route_a_warns_on_unexpected_version(
+        tmp_path, device, payload, label, expected):
+    root, mixin, par, hn = _route_a_sources(tmp_path)
+    target = mixin if device == "mixinfr" else par
+    _write(target / "mod_info.json", payload)
+    plan = plan_route_a(root, mixinfr_dir=mixin, parallel_dir=par,
+                        hypernova_mod=hn)
+    check = plan[device]
+    assert check["expected_version"] == expected
+    assert check["version_ok"] is False
+    warnings = [warning for warning in plan["warnings"]
+                if warning.startswith("WARNING:")]
+    assert any(label in warning and expected in warning
+               for warning in warnings)
+
+    plan["apply"] = True
+    result = apply_route_a(plan)
+    assert any(label in warning and expected in warning
+               for warning in result["warnings"])
+    assert result[device]["version_ok"] is False
+
+
+def test_route_a_text_shows_version_checks(tmp_path, capsys):
+    root, mixin, par, hn = _route_a_sources(tmp_path)
+    rc = main([
+        "route-a", "--root", str(root), "--mixinfr", str(mixin),
+        "--parallel", str(par), "--hypernova-mod", str(hn), "--text",
+    ])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "mixinfr.version=1.2.5" in captured.out
+    assert "mixinfr.version_ok=true" in captured.out
+    assert "parallel.version=0.1.0" in captured.out
+    assert "parallel.version_ok=true" in captured.out

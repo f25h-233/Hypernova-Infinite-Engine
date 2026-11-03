@@ -1010,6 +1010,23 @@ def _read_mod_id(path: Path) -> str:
     return mod_id
 
 
+def _read_mod_version(path: Path) -> str | None:
+    """读取 ``mod_info.json`` 的 version；字符串或 ``{major,minor,patch}``。"""
+    if not path.is_file():
+        raise FileNotFoundError(f"mod_info.json not found: {path}")
+    payload = load(path)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path}: top-level must be an object")
+    value = payload.get("version")
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        parts = [value.get("major"), value.get("minor"), value.get("patch")]
+        if all(isinstance(part, int) for part in parts):
+            return ".".join(str(part) for part in parts)
+    return None
+
+
 def _prepatcher_capabilities(prepatcher_dir: Path) -> dict[str, object]:
     """只读能力检查；不修改 prepatcher.properties（保持 production 默认）。"""
     props = prepatcher_dir / "prepatcher.properties"
@@ -1111,18 +1128,78 @@ def _lunalib_settings_state(root: Path) -> dict[str, object]:
     }
 
 
+def _memory_kind(token: str) -> str | None:
+    """识别 ``-Xms``/``-Xmx``（区分 ``-Xmso`` 等近似 token）。"""
+    lowered = token.lower()
+    if lowered in ("-xms", "-xmx"):
+        return lowered[1:]
+    if len(token) > 4 and token[4].isdigit():
+        if lowered.startswith("-xms"):
+            return "xms"
+        if lowered.startswith("-xmx"):
+            return "xmx"
+    return None
+
+
+def _memory_values(tokens: list[str]) -> tuple[str | None, str | None]:
+    """从 token 序列提取最终 ``-Xms``/``-Xmx`` 值（支持粘连/空格两种写法）。"""
+    xms: str | None = None
+    xmx: str | None = None
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        kind = _memory_kind(token)
+        if kind is not None:
+            if token.lower() in ("-xms", "-xmx"):
+                if (index + 1 < len(tokens)
+                        and tokens[index + 1][:1].isdigit()):
+                    value = tokens[index + 1]
+                    index += 2
+                else:
+                    index += 1
+                    continue
+            else:
+                value = token[4:]
+                index += 1
+            if kind == "xms":
+                xms = value
+            else:
+                xmx = value
+            continue
+        index += 1
+    return xms, xmx
+
+
 def _route_b_tokens(tokens: list[str], *, prepatcher: bool,
                     xms: str | None = None,
                     xmx: str | None = None) -> list[str]:
-    """清洗旧注入并生成路线 B 的 token-less 参数序列。"""
-    out: list[str] = []
+    """清洗旧注入并生成路线 B 的 token-less 参数序列。
+
+    只传 ``xms`` 或 ``xmx`` 时，另一个必须保留源 vmparams 的值；两者同时
+    显式传入才完全覆盖。最终内存参数统一重写到 options 段，plan 里再回读
+    最终 ``-Xms``/``-Xmx``，避免“只传一个、另一个丢失”。
+    """
     replace_memory = xms is not None or xmx is not None
-    for token in tokens:
+    source_xms, source_xmx = _memory_values(tokens)
+    effective_xms = xms if xms is not None else source_xms
+    effective_xmx = xmx if xmx is not None else source_xmx
+
+    out: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
         lowered = token.lower()
         if token in ROUTE_B_JAVA28_REMOVED_TOKENS:
+            index += 1
             continue
-        if replace_memory and (
-                lowered.startswith("-xms") or lowered.startswith("-xmx")):
+        if replace_memory and _memory_kind(token) is not None:
+            # 空格写法：``-Xms 8G``；把值一起删掉。
+            if (token.lower() in ("-xms", "-xmx")
+                    and index + 1 < len(tokens)
+                    and tokens[index + 1][:1].isdigit()):
+                index += 2
+            else:
+                index += 1
             continue
         if lowered.startswith("-javaagent:"):
             name = lowered[len("-javaagent:"):].replace("\\", "/")
@@ -1130,10 +1207,13 @@ def _route_b_tokens(tokens: list[str], *, prepatcher: bool,
             if (name in _HYPERNOVA_AGENT_NAMES
                     or name == _FR_AGENT_NAME
                     or name == _PREPATCHER_AGENT_NAME):
+                index += 1
                 continue
         if lowered.startswith("-dhypernova."):
+            index += 1
             continue
         out.append(token)
+        index += 1
 
     if MAIN_CLASS not in out:
         raise ValueError(f"vmparams has no main class: {MAIN_CLASS}")
@@ -1153,10 +1233,10 @@ def _route_b_tokens(tokens: list[str], *, prepatcher: bool,
             break
 
     memory: list[str] = []
-    if xms is not None:
-        memory.append(f"-Xms{xms}")
-    if xmx is not None:
-        memory.append(f"-Xmx{xmx}")
+    if effective_xms is not None:
+        memory.append(f"-Xms{effective_xms}")
+    if effective_xmx is not None:
+        memory.append(f"-Xmx{effective_xmx}")
     options = memory + list(ROUTE_B_FLAGS) + [
         HYPERNOVA_AGENT_TOKEN, FR_AGENT_TOKEN]
     if prepatcher:
@@ -1202,6 +1282,7 @@ def plan_route_b(
         _route_b_tokens(
             args, prepatcher=prepatcher_dir is not None,
             xms=xms, xmx=xmx))
+    final_xms, final_xmx = _memory_values(new_line.split())
     route_b_vmparams = base / ROUTE_B_VMPARAMS_NAME
     launcher_path = _route_launcher_path(base)
     launcher_text = _route_launcher_text(base)
@@ -1316,7 +1397,11 @@ def plan_route_b(
 
     enabled_mods = _route_b_enabled_mods(
         base, prepatcher_dir is not None)
-    if enabled_mods["state"] == "error":
+    if enabled_mods["state"] == "missing":
+        warnings.append(
+            "enabled_mods.json missing; run the 256-mod migration (Task 2) "
+            "before applying route B (apply will refuse otherwise)")
+    elif enabled_mods["state"] == "error":
         warnings.append(
             "enabled_mods.json is unreadable/invalid; apply will refuse to "
             f"write it: {enabled_mods['error']}")
@@ -1392,8 +1477,8 @@ def plan_route_b(
         "agents": agents,
         "flags": list(ROUTE_B_FLAGS),
         "memory": {
-            "xms": xms,
-            "xmx": xmx,
+            "xms": final_xms,
+            "xmx": final_xmx,
             "overridden": xms is not None or xmx is not None,
             "source": ("override" if (xms is not None or xmx is not None)
                        else "inherited"),
@@ -1422,13 +1507,20 @@ def plan_route_b(
 
 
 def _apply_enabled_mods(root: Path, spec: dict[str, object]) -> dict[str, object]:
-    """合并启用列表；parse error 必须 fail-closed，不能覆盖 256 列表。"""
+    """合并启用列表；missing / parse error 都必须 fail-closed。
+
+    目标根没有 ``enabled_mods.json`` 时不能凭空写一个“最小列表”，否则会
+    静默关闭已迁移的 256 个 mod。调用方必须先把迁移 / 启动器生成的列表
+    放到位。
+    """
     path_text = spec.get("path")
     path = Path(str(path_text)) if path_text else root / ENABLED_MODS_PATH
     state = _enabled_mods_state(path)
-    if state["state"] == "error":
+    if state["state"] != "ok":
         raise ValueError(
-            f"refusing to overwrite invalid enabled_mods.json: {state['error']}")
+            "refusing to overwrite enabled_mods.json "
+            f"(state={state['state']}, error={state['error']}); run the "
+            "256-mod migration or create it in the game launcher first")
     ids = list(state["ids"]) if isinstance(state["ids"], list) else []
     payload = state.get("payload")
     base_payload = dict(payload) if isinstance(payload, dict) else {}
@@ -1525,17 +1617,18 @@ def apply_route_b(plan: dict[str, object]) -> dict[str, object]:
             raise ValueError(
                 "source vmparams changed after planning; replan route-b")
 
-    # enabled_mods 解析失败必须在任何写盘之前拒绝，绝不能覆盖 256 列表。
+    # enabled_mods 缺失或解析失败必须在任何写盘之前拒绝，绝不能覆盖 256 列表。
     raw_enabled = plan.get("enabled_mods")
     enabled_spec = raw_enabled if isinstance(raw_enabled, dict) else {}
     enabled_path = Path(str(enabled_spec.get("path") or
                             root / ENABLED_MODS_PATH))
     _snapshot_paths(root, [enabled_path])
     state = _enabled_mods_state(enabled_path)
-    if state["state"] == "error":
+    if state["state"] != "ok":
         raise ValueError(
-            f"refusing to apply with invalid enabled_mods.json: "
-            f"{state['error']}")
+            "refusing to apply with missing/invalid enabled_mods.json "
+            f"(state={state['state']}, error={state['error']}); run the "
+            "256-mod migration or create it in the game launcher first")
     raw_add = enabled_spec.get("add")
     add_ids = [str(item) for item in raw_add] if isinstance(raw_add, list) else []
     raw_mod_ids = plan.get("mod_ids")
@@ -1751,25 +1844,31 @@ def _route_a_managed_mods(
     parallel_dir: str | Path,
     hypernova_mod: str | Path,
 ) -> list[dict[str, object]]:
-    """按启用顺序（Hypernova → MixinLib → starsectorparallel）校验 mod id。"""
+    """按启用顺序校验 mod id，并断言 MixinFR 1.2.5 / Parallel 0.1.0。"""
     specs = [
-        (HYPERNOVA_MOD_ID, Path(hypernova_mod), root / HYPERNOVA_MOD_REL),
+        (HYPERNOVA_MOD_ID, Path(hypernova_mod), root / HYPERNOVA_MOD_REL,
+         None, "Hypernova"),
         (MIXINFR_MOD_ID, Path(mixinfr_dir),
-         root / "mods" / MIXINFR_MOD_FOLDER),
+         root / "mods" / MIXINFR_MOD_FOLDER, "1.2.5", "MixinFR"),
         (PARALLEL_MOD_ID, Path(parallel_dir),
-         root / "mods" / PARALLEL_MOD_FOLDER),
+         root / "mods" / PARALLEL_MOD_FOLDER, "0.1.0", "StarsectorParallel"),
     ]
     managed: list[dict[str, object]] = []
-    for mod_id, src, dst in specs:
+    for mod_id, src, dst, expected_version, label in specs:
         info = src / "mod_info.json"
         entry: dict[str, object] = {
             "id": mod_id,
+            "label": label,
             "src": str(src),
             "dst": str(dst),
             "mod_info": str(info),
             "verified": False,
             "source_id": None,
             "error": None,
+            "version": None,
+            "expected_version": expected_version,
+            "version_ok": None,
+            "version_error": None,
         }
         try:
             actual = _read_mod_id(info)
@@ -1782,6 +1881,14 @@ def _route_a_managed_mods(
             else:
                 entry["error"] = (
                     f"mod_info id mismatch: {actual!r}, expected {mod_id!r}")
+        if expected_version is not None:
+            try:
+                version = _read_mod_version(info)
+            except Exception as exc:  # noqa: BLE001 - dry-run 只告警
+                entry["version_error"] = str(exc)
+            else:
+                entry["version"] = version
+                entry["version_ok"] = version == expected_version
         managed.append(entry)
     return managed
 
@@ -1896,10 +2003,22 @@ def plan_route_a(
             warnings.append(
                 f"cannot verify mod id {item['id']} from "
                 f"{item['mod_info']}: {item['error']}")
+        expected = item.get("expected_version")
+        if expected is not None and not item.get("version_ok"):
+            if item.get("version"):
+                warnings.append(
+                    f"WARNING: {item['label']} version is "
+                    f"{item['version']}, expected {expected} "
+                    "(M7 is designed for this exact version)")
+            else:
+                detail = item.get("version_error") or "version missing"
+                warnings.append(
+                    f"WARNING: cannot read {item['label']} version from "
+                    f"{item['mod_info']}, expected {expected} ({detail})")
     if enabled_mods["state"] == "missing":
         warnings.append(
             "enabled_mods.json missing; run the 256-mod migration (Task 2) "
-            "before applying route A")
+            "before applying route A (apply will refuse otherwise)")
     elif enabled_mods["state"] == "error":
         warnings.append(
             "enabled_mods.json is unreadable/invalid; apply will refuse to "
@@ -1935,6 +2054,7 @@ def plan_route_a(
         {"path": str(launcher_path), "kind": "file",
          "content": launcher_text},
     ]
+    managed_by_id = {str(item["id"]): item for item in managed}
 
     return {
         "route": "a",
@@ -2004,6 +2124,9 @@ def plan_route_a(
             "bundled_fr": str(mixin_fr),
             "bundled_fr_present": mixin_fr.is_file(),
             "bundled_fr_version": "0.9.5",
+            "version": managed_by_id[MIXINFR_MOD_ID].get("version"),
+            "expected_version": "1.2.5",
+            "version_ok": managed_by_id[MIXINFR_MOD_ID].get("version_ok"),
             "note": "MixinFR bundles FR 0.9.5; never add FR 0.9.7 on route A",
         },
         "parallel": {
@@ -2011,6 +2134,9 @@ def plan_route_a(
             "source": str(parallel_dir),
             "dst": str(base / "mods" / PARALLEL_MOD_FOLDER),
             "requires": MIXINFR_MOD_ID,
+            "version": managed_by_id[PARALLEL_MOD_ID].get("version"),
+            "expected_version": "0.1.0",
+            "version_ok": managed_by_id[PARALLEL_MOD_ID].get("version_ok"),
         },
         "enabled_mods": enabled_mods,
         "managed_mods": managed,
@@ -2046,10 +2172,11 @@ def _apply_route_a_enabled_mods(
     path_text = spec.get("path")
     path = Path(str(path_text)) if path_text else root / ENABLED_MODS_PATH
     state = _enabled_mods_state(path)
-    if state["state"] == "error":
+    if state["state"] != "ok":
         raise ValueError(
-            "refusing to overwrite invalid enabled_mods.json: "
-            f"{state['error']}")
+            "refusing to overwrite enabled_mods.json "
+            f"(state={state['state']}, error={state['error']}); run the "
+            "256-mod migration or create it in the game launcher first")
     verified = [item for item in managed if item.get("verified")]
     if len(verified) != len(managed):
         missing = [str(item["id"]) for item in managed
@@ -2131,10 +2258,11 @@ def apply_route_a(plan: dict[str, object]) -> dict[str, object]:
                             root / ENABLED_MODS_PATH))
     _snapshot_paths(root, [enabled_path])
     state = _enabled_mods_state(enabled_path)
-    if state["state"] == "error":
+    if state["state"] != "ok":
         raise ValueError(
-            "refusing to apply with invalid enabled_mods.json: "
-            f"{state['error']}")
+            "refusing to apply with missing/invalid enabled_mods.json "
+            f"(state={state['state']}, error={state['error']}); run the "
+            "256-mod migration or create it in the game launcher first")
 
     raw_managed = plan.get("managed_mods")
     managed = ([item for item in raw_managed if isinstance(item, dict)]
@@ -2208,6 +2336,9 @@ def apply_route_a(plan: dict[str, object]) -> dict[str, object]:
         "launcher": plan.get("launcher"),
         "java": plan.get("java"),
         "jre_version": plan.get("jre_version"),
+        "mixinfr": plan.get("mixinfr"),
+        "parallel": plan.get("parallel"),
+        "warnings": list(plan.get("warnings") or []),
     }
 
 
@@ -2559,17 +2690,10 @@ def _verify_rollback_targets(
 
 
 def _mixinfr_version(mod_dir: Path) -> str | None:
-    payload = _read_json(mod_dir / "mod_info.json")
-    if not isinstance(payload, dict):
+    try:
+        return _read_mod_version(mod_dir / "mod_info.json")
+    except Exception:  # noqa: BLE001 - 字体诊断对缺失/坏文件保持宽松
         return None
-    value = payload.get("version")
-    if isinstance(value, str):
-        return value.strip() or None
-    if isinstance(value, dict):
-        parts = [value.get("major"), value.get("minor"), value.get("patch")]
-        if all(isinstance(part, int) for part in parts):
-            return ".".join(str(part) for part in parts)
-    return None
 
 
 def _font_switch_paths(
@@ -3220,6 +3344,11 @@ def _format_route_a_text(data: dict[str, object]) -> str:
         rollback = raw_rollback if isinstance(raw_rollback, dict) else {}
         generated = data.get("generated")
         copied = data.get("copied")
+        raw_mixinfr = data.get("mixinfr")
+        mixinfr = raw_mixinfr if isinstance(raw_mixinfr, dict) else {}
+        raw_parallel = data.get("parallel")
+        parallel = raw_parallel if isinstance(raw_parallel, dict) else {}
+        raw_warnings = data.get("warnings")
         return "\n".join([
             f"applied={flag(data.get('applied'))}",
             f"ok={flag(data.get('ok'))}",
@@ -3228,6 +3357,11 @@ def _format_route_a_text(data: dict[str, object]) -> str:
             f"rollback.manifest={rollback.get('manifest')}",
             f"generated={len(generated) if isinstance(generated, list) else 0}",
             f"copied={len(copied) if isinstance(copied, list) else 0}",
+            f"mixinfr.version={mixinfr.get('version')}",
+            f"mixinfr.version_ok={flag(mixinfr.get('version_ok'))}",
+            f"parallel.version={parallel.get('version')}",
+            f"parallel.version_ok={flag(parallel.get('version_ok'))}",
+            f"warnings={len(raw_warnings) if isinstance(raw_warnings, list) else 0}",
             f"root_vmparams_modified="
             f"{flag(data.get('root_vmparams_modified'))}",
         ])
@@ -3239,6 +3373,10 @@ def _format_route_a_text(data: dict[str, object]) -> str:
     raw_warnings = data.get("warnings")
     raw_copies = data.get("copies")
     raw_agents = data.get("agents")
+    raw_mixinfr = data.get("mixinfr")
+    mixinfr = raw_mixinfr if isinstance(raw_mixinfr, dict) else {}
+    raw_parallel = data.get("parallel")
+    parallel = raw_parallel if isinstance(raw_parallel, dict) else {}
     return "\n".join([
         f"route={data.get('route')}",
         f"root={data.get('root')}",
@@ -3249,6 +3387,10 @@ def _format_route_a_text(data: dict[str, object]) -> str:
         f"launcher.argfile={launcher.get('argfile')}",
         f"vmparams={data.get('vmparams_path')}",
         f"agents={joined(raw_agents)}",
+        f"mixinfr.version={mixinfr.get('version')}",
+        f"mixinfr.version_ok={flag(mixinfr.get('version_ok'))}",
+        f"parallel.version={parallel.get('version')}",
+        f"parallel.version_ok={flag(parallel.get('version_ok'))}",
         f"root_vmparams_modified="
         f"{flag(data.get('root_vmparams_modified'))}",
         f"copies={len(raw_copies) if isinstance(raw_copies, list) else 0}",

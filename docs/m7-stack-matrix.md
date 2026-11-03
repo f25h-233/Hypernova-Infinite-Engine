@@ -3,9 +3,11 @@
 > 适用：Starsector 0.98a-RC8（Windows），汉化优化测试版 v2026.10.15。
 > 日期：2026-11-04。
 >
-> **Task 7 实机验证尚未执行。** 本文件里的“实测”只指已有的真实运行 / 日志 /
-> 自动化证据；路线 A、B 的运行时结论一律是 `dry-run 结构` 或 `推断`，不能读成
-> “已通过”。用户实机 gate 见 Task 7 生成的 `docs/m7-results.md`。
+> **Task 7 实机验证已执行（2026-11-04）。** 路线 B 到主菜单 **105.8 s**；
+> 路线 A 记为 **timeout-not-menu**（约 1200 s）。用户实机 gate（战役 /
+> 战斗 / 读档 / 中文输入 / 字体视觉 / 稳定性）仍 **pending**；“菜单到达”
+> 不等于视觉 / 输入 / 字体 / 稳定性通过。证据与时间线见
+> `docs/m7-results.md`。
 
 ## 0. 状态口径
 
@@ -16,16 +18,17 @@
 | `推断` | 来自上游 release notes / README / 论坛帖 / 源码门禁；本机未复现。 |
 | `不支持` | 上游明确不支持，或本机 / 源码硬门禁拒绝。 |
 
-`待验证` 不是一种状态，而是 Task 7 的执行项；在它跑完之前，任何运行时收益
-和兼容结论都不写成“已实测”。
+`待验证` 指用户实机 gate（战役 / 战斗 / 读档 / 中文输入 / 字体视觉 /
+稳定性）尚未执行；Task 7 的菜单 / 日志证据单独标为 `实测（...）`，不把
+用户 gate 写成通过。
 
 ## 1. 路线总表
 
 | 路线 | Java | FR | MixinFR | Parallel | VramOpt | Hypernova | 汉化优化版 | 高清字体 | IME | Prepatcher | 状态 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| **A**：MixinFR + JRE 17 + Parallel | JRE **17.0.10**（`jre/release`；启动器显式 `..\jre\bin\java.exe`；运行时待验证） | **0.9.5**（MixinFR 内置） | **1.2.5**（mod id `MixinLib`；含 `MixinFRImeFix.jar`） | **0.1.0**（依赖 MixinLib） | **1.0.45**（由 256-mod 迁移带入） | **0.1.0** agent + mod；`lazy` / DDS / file-index 受 FR 0.9.5 门禁关闭；scripts / normal-cache 待实机 | **推断**（上游声明：MixinFR README 明确 2026.10.15） | **推断**（上游声明：1.2.4 重定向、1.2.5 修竖条；待实机看 `REMAP-OK`） | **推断**（上游声明：`MixinFRImeFix`）；备选 `disable-ime` + ChineseInputFix | **不支持**（0.18.4 在 MixinLib 下 20/34 `SKIPPED_LOADER`；Java 27+ fatal） | `dry-run 结构`（Task 4，commit `581eb51`；实机待 Task 7） |
-| **B**：FR 0.9.7rc2 + Java 28 | Temurin **28-beta+13-ea**（`jdk-28+13`；启动器显式；运行时待验证） | **0.9.7rc2** | 无 | 无（缺 MixinLib 依赖） | **1.0.45** | **0.1.0** agent + mod；`lazy` / DDS / file-index 可用（M6 **260mods 单环境 agent-only**，非 M7 根；M7 待 Task 7） | **推断**（21835 明确说优化版自带启动加速，与 plain FR 会打架；M7 目标根是优化版） | **不支持**（plain FR 不重定向矢量字体；上游 21705 说明） | 无 `MixinFRImeFix`；用 `disable-ime` + ChineseInputFix | **推断**（可选 0.18.4；实验；Java 28 未声明） | `dry-run 结构`（Task 3，commit `80666a9`；实机待 Task 7） |
-| **B + Prepatcher**（可选） | 28（Prepatcher **未声明** Java 28） | 0.9.7rc2 | 无 | 无 | 1.0.45 | 0.1.0 | 同上（实验） | 不支持 | ChineseInputFix | **0.18.4**；agent 顺序 Hypernova → FR → Prepatcher；`SKIPPED_LOADER` 需实机看 | `dry-run 结构`（Task 3 Prepatcher 计划；实机待 Task 7） |
+| **A**：MixinFR + JRE 17 + Parallel | JRE **17.0.10**（`jre/release`；启动器显式 `..\jre\bin\java.exe`；Task 7 日志实测 17.0.10） | **0.9.5**（MixinFR 内置） | **1.2.5**（mod id `MixinLib`；含 `MixinFRImeFix.jar`） | **0.1.0**（依赖 MixinLib） | **1.0.45**（由 256-mod 迁移带入） | **0.1.0** agent + mod；`lazy` / DDS / file-index 受 FR 0.9.5 门禁关闭；scripts / normal-cache 待实机 | **推断**（上游声明：MixinFR README 明确 2026.10.15） | **推断**（上游声明：1.2.4 重定向、1.2.5 修竖条；待实机看 `REMAP-OK`） | **推断**（上游声明：`MixinFRImeFix`）；备选 `disable-ime` + ChineseInputFix | **不支持**（0.18.4 在 MixinLib 下 20/34 `SKIPPED_LOADER`；Java 27+ fatal） | `实测（timeout-not-menu，约 1200 s；用户 gate pending）` |
+| **B**：FR 0.9.7rc2 + Java 28 | Temurin **28-beta+13-ea**（`jdk-28+13`；启动器显式；Task 7 日志实测 28-beta） | **0.9.7rc2** | 无 | 无（缺 MixinLib 依赖） | **1.0.45** | **0.1.0** agent + mod；`lazy` / DDS / file-index 可用（M7 Task 7 菜单 105.8 s；M6 **260mods 单环境 agent-only** 另有证据） | **推断**（21835 明确说优化版自带启动加速，与 plain FR 会打架；M7 目标根是优化版） | **不支持**（plain FR 不重定向矢量字体；上游 21705 说明） | 无 `MixinFRImeFix`；用 `disable-ime` + ChineseInputFix | **推断**（可选 0.18.4；实验；Java 28 未声明） | `实测（菜单 105.8 s；用户 gate pending）` |
+| **B + Prepatcher**（可选） | 28（Prepatcher **未声明** Java 28） | 0.9.7rc2 | 无 | 无 | 1.0.45 | 0.1.0 | 同上（实验） | 不支持 | ChineseInputFix | **0.18.4**；agent 顺序 Hypernova → FR → Prepatcher；`SKIPPED_LOADER` 需实机看 | `dry-run 结构`（Prepatcher 未实机；B 本体菜单 105.8 s） |
 
 ### 表注
 
@@ -36,15 +39,16 @@
    version”，`lazy` / file-index 关闭。`scripts` 缓存只要求 FR 存在，理论上仍可
    注册；`textures normal-cache` 是否生效以 `scripts-agent.log` 为准。**不要**
    把路线 A 当成 Hypernova 全功能栈。
-2. **B 的 Hypernova 组合有 M6 实机证据**。M6 在 `Starsector-098-260mods`
+2. **B 的 Hypernova 组合有 M6 + M7 证据**。M6 在 `Starsector-098-260mods`
    （agent-only，Java 28 + FR 0.9.7rc2 + VOpt 1.0.45）跑过菜单 smoke：
    `lazy.present=true`、`ddsHit=19`、`texture_errors_total=0`
-   （`docs/m6-results.md` §3.2）。这证明组件组合可行，**不等于** M7 的新安装
-   根、mod-enabled 形态已通过 Task 7。
+   （`docs/m6-results.md` §3.2）。M7 Task 7 的 B 在优化测试根、mod-enabled
+   形态下到达菜单（105.8 s），但这些证据**不等于**用户实机 gate 通过。
 3. **B 与“汉化优化版”的关系是本矩阵最大的风险点**。论坛 21835（用户本人教程）
    明确建议不要直接把优化测试版汉化与 plain FR 同用；两者都带启动加速。
-   M7 的 B 是在优化测试根上的实验，Task 7 之前只能写 `dry-run 结构` /
-   `推断`。若只要 21835 的稳定栈，应使用非优化 / 传统汉化安装。
+   M7 的 B 是在优化测试根上的实验：Task 7 补齐先决条件后到达菜单
+   （105.8 s），用户实机 gate 仍 pending。若只要 21835 的稳定栈，应使用
+   非优化 / 传统汉化安装。
 4. **A 不支持 Java 28**。MixinFR 与 StarsectorParallel 官方都只支持游戏自带
    JRE 17；强制 28 的结果是静默跳过或硬失败，不是“可能也行”。
 5. **Prepatcher 是路线 B 的可选项，不是路线 A 的补丁**。路线 A 的
@@ -64,7 +68,7 @@
 | VOpt 1.0.45 + FR 0.9.7rc2 实机集成：`VOpt Loaded`、`Suitable FR Version found`、`Failed to initialize VRAM Optimizer=0` | B | `实测`（M1f） | `docs/m1f-results.md` §5.3 |
 | 路线 A 安装结构：JRE 17 启动器、两个 agent（MixinLib → Hypernova）、8 项复制、enabled 顺序 Hypernova → MixinLib → starsectorparallel、根 `vmparams` 不改 | A | `dry-run 结构` | Task 4 报告；commit `581eb51`；`python -I tools/m7_stack.py route-a … --text` |
 | 路线 B 安装结构：token-less argfile、显式 `jdk-28+13` 启动器、15 项复制、agent 顺序 Hypernova → FR → [Prepatcher]、根 `vmparams` 不改 | B | `dry-run 结构` | Task 3 报告；commit `80666a9`；`SS098.../evidence/m7-route-b-plan.json` |
-| 路线 A/B 真实启动、菜单、战役、战斗、读档、分辨率、中文输入、字体视觉 | A/B | `推断`（未验证；Task 7 待跑） | Task 7 `docs/m7-results.md`（尚未生成） |
+| 路线 A/B 真实启动、菜单、战役、战斗、读档、分辨率、中文输入、字体视觉 | A/B | `实测`（B 菜单 105.8 s、日志级读档/战斗；A timeout-not-menu；用户 gate pending） | `docs/m7-results.md` §1/§4；`SS098_Hypernova_Compat_AuditTest/evidence/fixloop1/route-b-menu/`、`route-a-run4-timeout/` |
 
 ## 3. 能力取舍
 

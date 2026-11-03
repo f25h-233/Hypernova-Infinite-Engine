@@ -3,11 +3,12 @@
 > 适用：Starsector **0.98a-RC8**（Windows），远星汉化**优化测试版
 > v2026.10.15**。其他版本 / 其他汉化包不要照抄。
 >
-> **验证状态（先看这一行）**：M7 的 Task 1–5 已完成工具、测试和 dry-run；
-> **Task 7 实机验证还没跑**。本教程里写“应该看到 / 预期”的地方，都是
-> dry-run、代码或上游文档给出的结构证据；真正的启动、菜单、战役、战斗、
-> 读档、中文输入、字体视觉，请按第 6 节自己跑一遍并记 `待验证`。不要把
-> “菜单能进”当成整套通过。
+> **验证状态（先看这一行）**：M7 的 Task 1–7 已完成工具、测试和实机验证。
+> **Task 7 已跑**：路线 B 到主菜单 **105.8 s**（日志 / 截图）；路线 A 在
+> 600 s 上限 + 两次延长（约 1200 s）后仍未到主菜单，记为
+> **timeout-not-menu**。用户实机 gate（战役、战斗、读档、中文输入、字体
+> 视觉、稳定性）仍 **pending**；菜单到达不是整套通过。本教程写“应该看到 /
+> 预期”的地方是实测日志或结构证据，不是用户视觉验收。
 >
 > 本教程不重新分发任何第三方文件。所有组件请从作者官方来源下载；论坛附件
 > 需要登录，不要用来路不明的网盘转载包。
@@ -215,12 +216,12 @@ enabled=256
 
 #### 第 3 步：dry-run 路线 A
 
-> **前置 blocker：必须先完成 `migrate --apply`。** `route-a --apply` 只在
-> `enabled_mods.json` **解析错误**时 fail-closed；`state=missing` 时它不会
-> 拒绝，而会新建一个只含 `hypernova_infinite_engine`、`MixinLib`、
-> `starsectorparallel` 的 3 项启用列表，等于只启用这 3 个 mod（256 个 mod
-> 不会自动启用）。dry-run 必须看到 `enabled_mods.state=ok` 才能进入第 4
-> 步；`state=missing` 就先回第 2 步迁移。
+> **前置 blocker：必须先完成 `migrate --apply`。** `route-a --apply` 对
+> `enabled_mods.json` 的 **missing / 解析错误都 fail-closed**：目标根没有
+> `enabled_mods.json` 时，apply 打印 `FATAL` 并返回 1，不会新建只含
+> `hypernova_infinite_engine`、`MixinLib`、`starsectorparallel` 的 3 项
+> 列表。dry-run 必须看到 `enabled_mods.state=ok` 才能进入第 4 步；
+> `state=missing` 就先回第 2 步迁移。
 
 ```bat
 python -I tools\m7_stack.py route-a --root "%ROOT%" --mixinfr "%AUDIT%\vendor\MixinFR-1.2.5\MixinFR" --parallel "%AUDIT%\vendor\StarsectorParallel-0.1.0\StarsectorParallel" --hypernova-mod "%REPO%" --text
@@ -237,8 +238,12 @@ root_vmparams_modified=false
 copies=8
 enabled_mods.state=ok
 enabled_mods.add=hypernova_infinite_engine,MixinLib,starsectorparallel
-enabled_mods.order=hypernova_infinite_engine,MixinLib,starsectorparallel
+enabled_mods.order=<259 项；末尾为 VramOptimizer,hypernova_infinite_engine,MixinLib,starsectorparallel>
 ```
+
+`enabled_mods.order` 是完整的 259 项（迁移带入的 256 项 + Hypernova +
+MixinLib + starsectorparallel），不是 3 项；只有 `enabled_mods.add` 是
+3 项。实际输出是一整行，上面只展示末尾。
 
 `warnings` 在迁移完成后应只剩两类固定说明：Prepatcher 被排除、
 `starsector.exe` 硬编码 JRE 17。若还有 `missing source` / `missing agent
@@ -340,8 +345,26 @@ MixinFR / Parallel / Hypernova agent。**也不要运行
 > `https://www.fossic.org/thread-21835-1-1.html`）的稳定栈。但 21835 明确说
 > “优化测试版汉化别和 plain FR 一起用，它自己已经做了启动加速，二者会
 > 打架”。M7 的 B 是在优化测试根上的实验；如果你只要 21835 的稳定形态，
-> 请把它装在**传统汉化 / 非优化版**上。Task 7 之前，B 在优化版上的实机
-> 状态是 `待验证`。
+> 请把它装在**传统汉化 / 非优化版**上。Task 7 实测：在优化测试根上补齐
+> 4.1.1 的三条先决条件并用 `--xms 8G --xmx 10G` 后，B 到主菜单 105.8 s；
+> 仍按实验记录，用户 gate 尚未验证。
+
+### 4.1.1 先决条件（环境 / 模组，不是 Hypernova 要求）
+
+Task 7 在优化测试根上到达主菜单前，必须补齐下面三条。它们都是环境或
+第三方模组的前提，**不是 Hypernova 的要求**，也不由 M7 工具自动完成：
+
+1. **禁用 `jc_sf`（SF-幽灵部队）**：该 mod 自检报“幽灵部队模组文件损坏”，
+   会在启动早期 Fatal。先在启动器里取消启用；不要用 M7 改它的文件。
+2. **应用 AoTD 的 `starfarer.api.jar` 替换**：AoTD Theory of Toolbox 要求把
+   其 `0.98a/starfarer.api.jar` 复制到 `starsector-core/starfarer.api.jar`。
+   Task 7 按 260mods 的已知可用配置替换，并在回滚时恢复原 jar（优化测试版
+   原 jar 的 sha256 见 `docs/m7-results.md`）。没有这一步会在启动时 NPE。
+3. **恢复 LunaLib 设置**：把 260mods 的 `saves/common/LunaSettings` 恢复到
+   本次安装根。256 mod 首次启动可能生成一批内容相同的损坏设置，导致
+   LunaLib 报错或界面异常。工具只做只读预检，不写用户设置。
+
+缺少任一条都可能 Fatal / NPE；先修好再跑下面的 dry-run / apply。
 
 ### 4.2 安装
 
@@ -388,7 +411,7 @@ python -I tools\m7_stack.py migrate --source Starsector-098-260mods\mods --targe
 #### 第 3 步：dry-run 路线 B
 
 ```bat
-python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr097\fast-rendering-0.9.7rc2" --jdk-dir "%REPO%\Starsector-098-260mods\jdk-28+13" --hypernova-mod "%REPO%" --text
+python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr097\fast-rendering-0.9.7rc2" --jdk-dir "%REPO%\Starsector-098-260mods\jdk-28+13" --hypernova-mod "%REPO%" --xms 8G --xmx 10G --text
 ```
 
 预期：
@@ -399,6 +422,9 @@ intended_java.version=28
 intended_java.runtime=28-beta+13-ea
 launcher.java=..\jdk-28+13\bin\java.exe
 launcher.argfile=..\route-b.vmparams
+memory.xms=8G
+memory.xmx=10G
+memory.source=override
 root_vmparams_modified=false
 copies=15
 enabled_mods.add=hypernova_infinite_engine
@@ -410,7 +436,7 @@ enabled_mods.add=hypernova_infinite_engine
 #### 第 4 步：apply 路线 B
 
 ```bat
-python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr097\fast-rendering-0.9.7rc2" --jdk-dir "%REPO%\Starsector-098-260mods\jdk-28+13" --hypernova-mod "%REPO%" --apply --text
+python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr097\fast-rendering-0.9.7rc2" --jdk-dir "%REPO%\Starsector-098-260mods\jdk-28+13" --hypernova-mod "%REPO%" --xms 8G --xmx 10G --apply --text
 ```
 
 预期 `applied=true`、`ok=true`、`rollback.label=m7-route-b-...`。抄下 label。
@@ -418,12 +444,13 @@ python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr09
 可选 Prepatcher（实验，先不要和“稳定”画等号）：
 
 ```bat
-python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr097\fast-rendering-0.9.7rc2" --jdk-dir "%REPO%\Starsector-098-260mods\jdk-28+13" --hypernova-mod "%REPO%" --prepatcher "%REPO%\.cache\prepatcher\extracted\StarsectorPrepatcher" --apply --text
+python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr097\fast-rendering-0.9.7rc2" --jdk-dir "%REPO%\Starsector-098-260mods\jdk-28+13" --hypernova-mod "%REPO%" --xms 8G --xmx 10G --prepatcher "%REPO%\.cache\prepatcher\extracted\StarsectorPrepatcher" --apply --text
 ```
 
 这次 apply 会：
 
-- 写 `%ROOT%\route-b.vmparams`（token-less，首 token 是 `-noverify`）。
+- 写 `%ROOT%\route-b.vmparams`（token-less，首 token 是
+  `-XX:+UnlockDiagnosticVMOptions`；不是 `-noverify`，`-noverify` 只适用于 A）。
 - 生成 / 刷新 `%AUDIT%\scripts\launch-route-b.bat`。
 - 把 FR 文件复制到 `%ROOT%\starsector-core`，把 `jdk-28+13` 复制到
   `%ROOT%\jdk-28+13`，把 Hypernova 复制到 `%ROOT%\mods`。
@@ -470,7 +497,8 @@ python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr09
   可能回到传统位图（上游 21705 的说明）。要高清字体选 A。
 - **没有 MixinFRImeFix**：中文输入用 `disable-ime` + ChineseInputFix。
 - **优化测试版 + plain FR 有冲突报告**：21835 明确不建议；M7 的 B 在优化
-  测试根上是实验，Task 7 之前写 `待验证`。
+  测试根上是实验。Task 7 在补齐 4.1.1 先决条件后到达主菜单（105.8 s），
+  但用户 gate 仍 pending。
 - **Prepatcher Java 28 未声明**：只做能力检查，可能部分 patch 失败；先不加
   Prepatcher 跑通，再加。
 
@@ -536,7 +564,7 @@ python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr09
 - 想保留优化测试版：用 **路线 A**（MixinFR 明确支持 2026.10.15，它把
   MixinLib + FR 整合成一套）。
 - 想走 21835 稳定栈：用 **路线 B**，但装在传统汉化 / 非优化版上；M7 在
-  优化测试根上的 B 是实验，状态 `待验证`。
+  优化测试根上的 B 已到主菜单（105.8 s），但仍属实验，用户 gate pending。
 - 优化测试版目前没有“一键关闭启动加速”的用户开关。
   `localization_version.json` 只标记 `branch=startup-optimization`；
   `settings.json` 的 `enableScriptCaching=false` 是另一项设置（当前关闭），
@@ -546,8 +574,10 @@ python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr09
 
 ## 6. 实机验证
 
-Task 7 还没跑；下面每一项默认 `待验证`。请按场景逐项记录，**不要用菜单
-smoke 代替整套验收**。
+Task 7 已跑：B 到主菜单 105.8 s（日志 / 截图），A 为 timeout-not-menu；
+下面每一项（战役 / 战斗 / 读档 / 中文输入 / 字体视觉 / 稳定性）仍默认
+`待验证`，用户 gate pending。请按场景逐项记录，**不要用菜单 smoke 代替
+整套验收**。
 
 ### 6.1 场景清单
 
@@ -663,13 +693,13 @@ ok=true
 | Java 28 下 MixinFR / Parallel 没启用 | `starsector.log` 的 `Java version:` | 路线 A 必须用 `launch-route-a.bat`（JRE 17）；不要用 `jdk-28` 启动 A。MixinFR / Parallel 官方只支持 JRE 17 |
 | `SKIPPED_LOADER` 很多 | `starsector-core\logs\prepatcher.log` | Prepatcher 的目标类在别的 classloader；路线 A 根本不该装。路线 B 先去掉 `--prepatcher` 重装，确认稳定后再试 |
 | 双 javaagent / 启动报 agent 冲突 | `route-a.vmparams` / `route-b.vmparams` 里的 `-javaagent` | A 只能有 MixinLib-bridge + Hypernova；B 只能有 Hypernova + FR（+ 可选 Prepatcher）。不要运行 MixinFR 的 `install.bat`，不要给 A 加 FR 0.9.7，不要给 B 加 MixinFR |
-| `vmparams` 首 token 是 `java.exe` / 启动报找不到主类 | `route-*.vmparams` 第一个 token | 生成的 argfile 是 token-less，首 token 应为 `-noverify` 之类的 JVM 参数。不要手工加 `java.exe`；用 `launch-route-*.bat` 启动 |
+| `vmparams` 首 token 是 `java.exe` / 启动报找不到主类 | `route-*.vmparams` 第一个 token | 生成的 argfile 是 token-less，首 token 必须是 JVM 参数：A 通常是 `-noverify`，B 是 `-XX:...`（Task 7 实测为 `-XX:+UnlockDiagnosticVMOptions`）。不要手工加 `java.exe`；用 `launch-route-*.bat` 启动 |
 | 用 `starsector.exe` / `fr.bat` 启动后没有优化 | 启动入口 | `starsector.exe` 和 `fr.bat` 都硬编码 JRE 17，且不读 `route-*.vmparams`。A 用 `launch-route-a.bat`，B 用 `launch-route-b.bat` |
 | `FATAL: route-a apply failed (manifest=...)` | 终端输出的 `manifest` / `rollback.label` | apply 可能已写文件但 manifest 失败；按 label 回滚，检查 `mods` 是否迁移完整、`enabled_mods.json` 是否有效、Hypernova `build/` 或 `jars/` 是否存在 |
 | `Hypernova disabled: manifest unavailable` | `starsector.log` | 重新 apply 让工具生成 manifest，或 `python -I tools\install_manifest.py --game-root "%ROOT%"`；确认 `mods` 不是空目录 |
 | 256 mod 启动 OOM / 很慢 | 根 `vmparams` 的 `-Xmx` / `-Xms` | 默认可能是 `-Xmx2048m`，256 mod 通常不够。按机器内存调到 8–12 GB（例如 `-Xmx8g`），留系统余量；改根 `vmparams` 后重新 apply，或直接改 `route-*.vmparams`。`-XX:+AlwaysPreTouch` 会拖慢启动，内存紧张时可去掉 |
 | `migrate --apply` 报 `target already exists` | `%ROOT%\mods` 是否为空 | 空目录先 `rmdir`；非空目录不要删，换全新安装根。工具不会合并到已有 mods |
-| `enabled_mods.json missing/error` | `%ROOT%\mods\enabled_mods.json` | 先跑迁移；或在游戏启动器里勾选 mod 并保存一次生成。工具 fail-closed，不会用空列表覆盖 |
+| `enabled_mods.json missing/error` | `%ROOT%\mods\enabled_mods.json` | 先跑迁移；或在游戏启动器里勾选 mod 并保存一次生成。工具对 missing / error 都 fail-closed（`FATAL` + rc1），不会用空列表或最小列表覆盖 |
 | `--link` 创建 junction 失败 | 文件系统 / 权限 | 去掉 `--link`，用完整复制；或把安装根和源 mods 放到同一 NTFS 卷 |
 | VOpt 初始化失败 | `starsector.log` 的 `Failed to initialize VRAM Optimizer` | 确认 VOpt 是 1.0.45、FR 是 0.9.7rc2（B）；A 确认 MixinFR 1.2.5。不要升 VOpt 1.0.46+ |
 | 字体模糊 / 竖条 | `mods\MixinFR\mod_info.json`、`mixinfr-fonthd.log` | 确认 1.2.5；`disable-mixinfr-fonts` 在 1.2.5 只是诊断；路线 B 没有 HD 重定向，属预期 |
@@ -712,8 +742,8 @@ python -I tools\m7_stack.py route-a --root "%ROOT%" --mixinfr "%AUDIT%\vendor\Mi
 python -I tools\m7_stack.py route-a --root "%ROOT%" --mixinfr "%AUDIT%\vendor\MixinFR-1.2.5\MixinFR" --parallel "%AUDIT%\vendor\StarsectorParallel-0.1.0\StarsectorParallel" --hypernova-mod "%REPO%" --apply --text
 
 rem 路线 B（dry-run / apply）
-python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr097\fast-rendering-0.9.7rc2" --jdk-dir "%REPO%\Starsector-098-260mods\jdk-28+13" --hypernova-mod "%REPO%" --text
-python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr097\fast-rendering-0.9.7rc2" --jdk-dir "%REPO%\Starsector-098-260mods\jdk-28+13" --hypernova-mod "%REPO%" --apply --text
+python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr097\fast-rendering-0.9.7rc2" --jdk-dir "%REPO%\Starsector-098-260mods\jdk-28+13" --hypernova-mod "%REPO%" --xms 8G --xmx 10G --text
+python -I tools\m7_stack.py route-b --root "%ROOT%" --fr-dir "%REPO%\.cache\fr097\fast-rendering-0.9.7rc2" --jdk-dir "%REPO%\Starsector-098-260mods\jdk-28+13" --hypernova-mod "%REPO%" --xms 8G --xmx 10G --apply --text
 
 rem IME 短路（dry-run / apply）
 python -I tools\m7_stack.py disable-ime --root "%ROOT%" --text

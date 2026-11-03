@@ -401,16 +401,29 @@ A 的菜单未到达，不能用任何自动化指标替代用户 gate。
      `-XX:+UseXMMForArrayCopy`、`-XX:+ParallelRefProcEnabled`、
      `-XX:+AlwaysAtomicAccesses`、`-XX:+UseVectorStubs`、
      `-XX:ShenandoahGCMode=iu`、`--enable-preview`；
-   - 新增 `--xms/--xmx`，替换源 `-Xms/-Xmx`；计划输出 `memory.*`。
+   - 新增 `--xms/--xmx`：只传一个时保留源 vmparams 里的另一个，plan 输出
+     最终 `memory.xms/xmx`；两者同时传入才完全覆盖。
    - 测试：`test_plan_route_b_removes_java17_flags_and_applies_memory`、
+     `test_plan_route_b_single_memory_override_preserves_other`、
      `test_plan_route_b_rejects_invalid_xmx`。
 4. **环境预检**：
    - `mods/DDSCache` 缺失时 plan 告警，apply 创建并纳入回滚；
    - `saves/common/LunaSettings` 只读预检，检测“所有文件同 hash”的已知
      损坏并告警；不写用户设置。
    - 测试：`test_plan_route_b_prechecks_ddscache_and_lunalib`。
-5. 测试结果：`tests/tools/test_m7_stack.py`、`test_validate_manifest.py`、
-   `test_manifest_builder.py`、`test_install_manifest.py` 共 141 passed。
+5. **终审 must-fix（2026-11-04）**：
+   - route A/B 的 `enabled_mods.json` 在 **missing / 解析错误**时都
+     fail-closed：apply 打印 `FATAL`、返回 1，不写任何启用列表。
+   - 路线 A 断言 MixinFR `mod_info.version=1.2.5`、Parallel `0.1.0`；
+     不匹配时 plan/apply 输出 `WARNING`（plan 文本含 `mixinfr.version` /
+     `parallel.version` 字段）。
+   - 测试：`test_apply_route_b_refuses_missing_enabled_mods`、
+     `test_apply_route_a_refuses_missing_enabled_mods`、
+     `test_route_a_warns_on_unexpected_version`、
+     `test_route_a_text_shows_version_checks`。
+6. 测试结果（2026-11-04 终审 fix）：`python -I -m pytest tests/tools -q`
+   → **565 passed**（修复前 556 passed；新增 fail-closed / 单参数内存 /
+   版本断言测试）。
 
 ## 8. 限制
 
