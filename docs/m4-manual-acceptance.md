@@ -41,17 +41,50 @@
    > `frame_probe.present=true`，也不能替代 Hypernova probe。
    >
    > **替代环境（高级）**：`Starsector-098-Base` 已启用该模块，但它使用
-   > `starsector-core/fr.vmparams` 作为启动参数文件。必须：
+   > `starsector-core/fr.vmparams` 作为启动参数文件，且该文件**没有** lazy
+   > flags。必须：
    > 1. `bash tools/java/install-manifest.sh Starsector-098-Base` 刷新主 jar；
    > 2. `python tools/install_agent.py --game Starsector-098-Base --env base`
    >    刷新 agent（`--env base` 对应 `starsector-core/fr.vmparams`）；
-   > 3. 用 §2 的脚本把 `fr.vmparams` 派生成
-   >    `Starsector-098-Base/starsector-core/fr_m4_probe.vmparams`
-   >    （只改 src/dst；保持 `-D` 在主类之前；需要 lazy/DDS 时也在主类前加）；
+   > 3. 用下面的脚本把 `fr.vmparams` 派生成
+   >    `Starsector-098-Base/starsector-core/fr_m4_probe.vmparams`；
    > 4. 报告命令改用 Base 路径：
    >    `Starsector-098-Base/saves/hypernova/scripts-agent.log` 与
    >    `Starsector-098-Base/starsector-core/starsector.log`。
    > 缺点：Base 的 mod 数远少于 260mods。
+
+   Base 派生脚本（必须在主类之前插入全部五行；`fr.vmparams` 没有 lazy flags）：
+
+   ```bash
+   python -I - <<'PY'
+   from pathlib import Path
+   src = Path("Starsector-098-Base/starsector-core/fr.vmparams")
+   dst = Path("Starsector-098-Base/starsector-core/fr_m4_probe.vmparams")
+   flags = [
+       "-Dhypernova.textures.lazy=true",
+       "-Dhypernova.textures.lazy.dds=true",
+       "-Dhypernova.textures.lazy.eviction=true",
+       "-Dhypernova.textures.lazy.eviction.sceneUnload=false",
+       "-Dhypernova.frameProbe=true",
+   ]
+   lines = src.read_text(encoding="utf-8").splitlines()
+   out = []
+   inserted = False
+   for line in lines:
+       s = line.strip()
+       if s == "com.fs.starfarer.StarfarerLauncher":
+           out.extend(flags)
+           out.append(line)
+           inserted = True
+       elif s.startswith("-Dhypernova.textures.lazy.") or s == "-Dhypernova.frameProbe=true":
+           continue
+       else:
+           out.append(line)
+   if not inserted:
+       raise SystemExit("main class not found")
+   dst.write_text("\n".join(out) + "\n", encoding="utf-8")
+   PY
+   ```
 
 2. 构建并安装（主 jar + agent jar 都要刷新，否则 probe 仍是旧 class）：
    `bash tools/java/build-mod.sh` →
@@ -137,8 +170,10 @@ while True:
 PY
 ```
 
-A 结束立即 Ctrl-C 停止采样。进入 B 场景后，用新的游戏 PID 重新启动同一个
-采样器，并把 `GPU_OUT` 改为 `build/m4/gpu-b.csv`；B 结束再 Ctrl-C。
+A 结束立即 Ctrl-C 停止采样。进入 B 场景后，**不要重启游戏**：用**同一个游戏
+进程 PID** 重新启动同一个采样器，只把 `GPU_OUT` 改为 `build/m4/gpu-b.csv`；
+B 结束再 Ctrl-C。重启游戏会使 `frames`/`over200`/`longGaps` 的 B−A 累计差值
+和 A→B 场景对比失效。
 采样期间不要最小化窗口或长时间暂停。
 
 ## 4. A→B 会话

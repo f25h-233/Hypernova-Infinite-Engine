@@ -389,7 +389,7 @@ Expected: 8 tests passed。
         // M4：探针在门闩之后，并带 tick 去重；关闭时只做一次 null 检查。
         FrameTimeProbe probe = frameProbe;
         if (probe != null) {
-            probe.frame(now, ticks);
+            probe.frame(now, amount);
             String frameLine = probe.lineIfDue();
             if (frameLine != null) {
                 com.fs.starfarer.api.Global.getLogger(HypernovaCombatPlugin.class)
@@ -637,7 +637,7 @@ Expected: 收集/导入失败（文件不存在）。
     python tools/m4_session_report.py \
       --agent-log Starsector-098-260mods/saves/hypernova/scripts-agent.log \
       --starsector-log Starsector-098-260mods/starsector-core/starsector.log \
-      --gpu-csv build/m4/gpu-ab.csv \
+      --gpu-csv build/m4/gpu-a.csv \
       --out build/m4/session.json --strict
 """
 from __future__ import annotations
@@ -1444,17 +1444,50 @@ git commit -m "fix(m4): require main jar in release checks and clear failed zips
    > `frame_probe.present=true`，也不能替代 Hypernova probe。
    >
    > **替代环境（高级）**：`Starsector-098-Base` 已启用该模块，但它使用
-   > `starsector-core/fr.vmparams` 作为启动参数文件。必须：
+   > `starsector-core/fr.vmparams` 作为启动参数文件，且该文件**没有** lazy
+   > flags。必须：
    > 1. `bash tools/java/install-manifest.sh Starsector-098-Base` 刷新主 jar；
    > 2. `python tools/install_agent.py --game Starsector-098-Base --env base`
    >    刷新 agent（`--env base` 对应 `starsector-core/fr.vmparams`）；
-   > 3. 用 §2 的脚本把 `fr.vmparams` 派生成
-   >    `Starsector-098-Base/starsector-core/fr_m4_probe.vmparams`
-   >    （只改 src/dst；保持 `-D` 在主类之前；需要 lazy/DDS 时也在主类前加）；
+   > 3. 用下面的脚本把 `fr.vmparams` 派生成
+   >    `Starsector-098-Base/starsector-core/fr_m4_probe.vmparams`；
    > 4. 报告命令改用 Base 路径：
    >    `Starsector-098-Base/saves/hypernova/scripts-agent.log` 与
    >    `Starsector-098-Base/starsector-core/starsector.log`。
    > 缺点：Base 的 mod 数远少于 260mods。
+
+   Base 派生脚本（必须在主类之前插入全部五行；`fr.vmparams` 没有 lazy flags）：
+
+   ```bash
+   python -I - <<'PY'
+   from pathlib import Path
+   src = Path("Starsector-098-Base/starsector-core/fr.vmparams")
+   dst = Path("Starsector-098-Base/starsector-core/fr_m4_probe.vmparams")
+   flags = [
+       "-Dhypernova.textures.lazy=true",
+       "-Dhypernova.textures.lazy.dds=true",
+       "-Dhypernova.textures.lazy.eviction=true",
+       "-Dhypernova.textures.lazy.eviction.sceneUnload=false",
+       "-Dhypernova.frameProbe=true",
+   ]
+   lines = src.read_text(encoding="utf-8").splitlines()
+   out = []
+   inserted = False
+   for line in lines:
+       s = line.strip()
+       if s == "com.fs.starfarer.StarfarerLauncher":
+           out.extend(flags)
+           out.append(line)
+           inserted = True
+       elif s.startswith("-Dhypernova.textures.lazy.") or s == "-Dhypernova.frameProbe=true":
+           continue
+       else:
+           out.append(line)
+   if not inserted:
+       raise SystemExit("main class not found")
+   dst.write_text("\n".join(out) + "\n", encoding="utf-8")
+   PY
+   ```
 
 2. 构建并安装（主 jar + agent jar 都要刷新，否则 probe 仍是旧 class）：
    `bash tools/java/build-mod.sh` →
@@ -1540,8 +1573,10 @@ while True:
 PY
 ```
 
-A 结束立即 Ctrl-C 停止采样。进入 B 场景后，用新的游戏 PID 重新启动同一个
-采样器，并把 `GPU_OUT` 改为 `build/m4/gpu-b.csv`；B 结束再 Ctrl-C。
+A 结束立即 Ctrl-C 停止采样。进入 B 场景后，**不要重启游戏**：用**同一个游戏
+进程 PID** 重新启动同一个采样器，只把 `GPU_OUT` 改为 `build/m4/gpu-b.csv`；
+B 结束再 Ctrl-C。重启游戏会使 `frames`/`over200`/`longGaps` 的 B−A 累计差值
+和 A→B 场景对比失效。
 采样期间不要最小化窗口或长时间暂停。
 
 ## 4. A→B 会话
@@ -1760,7 +1795,7 @@ git commit -m "docs(m4): record acceptance tooling and user gate"
 
 ### Type consistency
 
-- Java：`FrameTimeProbe(int)`、`frame(long,long)`、`lineIfDue()`、`line()` 在 Task 1
+- Java：`FrameTimeProbe(int)`、`frame(long nowNanos, float amount)`、`lineIfDue()`、`line()` 在 Task 1
   定义，Task 2 的 Python 只解析其文本行，不依赖 Java 类型。
 - Python：`cleanup_timed_out_game(Path)->bool` 在 Task 3 定义并在 `run_round` 使用；
   `clear_pid_file(str)->None` 在 smoke_run 定义并被 `one_round` 使用。
@@ -1768,7 +1803,7 @@ git commit -m "docs(m4): record acceptance tooling and user gate"
 
 ### Review Focus coverage
 
-1. 长帧双入口 → `FrameTimeProbeTest.duplicateTickIsIgnored`。
+1. 长帧双入口 → `FrameTimeProbeTest.duplicateAmountIsIgnored`。
 2. 关闭时零成本 → `AssemblyWiringTest.frameProbeRunsAfterGateAndOnlyWhenPresent`。
 3. 会话切片串档 → `test_m4_session_report.py` 的两个 anchor 用例。
 4. A/B stats 被覆盖 → `test_stats_captured_before_later_control_session`。
