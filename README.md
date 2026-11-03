@@ -99,7 +99,7 @@ python tools/install_agent.py --game <游戏目录> --env <profile>
 
 > 表里的数字是各里程碑在当时环境下的门禁结果，不代表所有 mod 集/硬件都能复现。
 
-最近一次全量验证（2026-11-03）：main 115/115、agent 211/210/1（1 个已知 Windows symlink 用例跳过）、pytest 460。
+最近一次全量验证（2026-11-03）：main 115/115、agent 211/210/1（1 个已知 Windows symlink 用例跳过）；测试与兼容审计结果见 [`docs/m6-results.md`](docs/m6-results.md)。
 
 完整实测记录在 `docs/`；规格与裁决在 [`技术笔记-纹理按需加载.md`](技术笔记-纹理按需加载.md)。
 

@@ -10,7 +10,7 @@
 **自动化部分完成；用户实机 gate 未执行（§4 全部 `pending`），因此不写“M6 通过”。**
 
 - 构建与测试：Java 主测试 115/115；agent 测试 211 个中 210 通过、1 个已知
-  Windows symlink 用例跳过；Python `tests/tools` 460 passed。
+  Windows symlink 用例跳过；Python `tests/tools` 481 passed（时点值）。
 - 260mods 的 manifest / skip 已重新生成并通过审计：`installed.ok=true`，
   generation 配对，无宿主污染；fail-open 4/4 场景通过。
 - 当前真实日志扫描：五类纹理错误 0，`observations_total=14`（均为
@@ -49,7 +49,7 @@
 |---|---|---:|---|
 | 1 | `bash tools/java/run-tests.sh` | 0 | 115 tests / 0 failed |
 | 2 | `bash tools/java/run-agent-tests.sh` | 0 | 211 found / 210 successful / 1 aborted（已知 Windows symlink 用例） |
-| 3 | `python -I -m pytest tests/tools -q` | 0 | 460 passed in 24.77s |
+| 3 | `python -I -m pytest tests/tools -q` | 0 | 481 passed（时点值；Task 6 首跑 460） |
 | 4 | `bash tools/java/build-mod.sh` | 0 | L1=185 L2=509 L3=2614，baked=3285/3285，unresolved=0 |
 | 5 | `bash tools/java/install-manifest.sh Starsector-098-260mods` | 0 | L1=6624 L2=18525 L3=55445，baked=80286/80286，unresolved=0；skip v1/v2=73447 |
 | 6 | `m6_audit_matrix.py` | 0 | 256/256 mods，parse_errors=0，duplicate_ids=4，默认 lazy/eviction/scene_unload=false |
@@ -70,6 +70,10 @@ manifest 审计读数：
 - 说明：fail-open 工作目录每次用 `mktemp -d` 在仓库外创建；旧的
   `evidence/fail-open`（仓库内）会被工具拒绝。`--fail-open-out` 写回
   `evidence/fail-open.json`。
+- **自动化出口 4 已通过**：`installed.ok=true`、skip v1/v2 generation 与
+  manifest 一致、无宿主 `lazy-skip-*`、发行默认全 off；`fail_open.ok=true`
+  （4/4 场景）。该结论只属于自动化证据，**不替代 §4 的用户实机 gate**；
+  按 runbook §6，§4 出口 4 仍记 `pending`，由用户实机确认后再回填。
 
 矩阵读数：
 
@@ -134,13 +138,17 @@ manifest 审计读数：
 
 | 出口 | 场景/证据 | 通过条件 | 结果 | 证据路径 |
 |---|---|---|---|---|
-| 1. 汉化测试版可用 | A/B/D/E 组菜单、战役、战斗、读档画面 | 无豆腐块、无缺字、无错位；A/B `session.json` `ok=true` | pending | `evidence/A-campaign/`、`evidence/B-combat/`、`evidence/E-visual/screens/` |
-| 2. ChineseInputFix 中文输入 | D 组改名/搜索/对话输入 | 每个场景至少 2 个中文字成功输入，不失败、不崩；`session.json` `ok=true` | pending | `evidence/D-ime/`、`evidence/D-ime/env.md` |
-| 3. 字体/UI/纹理 mod 无五类错误 | A–E 全部 `session.json` | `texture_errors_total=0` 且 `log_audit.total=0` | pending | `evidence/<label>/session.json` |
-| 4. manifest/skip generation 与 fail-open | `m6_manifest_audit.py` 自动证据 | `installed.ok=true`、skip v1/v2 generation 一致、无宿主 `lazy-skip-*`、默认全 off；`fail_open.ok=true` | **pass（自动化）** | `evidence/manifest-audit.json`、`evidence/fail-open.json` |
-| 5. 分辨率/全屏/alt-tab | C 组 | 切换与 alt-tab 后不崩、可继续操作、无纹理错误；`session.json` `ok=true` | pending | `evidence/C-resolution/` |
+| 1. 汉化测试版可用 | A/B/D/E 组菜单、战役、战斗、读档画面 | 无豆腐块、无缺字、无错位；A/B `session.json` `ok=true` | pending | `SS098_Hypernova_Compat_AuditTest/A-campaign/`、`.../B-combat/`、`.../E-visual/screens/` |
+| 2. ChineseInputFix 中文输入 | D 组改名/搜索/对话输入 | 每个场景至少 2 个中文字成功输入，不失败、不崩；`session.json` `ok=true` | pending | `SS098_Hypernova_Compat_AuditTest/D-ime/`、`.../D-ime/env.md` |
+| 3. 字体/UI/纹理 mod 无五类错误 | A–E 全部 `session.json` | `texture_errors_total=0` 且 `log_audit.total=0` | pending | `SS098_Hypernova_Compat_AuditTest/<label>/session.json` |
+| 4. manifest/skip generation 与 fail-open | `m6_manifest_audit.py` 自动证据 | `installed.ok=true`、skip v1/v2 generation 一致、无宿主 `lazy-skip-*`、默认全 off；`fail_open.ok=true` | pending | `SS098_Hypernova_Compat_AuditTest/evidence/manifest-audit.json`、`.../fail-open.json` |
+| 5. 分辨率/全屏/alt-tab | C 组 | 切换与 alt-tab 后不崩、可继续操作、无纹理错误；`session.json` `ok=true` | pending | `SS098_Hypernova_Compat_AuditTest/C-resolution/` |
 
-> 出口 4 本表按自动化证据已可判定为 pass；其余出口 1–3、5 必须由用户实机执行。
+> 证据路径口径：`m6_session` 实际写到 `<evidence-root>/<label>`；本次
+> `--evidence-root SS098_Hypernova_Compat_AuditTest`，所以会话证据在
+> `SS098_Hypernova_Compat_AuditTest/<label>/`（runbook §4/§6 写的
+> `evidence/<label>/` 是文档漂移）。出口 4 的自动化证据见 §3.1，按 runbook
+> §6 本表仍记 `pending`，待用户实机确认；出口 1–3、5 也必须由用户实机执行。
 
 分组记录：
 
@@ -180,8 +188,9 @@ manifest 审计读数：
 - **ChineseInputFix 未启用**：本次自动化没有临时启用它，审计结束时
   `enabled_mods.json` 中仍为 false。用户 gate 需要按 runbook §2 临时启用，
   结束后必须按 §7 恢复。
-- `enabled_mods.json`、`Miko_Lite.txt`、`settings.json` 的 SHA256 与
-  `backups/baseline-2026-11-03/manifest.json` 完全一致；未改用户环境。
+- `enabled_mods.json`、`hypernova.json`、`Miko_Lite.txt`、`settings.json`
+  4 个文件的 SHA256 与 `backups/baseline-2026-11-03/manifest.json` 完全一致；
+  未改用户环境。
 - 回滚（用户 gate 之后）：
 
   ```bash
@@ -204,8 +213,9 @@ manifest 审计读数：
   或性能改善**。
 - **M6 未验证组合路线**：MixinFR + JRE 17（路线 A）与 FR 0.9.7rc2 + Java 28
   （路线 B）属于 M7；M7 计划已存在
-  （`docs/superpowers/plans/2026-11-03-m7-unified-stack.md`），当前等待
-  MixinFR 1.2.5 与 StarsectorParallel 0.1.0 等用户工件，尚未执行/收口。
+  （`docs/superpowers/plans/2026-11-03-m7-unified-stack.md`）。MixinFR 1.2.5
+  与 StarsectorParallel 0.1.0 已于 2026-11-03 17:07 收到
+  （`SS098_Hypernova_Compat_AuditTest/vendor/`），**M7 待启动**，尚未执行/收口。
 - 下一步：用户按 `docs/m6-manual-acceptance.md` 完成 A–E 组并回填本文件 §4；
-  全部 pass（或失败项完成 no-Hypernova 对照并归因）后，才进入 M5 的默认开启
-  canary 与发行决策。
+  全部 pass（或失败项完成 no-Hypernova 对照并归因），且 M4/M4.1 的
+  A→B/stutter gate 与 M7 收口后，才进入 M5 的默认开启 canary 与发行决策。
