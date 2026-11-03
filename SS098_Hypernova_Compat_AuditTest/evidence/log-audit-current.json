@@ -1,0 +1,303 @@
+{
+  "agent_log": {
+    "counts": {
+      "AsyncException": 0,
+      "ChineseInputFix": 0,
+      "ClassFormatError": 0,
+      "Exception in thread \"AWT-EventQueue": 0,
+      "Failed to load texture": 0,
+      "Font config error": 0,
+      "Glyph not found": 0,
+      "IME": 0,
+      "Input method": 0,
+      "UnsatisfiedLinkError": 0,
+      "VerifyError": 0,
+      "font file not found": 0,
+      "isStateCorrupted": 0,
+      "java.awt.HeadlessException": 0,
+      "missing glyph": 0
+    },
+    "matches": [],
+    "ok": true,
+    "path": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\saves\\hypernova\\scripts-agent.log",
+    "present": true,
+    "total": 0
+  },
+  "ok": false,
+  "starsector_log": {
+    "counts": {
+      "AsyncException": 0,
+      "ChineseInputFix": 14,
+      "ClassFormatError": 0,
+      "Exception in thread \"AWT-EventQueue": 0,
+      "Failed to load texture": 0,
+      "Font config error": 0,
+      "Glyph not found": 0,
+      "IME": 54,
+      "Input method": 0,
+      "UnsatisfiedLinkError": 0,
+      "VerifyError": 0,
+      "font file not found": 0,
+      "isStateCorrupted": 0,
+      "java.awt.HeadlessException": 0,
+      "missing glyph": 0
+    },
+    "matches": [
+      {
+        "line": 40,
+        "pattern": "ChineseInputFix",
+        "text": "513  [main] INFO  com.fs.starfarer.launcher.ModManager  - 发现 Mod：{ChineseInputFix} [D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\starsector-core\\..\\mods\\ChineseInputFix]"
+      },
+      {
+        "line": 407,
+        "pattern": "ChineseInputFix",
+        "text": "789  [main] INFO  com.fs.starfarer.launcher.ModManager  - 发现 Mod：{ChineseInputFix} [D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\starsector-core\\..\\mods\\ChineseInputFix]"
+      },
+      {
+        "line": 2999,
+        "pattern": "IME",
+        "text": "33285 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: WP_PEAK_TIME_BONUS_FRIG, from QualityCaptains"
+      },
+      {
+        "line": 3000,
+        "pattern": "IME",
+        "text": "33285 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: WP_PEAK_TIME_BONUS_DEST, from QualityCaptains"
+      },
+      {
+        "line": 3101,
+        "pattern": "IME",
+        "text": "33287 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: PFLT_PEAK_TIME_BONUS, from QualityCaptains"
+      },
+      {
+        "line": 3117,
+        "pattern": "IME",
+        "text": "33287 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: NRL_TRANSFER_MAX_TIME, from QualityCaptains"
+      },
+      {
+        "line": 4369,
+        "pattern": "IME",
+        "text": "33339 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsWaveGenerator_PARTICLE_LIFETIME, from FoxTwoShipPack"
+      },
+      {
+        "line": 4580,
+        "pattern": "IME",
+        "text": "33345 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsReineSkill_TIME_FLOW_BONUS, from FoxTwoShipPack"
+      },
+      {
+        "line": 4583,
+        "pattern": "IME",
+        "text": "33346 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsReineSkill_BETRAYAL_TIME, from FoxTwoShipPack"
+      },
+      {
+        "line": 6577,
+        "pattern": "IME",
+        "text": "39907 [Thread-4-FR-Main-Loader] INFO  org.dark.graphics.util.ShipColors  - Loaded explosion color for PRIMEDIVINATION: java.awt.Color[r=153,g=255,b=51]"
+      },
+      {
+        "line": 6578,
+        "pattern": "IME",
+        "text": "39907 [Thread-4-FR-Main-Loader] INFO  org.dark.graphics.util.ShipColors  - Loaded smoke color for PRIMEDIVINATION: java.awt.Color[r=153,g=255,b=51]"
+      },
+      {
+        "line": 13609,
+        "pattern": "ChineseInputFix",
+        "text": "690  [main] INFO  com.fs.starfarer.launcher.ModManager  - 发现 Mod：{ChineseInputFix} [D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\starsector-core\\..\\mods\\ChineseInputFix]"
+      },
+      {
+        "line": 16226,
+        "pattern": "IME",
+        "text": "40923 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: WP_PEAK_TIME_BONUS_FRIG, from QualityCaptains"
+      },
+      {
+        "line": 16227,
+        "pattern": "IME",
+        "text": "40923 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: WP_PEAK_TIME_BONUS_DEST, from QualityCaptains"
+      },
+      {
+        "line": 16328,
+        "pattern": "IME",
+        "text": "40925 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: PFLT_PEAK_TIME_BONUS, from QualityCaptains"
+      },
+      {
+        "line": 16344,
+        "pattern": "IME",
+        "text": "40925 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: NRL_TRANSFER_MAX_TIME, from QualityCaptains"
+      },
+      {
+        "line": 17596,
+        "pattern": "IME",
+        "text": "40978 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsWaveGenerator_PARTICLE_LIFETIME, from FoxTwoShipPack"
+      },
+      {
+        "line": 17807,
+        "pattern": "IME",
+        "text": "40984 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsReineSkill_TIME_FLOW_BONUS, from FoxTwoShipPack"
+      },
+      {
+        "line": 17810,
+        "pattern": "IME",
+        "text": "40985 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsReineSkill_BETRAYAL_TIME, from FoxTwoShipPack"
+      },
+      {
+        "line": 19791,
+        "pattern": "IME",
+        "text": "50438 [Thread-4-FR-Main-Loader] INFO  org.dark.graphics.util.ShipColors  - Loaded explosion color for PRIMEDIVINATION: java.awt.Color[r=153,g=255,b=51]"
+      },
+      {
+        "line": 19792,
+        "pattern": "IME",
+        "text": "50438 [Thread-4-FR-Main-Loader] INFO  org.dark.graphics.util.ShipColors  - Loaded smoke color for PRIMEDIVINATION: java.awt.Color[r=153,g=255,b=51]"
+      },
+      {
+        "line": 26405,
+        "pattern": "ChineseInputFix",
+        "text": "661  [main] INFO  com.fs.starfarer.launcher.ModManager  - 发现 Mod：{ChineseInputFix} [D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\starsector-core\\..\\mods\\ChineseInputFix]"
+      },
+      {
+        "line": 28997,
+        "pattern": "IME",
+        "text": "32747 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: WP_PEAK_TIME_BONUS_FRIG, from QualityCaptains"
+      },
+      {
+        "line": 28998,
+        "pattern": "IME",
+        "text": "32747 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: WP_PEAK_TIME_BONUS_DEST, from QualityCaptains"
+      },
+      {
+        "line": 29099,
+        "pattern": "IME",
+        "text": "32750 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: PFLT_PEAK_TIME_BONUS, from QualityCaptains"
+      },
+      {
+        "line": 29115,
+        "pattern": "IME",
+        "text": "32750 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: NRL_TRANSFER_MAX_TIME, from QualityCaptains"
+      },
+      {
+        "line": 30367,
+        "pattern": "IME",
+        "text": "32808 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsWaveGenerator_PARTICLE_LIFETIME, from FoxTwoShipPack"
+      },
+      {
+        "line": 30578,
+        "pattern": "IME",
+        "text": "32815 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsReineSkill_TIME_FLOW_BONUS, from FoxTwoShipPack"
+      },
+      {
+        "line": 30581,
+        "pattern": "IME",
+        "text": "32815 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsReineSkill_BETRAYAL_TIME, from FoxTwoShipPack"
+      },
+      {
+        "line": 32575,
+        "pattern": "IME",
+        "text": "42003 [Thread-4-FR-Main-Loader] INFO  org.dark.graphics.util.ShipColors  - Loaded explosion color for PRIMEDIVINATION: java.awt.Color[r=153,g=255,b=51]"
+      },
+      {
+        "line": 32576,
+        "pattern": "IME",
+        "text": "42003 [Thread-4-FR-Main-Loader] INFO  org.dark.graphics.util.ShipColors  - Loaded smoke color for PRIMEDIVINATION: java.awt.Color[r=153,g=255,b=51]"
+      },
+      {
+        "line": 39297,
+        "pattern": "ChineseInputFix",
+        "text": "1314 [main] INFO  com.fs.starfarer.launcher.ModManager  - 发现 Mod：{ChineseInputFix} [D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\starsector-core\\..\\mods\\ChineseInputFix]"
+      },
+      {
+        "line": 41889,
+        "pattern": "IME",
+        "text": "71066 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: WP_PEAK_TIME_BONUS_FRIG, from QualityCaptains"
+      },
+      {
+        "line": 41890,
+        "pattern": "IME",
+        "text": "71066 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: WP_PEAK_TIME_BONUS_DEST, from QualityCaptains"
+      },
+      {
+        "line": 41991,
+        "pattern": "IME",
+        "text": "71068 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: PFLT_PEAK_TIME_BONUS, from QualityCaptains"
+      },
+      {
+        "line": 42007,
+        "pattern": "IME",
+        "text": "71069 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: NRL_TRANSFER_MAX_TIME, from QualityCaptains"
+      },
+      {
+        "line": 43259,
+        "pattern": "IME",
+        "text": "71173 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsWaveGenerator_PARTICLE_LIFETIME, from FoxTwoShipPack"
+      },
+      {
+        "line": 43470,
+        "pattern": "IME",
+        "text": "71186 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsReineSkill_TIME_FLOW_BONUS, from FoxTwoShipPack"
+      },
+      {
+        "line": 43473,
+        "pattern": "IME",
+        "text": "71187 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsReineSkill_BETRAYAL_TIME, from FoxTwoShipPack"
+      },
+      {
+        "line": 45467,
+        "pattern": "IME",
+        "text": "85045 [Thread-4-FR-Main-Loader] INFO  org.dark.graphics.util.ShipColors  - Loaded explosion color for PRIMEDIVINATION: java.awt.Color[r=153,g=255,b=51]"
+      },
+      {
+        "line": 45468,
+        "pattern": "IME",
+        "text": "85045 [Thread-4-FR-Main-Loader] INFO  org.dark.graphics.util.ShipColors  - Loaded smoke color for PRIMEDIVINATION: java.awt.Color[r=153,g=255,b=51]"
+      },
+      {
+        "line": 52645,
+        "pattern": "ChineseInputFix",
+        "text": "1112 [main] INFO  com.fs.starfarer.launcher.ModManager  - 发现 Mod：{ChineseInputFix} [D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\starsector-core\\..\\mods\\ChineseInputFix]"
+      },
+      {
+        "line": 55237,
+        "pattern": "IME",
+        "text": "67885 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: WP_PEAK_TIME_BONUS_FRIG, from QualityCaptains"
+      },
+      {
+        "line": 55238,
+        "pattern": "IME",
+        "text": "67885 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: WP_PEAK_TIME_BONUS_DEST, from QualityCaptains"
+      },
+      {
+        "line": 55339,
+        "pattern": "IME",
+        "text": "67889 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: PFLT_PEAK_TIME_BONUS, from QualityCaptains"
+      },
+      {
+        "line": 55355,
+        "pattern": "IME",
+        "text": "67890 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: NRL_TRANSFER_MAX_TIME, from QualityCaptains"
+      },
+      {
+        "line": 56607,
+        "pattern": "IME",
+        "text": "67992 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsWaveGenerator_PARTICLE_LIFETIME, from FoxTwoShipPack"
+      },
+      {
+        "line": 56818,
+        "pattern": "IME",
+        "text": "68005 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsReineSkill_TIME_FLOW_BONUS, from FoxTwoShipPack"
+      },
+      {
+        "line": 56821,
+        "pattern": "IME",
+        "text": "68005 [Thread-4-FR-Main-Loader] DEBUG lunalib.backend.ui.settings.LunaSettingsLoader  - LunaSettings: Loaded default settings data: gcsReineSkill_BETRAYAL_TIME, from FoxTwoShipPack"
+      },
+      {
+        "line": 58815,
+        "pattern": "IME",
+        "text": "81703 [Thread-4-FR-Main-Loader] INFO  org.dark.graphics.util.ShipColors  - Loaded explosion color for PRIMEDIVINATION: java.awt.Color[r=153,g=255,b=51]"
+      }
+    ],
+    "ok": false,
+    "path": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\starsector-core\\starsector.log",
+    "present": true,
+    "total": 68
+  },
+  "total": 68
+}
