@@ -35,9 +35,55 @@ def test_stats_parses_extended_summary():
 
 
 def test_stats_only_uses_last_session():
-    text = ("premain\nlazy probe: summary skipped=111 failed=0 disabled=0\n"
-            "premain\nlazy probe: summary skipped=222 failed=0 disabled=0\n")
+    text = ("premain\n"
+            "lazy probe: summary queue=1 failed=0 disabled=0 dimMismatch=0 "
+            "main=main ddsHit=1 ddsDisabled=0 skipped=111\n"
+            "premain\n"
+            "lazy probe: summary queue=2 failed=0 disabled=0 dimMismatch=0 "
+            "main=main ddsHit=2 ddsDisabled=0 skipped=222\n")
     assert ab.stats_from_text(text)["skipped"] == 222
+
+
+def _complete_summary(**overrides):
+    values = {"queue": 9, "failed": 0, "disabled": 0, "dimMismatch": 0,
+              "main": "main", "ddsHit": 3, "ddsDisabled": 0}
+    values.update(overrides)
+    return "lazy probe: summary " + " ".join(
+        f"{key}={value}" for key, value in values.items())
+
+
+def test_stats_rejects_torn_summary_with_only_queue():
+    text = "hypernova agent premain\nlazy probe: summary queue=9\n"
+    assert ab.stats_from_text(text) == {}
+
+
+def test_stats_rejects_torn_summary_before_dds_disabled():
+    text = ("hypernova agent premain\n"
+            "lazy probe: summary queue=9 failed=0 disabled=0 dimMismatch=0 "
+            "main=main ddsHit=3\n")
+    assert ab.stats_from_text(text) == {}
+
+
+def test_stats_ignores_summary_failed_line():
+    text = ("hypernova agent premain\n" + _complete_summary() + "\n"
+            "ERROR lazy probe: summary failed\n")
+    parsed = ab.stats_from_text(text)
+    assert parsed["queue"] == 9
+    assert parsed["ddsHit"] == 3
+
+
+def test_stats_keeps_complete_summary_before_torn_line():
+    text = ("hypernova agent premain\n" + _complete_summary() + "\n"
+            "lazy probe: summary queue=10 failed=0\n")
+    assert ab.stats_from_text(text)["queue"] == 9
+
+
+def test_stats_parses_complete_summary():
+    text = "hypernova agent premain\n" + _complete_summary() + "\n"
+    parsed = ab.stats_from_text(text)
+    assert parsed["queue"] == 9
+    assert parsed["ddsHit"] == 3
+    assert parsed["ddsDisabled"] == 0
 
 
 def test_flags_control_and_treatment():

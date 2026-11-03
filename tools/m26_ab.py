@@ -27,6 +27,10 @@ from smoke_run import PROFILES, free_physical_mb, kill_pid, wait_dead  # noqa: E
 
 SESSION_ANCHOR = b"Fast Rendering: v0.9."
 SUMMARY = "lazy probe: summary "
+REQUIRED_SUMMARY_KEYS = (
+    "queue", "failed", "disabled", "dimMismatch", "main",
+    "ddsHit", "ddsDisabled",
+)
 PAIR_RE = re.compile(r"([A-Za-z][A-Za-z0-9_]*)=([^\s]+)")
 SMOKE_TIMEOUT_S = 900
 MIN_FREE_MB = 12 * 1024
@@ -49,15 +53,21 @@ def stats_from_text(text: str) -> dict:
             start = i
     out = {}
     for line in lines[start:]:
+        if "summary failed" in line:
+            continue
         pos = line.find(SUMMARY)
         if pos < 0:
             continue
-        out = {}
+        parsed = {}
         for key, value in PAIR_RE.findall(line[pos + len(SUMMARY):]):
             try:
-                out[key] = int(value)
+                parsed[key] = int(value)
             except ValueError:
-                out[key] = value
+                parsed[key] = value
+        # 只有包含门禁所需键的完整 summary 才可覆盖上一条完整 summary；
+        # 强杀留下的 torn 行不能把有效数据清空。
+        if all(key in parsed for key in REQUIRED_SUMMARY_KEYS):
+            out = parsed
     return out
 
 

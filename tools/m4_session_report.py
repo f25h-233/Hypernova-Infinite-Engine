@@ -79,6 +79,11 @@ def find_frame_probe(text: str, offset: int = 0) -> dict:
     invalid = [key for key in REQUIRED_FRAME_KEYS
                if key in found and (
                    not _is_int(found[key]) or found[key] < 0)]
+    # 类型合法的 frames=0 同样是无效探针：没有任何帧间隔数据，
+    # 不能让它通过 --require-frame/--strict 的门禁。
+    frames = found.get("frames")
+    if _is_int(frames) and frames <= 0 and "frames" not in invalid:
+        invalid.append("frames")
     if offset > 0:
         file_line = offset + found_line - 1
     else:

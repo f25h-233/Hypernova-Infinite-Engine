@@ -166,6 +166,35 @@ def test_require_frame_rejects_invalid_values(tmp_path):
     assert report["health"]["frame_probe_complete"] is False
 
 
+def test_require_frame_rejects_zero_frames(tmp_path):
+    frame = FRAME.replace("frames=600", "frames=0")
+    agent, log = _write_session(
+        tmp_path, "Fast Rendering: v0.9.7rc2\n" + frame + "\n")
+    out = tmp_path / "report.json"
+    rc = report_mod.main(["--agent-log", str(agent),
+                          "--starsector-log", str(log),
+                          "--require-frame", "--out", str(out)])
+    assert rc == 1
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["frame_probe"]["present"] is True
+    assert report["frame_probe"]["missing_keys"] == []
+    assert report["frame_probe"]["invalid_keys"] == ["frames"]
+    assert report["health"]["frame_probe_complete"] is False
+
+
+def test_require_frame_accepts_positive_frames(tmp_path):
+    frame = FRAME.replace("frames=600", "frames=1")
+    agent, log = _write_session(
+        tmp_path, "Fast Rendering: v0.9.7rc2\n" + frame + "\n")
+    out = tmp_path / "report.json"
+    assert report_mod.main(["--agent-log", str(agent),
+                            "--starsector-log", str(log),
+                            "--require-frame", "--out", str(out)]) == 0
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["frame_probe"]["invalid_keys"] == []
+    assert report["health"]["frame_probe_complete"] is True
+
+
 def test_frame_probe_marks_invalid_values():
     cases = (
         ("frames", "frames=abc"),
