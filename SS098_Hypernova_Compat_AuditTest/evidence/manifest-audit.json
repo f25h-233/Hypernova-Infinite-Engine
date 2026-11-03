@@ -1,0 +1,48 @@
+{
+  "fail_open": {
+    "duplicate_ids": {
+      "dup_same": [
+        "dup_a",
+        "dup_b"
+      ]
+    },
+    "findings": [],
+    "manifest_written": true,
+    "ok": true,
+    "parse_errors": {},
+    "skip_v1_count": 2,
+    "skip_v2_count": 2
+  },
+  "installed": {
+    "defaults": {
+      "eviction": false,
+      "lazy": false,
+      "scene_unload": false,
+      "textures_enabled": true
+    },
+    "findings": [],
+    "host_pollution": {
+      "found": []
+    },
+    "manifest": {
+      "exists": true,
+      "l1": 6624,
+      "l2": 18525,
+      "l3": 55445,
+      "path": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\mods\\hypernova_infinite_engine\\data\\config\\hypernova\\manifest-v1.json",
+      "schema": "hypernova-runtime-1",
+      "sha256": "e61084a315e5073c6f0973d576be95c664bf8ecf701a3d0771ec6d174ca0aaba"
+    },
+    "ok": true,
+    "skip_v1": {
+      "exists": true,
+      "generation": "e61084a315e5073c6f0973d576be95c664bf8ecf701a3d0771ec6d174ca0aaba",
+      "path": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\mods\\hypernova_infinite_engine\\data\\config\\hypernova\\lazy-skip-v1.txt"
+    },
+    "skip_v2": {
+      "exists": true,
+      "generation": "e61084a315e5073c6f0973d576be95c664bf8ecf701a3d0771ec6d174ca0aaba",
+      "path": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\mods\\hypernova_infinite_engine\\data\\config\\hypernova\\lazy-skip-v2.txt"
+    }
+  }
+}

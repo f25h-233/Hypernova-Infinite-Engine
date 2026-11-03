@@ -1,0 +1,14 @@
+{
+  "duplicate_ids": {
+    "dup_same": [
+      "dup_a",
+      "dup_b"
+    ]
+  },
+  "findings": [],
+  "manifest_written": true,
+  "ok": true,
+  "parse_errors": {},
+  "skip_v1_count": 2,
+  "skip_v2_count": 2
+}
