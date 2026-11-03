@@ -9,15 +9,27 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class FrameProbeWiringTest {
     @Test
-    void premainRegistersProbeBeforeScriptsEarlyReturn() throws Exception {
+    void premainRegistersInsidePropertyGateBeforeScriptsEarlyReturn() throws Exception {
         String src = Files.readString(
                 Path.of("src/agent/java/hypernova/agent/HypernovaAgent.java"));
+        int gate = src.indexOf(
+                "if (Boolean.getBoolean(\"hypernova.frameProbe\"))");
         int probe = src.indexOf("new FrameProbeTransformer()");
         int scriptsGate = src.indexOf("scripts cache disabled by config");
-        assertTrue(probe > 0, "must register FrameProbeTransformer");
+        assertTrue(gate > 0, "probe must be gated by the system property");
+        assertTrue(probe > gate,
+                "addTransformer must be inside the property gate");
         assertTrue(probe < scriptsGate,
                 "probe must register before the scripts early return");
-        assertTrue(src.contains("Boolean.getBoolean(\"hypernova.frameProbe\")"),
-                "probe must be opt-in by system property");
+    }
+
+    @Test
+    void transformerTargetsBothDisplayUpdateOverloads() throws Exception {
+        String src = Files.readString(
+                Path.of("src/agent/java/hypernova/agent/FrameProbeTransformer.java"));
+        assertTrue(src.contains("org/lwjgl/opengl/Display"),
+                "must target Display");
+        assertTrue(src.contains("\"()V\"") && src.contains("\"(Z)V\""),
+                "must cover both update overloads");
     }
 }

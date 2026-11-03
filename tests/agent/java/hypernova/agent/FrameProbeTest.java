@@ -57,11 +57,11 @@ class FrameProbeTest {
     void lineIsDueEveryConfiguredFrames() {
         FrameProbe.State s = new FrameProbe.State(2);
         s.sample(T0);
-        s.sample(T0 + 16 * MS);
-        assertNull(s.sample(T0 + 32 * MS));
-        String due = s.sample(T0 + 48 * MS);
+        assertNull(s.sample(T0 + 16 * MS)); // frames=1
+        String due = s.sample(T0 + 32 * MS); // frames=2, due
         assertNotNull(due);
         assertTrue(due.startsWith(FrameProbe.LINE_PREFIX));
-        assertTrue(due.contains("frames=3"));
+        assertTrue(due.contains("frames=2"));
+        assertNull(s.sample(T0 + 48 * MS)); // frames=3
     }
 }

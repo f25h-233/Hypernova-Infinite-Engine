@@ -6,10 +6,10 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Agent-side per-frame timer for the M4 A→B/stutter gate.
  *
- * <p>Injected into {@code BaseGameState.traverse} (title/campaign) and
- * {@code CombatState.traverse} (combat). AppDriver calls each once per frame.
- * Enabled only by {@code -Dhypernova.frameProbe=true}; independent of lazy
- * textures, FR and the scripts cache.
+ * <p>Injected into {@code org.lwjgl.opengl.Display.update} (both overloads),
+ * the per-frame buffer swap used by the title/campaign/combat loops. Enabled
+ * only by {@code -Dhypernova.frameProbe=true}; independent of lazy textures,
+ * FR and the scripts cache.
  *
  * <p>Gaps &gt; 5 s are counted as {@code longGaps} and excluded from frames,
  * max and the histogram (pause/load/alt-tab). P99 is a 1 ms histogram
@@ -49,9 +49,7 @@ public final class FrameProbe {
         private long longGaps;
         private long maxNanos;
         private long lastDeltaNanos;
-        // The clock-starting sample is the first slot of the log interval but
-        // produces no delta, so the initial value is one frame before zero.
-        private long framesAtLastLine = -1L;
+        private long framesAtLastLine = 0L;
 
         State(int logEveryFrames) {
             this.logEveryFrames = Math.max(1, logEveryFrames);

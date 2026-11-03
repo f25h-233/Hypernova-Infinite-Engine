@@ -10,57 +10,67 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FrameProbeTransformTest {
-    private static final String BASE = "com/fs/starfarer/BaseGameState";
-    private static final String COMBAT = "com/fs/starfarer/combat/CombatState";
+    private static final String DISPLAY = "org/lwjgl/opengl/Display";
 
     @Test
-    void injectsIntoBaseAndCombatTraverse() {
-        for (String target : new String[]{BASE, COMBAT}) {
-            byte[] in = classBytes(target);
-            byte[] out = new FrameProbeTransformer().transform(null, target, null, null, in);
-            assertNotNull(out, target);
-            assertTrue(calls(out, "hypernova/agent/FrameProbe", "frame"), target);
-        }
+    void injectsIntoBothDisplayUpdateOverloads() {
+        byte[] in = displayClass(true, true);
+        byte[] out = new FrameProbeTransformer().transform(null, DISPLAY, null, null, in);
+        assertNotNull(out);
+        assertEquals(2, calls(out, "hypernova/agent/FrameProbe", "frame"));
     }
 
     @Test
-    void missingTraverseIsUntouched() {
-        byte[] in = classBytesWithoutTraverse(COMBAT);
-        assertNull(new FrameProbeTransformer().transform(null, COMBAT, null, null, in));
+    void injectsIntoOnlyThePresentOverload() {
+        byte[] out = new FrameProbeTransformer().transform(
+                null, DISPLAY, null, null, displayClass(true, false));
+        assertNotNull(out);
+        assertEquals(1, calls(out, "hypernova/agent/FrameProbe", "frame"));
+    }
+
+    @Test
+    void missingUpdateIsUntouched() {
+        assertNull(new FrameProbeTransformer().transform(
+                null, DISPLAY, null, null, classBytesWithoutUpdate()));
     }
 
     @Test
     void otherClassAndMalformedBytesAreIgnored() {
         assertNull(new FrameProbeTransformer().transform(
-                null, "com/fs/starfarer/Other", null, null, classBytes(BASE)));
+                null, "org/lwjgl/opengl/Other", null, null, displayClass(true, true)));
         assertNull(new FrameProbeTransformer().transform(
-                null, BASE, null, null, new byte[]{1, 2, 3}));
+                null, DISPLAY, null, null, new byte[]{1, 2, 3}));
     }
 
-    private static byte[] classBytes(String name) {
+    private static byte[] displayClass(boolean noArg, boolean boolArg) {
         ClassWriter cw = new ClassWriter(0);
-        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null);
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "traverse",
-                "()Ljava/lang/String;", null, null);
-        mv.visitCode();
-        mv.visitInsn(Opcodes.ACONST_NULL);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL,
+                DISPLAY, null, "java/lang/Object", null);
+        if (noArg) {
+            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                    "update", "()V", null, null);
+            mv.visitCode(); mv.visitInsn(Opcodes.RETURN); mv.visitMaxs(0, 0); mv.visitEnd();
+        }
+        if (boolArg) {
+            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                    "update", "(Z)V", null, null);
+            mv.visitCode(); mv.visitInsn(Opcodes.RETURN); mv.visitMaxs(0, 0); mv.visitEnd();
+        }
         cw.visitEnd();
         return cw.toByteArray();
     }
 
-    private static byte[] classBytesWithoutTraverse(String name) {
+    private static byte[] classBytesWithoutUpdate() {
         ClassWriter cw = new ClassWriter(0);
-        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null);
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "other", "()V", null, null);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, DISPLAY, null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "sync", "(I)V", null, null);
         mv.visitCode(); mv.visitInsn(Opcodes.RETURN); mv.visitMaxs(0, 0); mv.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
     }
 
-    private static boolean calls(byte[] bytes, String owner, String name) {
+    private static int calls(byte[] bytes, String owner, String name) {
         List<String> hits = new ArrayList<>();
         new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
             @Override public MethodVisitor visitMethod(int a, String n, String d, String s, String[] e) {
@@ -71,6 +81,6 @@ class FrameProbeTransformTest {
                 };
             }
         }, 0);
-        return !hits.isEmpty();
+        return hits.size();
     }
 }
