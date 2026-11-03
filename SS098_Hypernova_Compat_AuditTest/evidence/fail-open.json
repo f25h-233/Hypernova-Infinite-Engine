@@ -6,9 +6,153 @@
     ]
   },
   "findings": [],
+  "good_mod_baked": false,
   "manifest_written": true,
+  "metadata_fallback_hits": 0,
+  "metadata_parse_errors": {},
+  "missing_mod_ids": [
+    "missing_mod"
+  ],
   "ok": true,
   "parse_errors": {},
+  "scanned_mod_ids": [
+    "core",
+    "dup_same",
+    "good_mod",
+    "tail_mod"
+  ],
+  "scenarios": {
+    "bad_metadata": {
+      "duplicate_ids": {
+        "dup_same": [
+          "dup_a",
+          "dup_b"
+        ]
+      },
+      "exception": null,
+      "findings": [
+        "Critical:coverage_metadata",
+        "Critical:metadata_parse_errors"
+      ],
+      "generation_matches": false,
+      "good_mod_baked": false,
+      "manifest_written": false,
+      "metadata_fallback_hits": 0,
+      "metadata_parse_errors": {
+        "bad_mod": "dds_metadata.json: expected ':' at offset 5"
+      },
+      "missing_mod_ids": [
+        "missing_mod"
+      ],
+      "ok": true,
+      "parse_errors": {},
+      "scanned_mod_ids": [
+        "core",
+        "dup_same",
+        "good_mod",
+        "tail_mod"
+      ],
+      "skip_v1_count": 0,
+      "skip_v2_count": 0,
+      "source_mode": "disk_scan"
+    },
+    "broken_mods": {
+      "duplicate_ids": {
+        "dup_same": [
+          "dup_a",
+          "dup_b"
+        ]
+      },
+      "exception": null,
+      "findings": [],
+      "generation_matches": true,
+      "good_mod_baked": false,
+      "manifest_written": true,
+      "metadata_fallback_hits": 0,
+      "metadata_parse_errors": {},
+      "missing_mod_ids": [
+        "missing_mod"
+      ],
+      "ok": true,
+      "parse_errors": {},
+      "scanned_mod_ids": [
+        "core",
+        "dup_same",
+        "good_mod",
+        "tail_mod"
+      ],
+      "skip_v1_count": 2,
+      "skip_v2_count": 2,
+      "source_mode": "disk_scan"
+    },
+    "missing_dds": {
+      "duplicate_ids": {
+        "dup_same": [
+          "dup_a",
+          "dup_b"
+        ]
+      },
+      "exception": null,
+      "findings": [
+        "Critical:missing_dds",
+        "Critical:coverage_baked",
+        "Critical:baked_unresolved"
+      ],
+      "generation_matches": false,
+      "good_mod_baked": true,
+      "manifest_written": false,
+      "metadata_fallback_hits": 0,
+      "metadata_parse_errors": {},
+      "missing_mod_ids": [
+        "missing_mod"
+      ],
+      "ok": true,
+      "parse_errors": {},
+      "scanned_mod_ids": [
+        "core",
+        "dup_same",
+        "good_mod",
+        "tail_mod"
+      ],
+      "skip_v1_count": 0,
+      "skip_v2_count": 0,
+      "source_mode": "dds_metadata"
+    },
+    "missing_skip_rerun": {
+      "duplicate_ids": {
+        "dup_same": [
+          "dup_a",
+          "dup_b"
+        ]
+      },
+      "exception": null,
+      "findings": [],
+      "first_skip_v1_count": 2,
+      "first_skip_v2_count": 2,
+      "generation_matches": true,
+      "good_mod_baked": false,
+      "manifest_written": true,
+      "metadata_fallback_hits": 0,
+      "metadata_parse_errors": {},
+      "missing_mod_ids": [
+        "missing_mod"
+      ],
+      "ok": true,
+      "parse_errors": {},
+      "scanned_mod_ids": [
+        "core",
+        "dup_same",
+        "good_mod",
+        "tail_mod"
+      ],
+      "skip_removed_before_rerun": true,
+      "skip_v1_count": 2,
+      "skip_v2_count": 2,
+      "source_mode": "disk_scan"
+    }
+  },
   "skip_v1_count": 2,
-  "skip_v2_count": 2
+  "skip_v2_count": 2,
+  "source_mode": "disk_scan",
+  "workdir": "C:\\Users\\qwe13\\AppData\\Local\\Temp\\hn-m6-fail-open-qen9kggy"
 }

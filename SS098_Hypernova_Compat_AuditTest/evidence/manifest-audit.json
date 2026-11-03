@@ -7,18 +7,171 @@
       ]
     },
     "findings": [],
+    "good_mod_baked": false,
     "manifest_written": true,
+    "metadata_fallback_hits": 0,
+    "metadata_parse_errors": {},
+    "missing_mod_ids": [
+      "missing_mod"
+    ],
     "ok": true,
     "parse_errors": {},
+    "scanned_mod_ids": [
+      "core",
+      "dup_same",
+      "good_mod",
+      "tail_mod"
+    ],
+    "scenarios": {
+      "bad_metadata": {
+        "duplicate_ids": {
+          "dup_same": [
+            "dup_a",
+            "dup_b"
+          ]
+        },
+        "exception": null,
+        "findings": [
+          "Critical:coverage_metadata",
+          "Critical:metadata_parse_errors"
+        ],
+        "generation_matches": false,
+        "good_mod_baked": false,
+        "manifest_written": false,
+        "metadata_fallback_hits": 0,
+        "metadata_parse_errors": {
+          "bad_mod": "dds_metadata.json: expected ':' at offset 5"
+        },
+        "missing_mod_ids": [
+          "missing_mod"
+        ],
+        "ok": true,
+        "parse_errors": {},
+        "scanned_mod_ids": [
+          "core",
+          "dup_same",
+          "good_mod",
+          "tail_mod"
+        ],
+        "skip_v1_count": 0,
+        "skip_v2_count": 0,
+        "source_mode": "disk_scan"
+      },
+      "broken_mods": {
+        "duplicate_ids": {
+          "dup_same": [
+            "dup_a",
+            "dup_b"
+          ]
+        },
+        "exception": null,
+        "findings": [],
+        "generation_matches": true,
+        "good_mod_baked": false,
+        "manifest_written": true,
+        "metadata_fallback_hits": 0,
+        "metadata_parse_errors": {},
+        "missing_mod_ids": [
+          "missing_mod"
+        ],
+        "ok": true,
+        "parse_errors": {},
+        "scanned_mod_ids": [
+          "core",
+          "dup_same",
+          "good_mod",
+          "tail_mod"
+        ],
+        "skip_v1_count": 2,
+        "skip_v2_count": 2,
+        "source_mode": "disk_scan"
+      },
+      "missing_dds": {
+        "duplicate_ids": {
+          "dup_same": [
+            "dup_a",
+            "dup_b"
+          ]
+        },
+        "exception": null,
+        "findings": [
+          "Critical:missing_dds",
+          "Critical:coverage_baked",
+          "Critical:baked_unresolved"
+        ],
+        "generation_matches": false,
+        "good_mod_baked": true,
+        "manifest_written": false,
+        "metadata_fallback_hits": 0,
+        "metadata_parse_errors": {},
+        "missing_mod_ids": [
+          "missing_mod"
+        ],
+        "ok": true,
+        "parse_errors": {},
+        "scanned_mod_ids": [
+          "core",
+          "dup_same",
+          "good_mod",
+          "tail_mod"
+        ],
+        "skip_v1_count": 0,
+        "skip_v2_count": 0,
+        "source_mode": "dds_metadata"
+      },
+      "missing_skip_rerun": {
+        "duplicate_ids": {
+          "dup_same": [
+            "dup_a",
+            "dup_b"
+          ]
+        },
+        "exception": null,
+        "findings": [],
+        "first_skip_v1_count": 2,
+        "first_skip_v2_count": 2,
+        "generation_matches": true,
+        "good_mod_baked": false,
+        "manifest_written": true,
+        "metadata_fallback_hits": 0,
+        "metadata_parse_errors": {},
+        "missing_mod_ids": [
+          "missing_mod"
+        ],
+        "ok": true,
+        "parse_errors": {},
+        "scanned_mod_ids": [
+          "core",
+          "dup_same",
+          "good_mod",
+          "tail_mod"
+        ],
+        "skip_removed_before_rerun": true,
+        "skip_v1_count": 2,
+        "skip_v2_count": 2,
+        "source_mode": "disk_scan"
+      }
+    },
     "skip_v1_count": 2,
-    "skip_v2_count": 2
+    "skip_v2_count": 2,
+    "source_mode": "disk_scan",
+    "workdir": "C:\\Users\\qwe13\\AppData\\Local\\Temp\\hn-m6-fail-open-qen9kggy"
   },
   "installed": {
+    "config": {
+      "exists": true,
+      "path": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\mods\\hypernova_infinite_engine\\data\\config\\hypernova\\hypernova.json"
+    },
+    "core": {
+      "exists": true,
+      "path": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\starsector-core"
+    },
     "defaults": {
       "eviction": false,
       "lazy": false,
       "scene_unload": false,
-      "textures_enabled": true
+      "textures_enabled": true,
+      "textures_enabled_explicit": true
     },
     "findings": [],
     "host_pollution": {
@@ -31,17 +184,22 @@
       "l3": 55445,
       "path": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\mods\\hypernova_infinite_engine\\data\\config\\hypernova\\manifest-v1.json",
       "schema": "hypernova-runtime-1",
-      "sha256": "e61084a315e5073c6f0973d576be95c664bf8ecf701a3d0771ec6d174ca0aaba"
+      "sha256": "e61084a315e5073c6f0973d576be95c664bf8ecf701a3d0771ec6d174ca0aaba",
+      "size_bytes": 9110366
     },
     "ok": true,
     "skip_v1": {
+      "entries": 73447,
       "exists": true,
       "generation": "e61084a315e5073c6f0973d576be95c664bf8ecf701a3d0771ec6d174ca0aaba",
+      "generation_checked": true,
       "path": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\mods\\hypernova_infinite_engine\\data\\config\\hypernova\\lazy-skip-v1.txt"
     },
     "skip_v2": {
+      "entries": 73447,
       "exists": true,
       "generation": "e61084a315e5073c6f0973d576be95c664bf8ecf701a3d0771ec6d174ca0aaba",
+      "generation_checked": true,
       "path": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\mods\\hypernova_infinite_engine\\data\\config\\hypernova\\lazy-skip-v2.txt"
     }
   }
