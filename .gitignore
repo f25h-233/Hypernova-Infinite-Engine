@@ -49,4 +49,6 @@ SS098_Hypernova_Compat_AuditTest/mods/
 SS098_Hypernova_Compat_AuditTest/vmparams/
 SS098_Hypernova_Compat_AuditTest/backups/
 SS098_Hypernova_Compat_AuditTest/evidence/*.csv
+SS098_Hypernova_Compat_AuditTest/evidence/**/*.csv
+SS098_Hypernova_Compat_AuditTest/evidence/**/*.dump
 SS098_Hypernova_Compat_AuditTest/evidence/**/*.log

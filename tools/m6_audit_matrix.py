@@ -29,7 +29,7 @@ def _iter_strings(node: Any) -> Iterator[str]:
 
 
 def _strings_stats(path: Path) -> dict[str, Any]:
-    data = load(path) if path.is_file() else {}
+    data = load(path)
     values = list(_iter_strings(data))
     cjk = sum(1 for value in values if CJK.search(value))
     return {
@@ -64,9 +64,10 @@ def _mod_infos(mods_dir: Path) -> tuple[dict[str, dict], dict[str, str],
         except Exception as exc:  # noqa: BLE001 - 审计要报告所有解析失败
             parse_errors[folder.name] = str(exc)
             continue
-        mid = str(data.get("id", "")).strip()
+        mid = data.get("id")
         if not mid:
             continue
+        mid = str(mid)
         data["_folder"] = folder.name
         by_id.setdefault(mid, data)
         folders.setdefault(mid, []).append(folder.name)
@@ -77,26 +78,43 @@ def _mod_infos(mods_dir: Path) -> tuple[dict[str, dict], dict[str, str],
 
 
 def _hypernova_state(game_root: Path) -> dict[str, Any]:
-    path = game_root / HN_REL
-    data = load(path) if path.is_file() else {}
+    data = load(game_root / HN_REL)
     textures = data.get("textures") or {}
     lazy = textures.get("lazy") or {}
     eviction = lazy.get("eviction") or {}
+    scene = eviction.get("scene_unload") or {}
     return {
-        "enabled": bool(data.get("enabled", False)),
-        "textures_enabled": bool(textures.get("enabled", False)),
+        # 产品默认值为 true（HypernovaConfig.java:15 / TexturePatchConfig.java:26）。
+        "enabled": bool(data.get("enabled", True)),
+        "textures_enabled": bool(textures.get("enabled", True)),
         "lazy": bool(lazy.get("enabled", False)),
         "eviction": bool(eviction.get("enabled", False)),
-        "scene_unload": bool(eviction.get("sceneUnload", False)),
+        # 产品 JSON 键是 textures.lazy.eviction.scene_unload.enabled
+        # （LazyTextureConfig.java:80-81,107），不是 -D 属性的 sceneUnload。
+        "scene_unload": bool(scene.get("enabled", False)),
+        # 区分“未配置（走产品默认）”与“显式关闭”。
+        "textures_present": isinstance(data.get("textures"), dict),
+        "enabled_explicit": isinstance(data.get("enabled"), bool),
     }
 
 
 def scan_environment(game_root: str | Path) -> dict[str, Any]:
     root = Path(game_root).resolve()
+    # fail-closed：核心输入缺失时抛错，由 CLI 统一输出一行 FATAL。
+    required = (
+        Path(CORE) / "data" / "config" / "settings.json",
+        Path("mods") / "enabled_mods.json",
+        Path(CORE) / "data" / "strings" / "strings.json",
+        HN_REL,
+    )
+    for rel in required:
+        path = root / rel
+        if not path.is_file():
+            raise FileNotFoundError(f"missing {path}")
     settings = root / CORE / "data" / "config" / "settings.json"
-    cfg = load(settings) if settings.is_file() else {}
+    cfg = load(settings)
     mods_dir = root / "mods"
-    enabled_data = load(mods_dir / "enabled_mods.json") if (mods_dir / "enabled_mods.json").is_file() else {}
+    enabled_data = load(mods_dir / "enabled_mods.json")
     enabled = [str(x) for x in (enabled_data.get("enabledMods") or [])]
     by_id, parse_errors, duplicates = _mod_infos(mods_dir)
     present = set(by_id)
@@ -130,6 +148,8 @@ def scan_environment(game_root: str | Path) -> dict[str, Any]:
         "mods": {
             "enabled_count": len(enabled),
             "scanned_count": len(present & set(enabled)),
+            "scanned_total": len(present),
+            "missing_enabled_ids": sorted(set(enabled) - present),
             "parse_errors": parse_errors,
             "duplicate_ids": duplicates,
         },
@@ -151,15 +171,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         data = scan_environment(args.game_root)
+        text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(text + "\n", encoding="utf-8")
+        if args.text or not args.out:
+            print(text)
     except Exception as exc:  # noqa: BLE001 - fail-closed
-        print(f"FATAL: {exc}", file=sys.stderr)
+        print(f"FATAL: {exc}".replace("\n", " "), file=sys.stderr)
         return 1
-    text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
-    if args.out:
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(text + "\n", encoding="utf-8")
-    if args.text or not args.out:
-        print(text)
     return 0
 
 

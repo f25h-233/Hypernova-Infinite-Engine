@@ -8,10 +8,10 @@
   "default_font": "graphics/fonts/insignia15LTaa.fnt",
   "font_ui_mods": [
     {
-      "enabled": false,
+      "enabled": true,
       "folder": "alice cesCC",
       "fonts": false,
-      "mod_id": "ALICE",
+      "mod_id": "ALICE ",
       "strings": true,
       "ui": false
     },
@@ -800,10 +800,10 @@
       "ui": false
     },
     {
-      "enabled": false,
+      "enabled": true,
       "folder": "Witch Citadel-Ver1.0c-0.98a",
       "fonts": false,
-      "mod_id": "Witch_Citadel",
+      "mod_id": "Witch_Citadel ",
       "strings": true,
       "ui": false
     },
@@ -1675,10 +1675,12 @@
   "game_root": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods",
   "hypernova": {
     "enabled": true,
+    "enabled_explicit": true,
     "eviction": false,
     "lazy": false,
     "scene_unload": false,
-    "textures_enabled": true
+    "textures_enabled": true,
+    "textures_present": true
   },
   "locale_override": "en_US",
   "mods": {
@@ -1701,8 +1703,10 @@
       ]
     },
     "enabled_count": 256,
+    "missing_enabled_ids": [],
     "parse_errors": {},
-    "scanned_count": 254
+    "scanned_count": 256,
+    "scanned_total": 260
   },
   "strings": {
     "cjk_ratio": 1.0,
