@@ -8,10 +8,13 @@ import pytest
 
 from m7_stack import (
     apply_migrate,
+    apply_route_b,
     inspect_root,
     main,
     plan_migrate,
     plan_route_b,
+    rollback_route,
+    snapshot_route,
 )
 
 
@@ -341,3 +344,210 @@ def test_plan_route_b_is_idempotent(tmp_path):
     second = plan_route_b(root, fr_dir=tmp_path / "fr", jdk_dir=tmp_path / "jdk",
                           hypernova_mod=tmp_path / "hn")
     assert second["vmparams"] == first["vmparams"]
+
+
+def _route_b_sources(tmp_path, *, enabled=("mod_a", "mod_b")):
+    root = tmp_path / "install"
+    _write(root / "vmparams",
+           "java.exe -Xmx2g -classpath janino.jar "
+           "com.fs.starfarer.StarfarerLauncher\n")
+    _write(root / "starsector-core/data/config/settings.json", '{"x":1}\n')
+    if enabled is not None:
+        _write(root / "mods/enabled_mods.json",
+               json.dumps({"enabledMods": list(enabled)}))
+
+    fr = tmp_path / "fr"
+    (fr / "fr.agent.jar").parent.mkdir(parents=True, exist_ok=True)
+    (fr / "fr.agent.jar").write_bytes(b"agent")
+    (fr / "fr.jar").write_bytes(b"fr")
+    _write(fr / "fr.version.txt", "v0.9.7rc2\n")
+    _write(fr / "fr.vmparams",
+           "-Xmx4g\n-javaagent:fr.agent.jar\n\n-classpath\nfr.jar\n"
+           "com.fs.starfarer.StarfarerLauncher")
+
+    jdk = tmp_path / "jdk"
+    _write(jdk / "release",
+           'JAVA_VERSION="28"\nJAVA_RUNTIME_VERSION="28-beta+13-ea"\n'
+           'IMPLEMENTOR_VERSION="Temurin-28+13-test"\n')
+    (jdk / "bin").mkdir(parents=True, exist_ok=True)
+    (jdk / "bin/java.exe").write_bytes(b"x")
+
+    hn = tmp_path / "hn"
+    _write(hn / "mod_info.json",
+           '{"id":"hypernova_infinite_engine"}')
+    _write(hn / "data/config/hypernova/hypernova.json", '{"enabled":true}\n')
+    (hn / "graphics/hypernova").mkdir(parents=True, exist_ok=True)
+    (hn / "graphics/hypernova/blank.png").write_bytes(b"png")
+    (hn / "build/java").mkdir(parents=True, exist_ok=True)
+    (hn / "build/java/hypernova.jar").write_bytes(b"jar")
+    (hn / "build/agent").mkdir(parents=True, exist_ok=True)
+    (hn / "build/agent/hypernova.agent.jar").write_bytes(b"agent")
+    return root, fr, jdk, hn
+
+
+def test_plan_route_b_tokenless_argfile_and_explicit_launcher(tmp_path):
+    root, fr, jdk, hn = _route_b_sources(tmp_path)
+    plan = plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn)
+    line = plan["vmparams"]
+    first = line.split()[0]
+    assert "java.exe" not in first.lower()
+    assert "bin\\java" not in first.lower()
+    assert line.index("-javaagent:") < line.index(
+        "com.fs.starfarer.StarfarerLauncher")
+    assert plan["vmparams_tokenless"] is True
+    assert plan["root_vmparams_modified"] is False
+    assert plan["vmparams_path"].endswith("route-b.vmparams")
+    assert plan["root_vmparams_path"].endswith("vmparams")
+
+    launcher = plan["launcher"]
+    assert launcher["java"] == "..\\jdk-28+13\\bin\\java.exe"
+    assert "..\\jdk-28+13\\bin\\java.exe" in launcher["bat_content"]
+    assert "@..\\route-b.vmparams" in launcher["bat_content"]
+    assert launcher["bat"].endswith("launch-route-b.bat")
+    assert plan["intended_java"]["java_version"] == "28"
+    assert plan["effective_java"]["verified"] is False
+    assert plan["starsector_exe"]["route_b"] is False
+    assert plan["starsector_exe"]["java"] == "..\\jre\\bin\\java.exe"
+
+
+def test_plan_route_b_prepatcher_agent_order(tmp_path):
+    root, fr, jdk, hn = _route_b_sources(tmp_path)
+    pp = tmp_path / "pp"
+    _write(pp / "mod_info.json", '{"id":"starsector_prepatcher"}')
+    (pp / "agent").mkdir(parents=True, exist_ok=True)
+    (pp / "agent/StarsectorPrepatcherAgent.jar").write_bytes(b"agent")
+    _write(pp / "prepatcher.properties", "enabled=true\npatch.foo=true\n")
+    plan = plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn,
+                        prepatcher_dir=pp)
+    line = plan["vmparams"]
+    hypernova = line.index("hypernova.agent.jar")
+    fr_agent = line.index("fr.agent.jar")
+    prepatcher = line.index("StarsectorPrepatcherAgent.jar")
+    assert hypernova < fr_agent < prepatcher
+    assert prepatcher < line.index("-classpath")
+    assert plan["prepatcher"]["patch_count"] == 1
+    assert plan["enabled_mods"]["add"] == [
+        "hypernova_infinite_engine", "starsector_prepatcher"]
+
+
+def test_snapshot_route_rollback_restores_existing_and_deletes_created(tmp_path):
+    root = tmp_path / "install"
+    _write(root / "vmparams", "original\n")
+    _write(root / "keep.txt", "keep\n")
+    dest = tmp_path / "backups"
+    snapshot_route(root, "label", paths=["vmparams", "keep.txt", "created.txt"],
+                   dest=dest)
+    _write(root / "vmparams", "changed\n")
+    _write(root / "keep.txt", "tampered\n")
+    _write(root / "created.txt", "new\n")
+
+    plan = rollback_route(root, "label", dest=dest)
+    assert plan["applied"] is False
+    assert any(item["action"] == "delete" for item in plan["actions"])
+    result = rollback_route(root, "label", dest=dest, apply=True)
+    assert result["ok"] is True
+    assert (root / "vmparams").read_text(encoding="utf-8") == "original\n"
+    assert (root / "keep.txt").read_text(encoding="utf-8") == "keep\n"
+    assert not (root / "created.txt").exists()
+    assert result["restored"] == 2
+    assert result["deleted"] == 1
+    again = rollback_route(root, "label", dest=dest, apply=True)
+    assert again["restored"] == 0
+    assert again["deleted"] == 0
+
+
+def test_apply_route_b_dry_run_writes_nothing(tmp_path):
+    root, fr, jdk, hn = _route_b_sources(tmp_path)
+    original = (root / "vmparams").read_text(encoding="utf-8")
+    plan = plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn)
+    result = apply_route_b(plan)
+    assert result["applied"] is False
+    assert not (root / "route-b.vmparams").exists()
+    assert not (tmp_path / "scripts/launch-route-b.bat").exists()
+    assert (root / "vmparams").read_text(encoding="utf-8") == original
+
+
+def test_apply_route_b_writes_and_rollback_removes_created(tmp_path):
+    root, fr, jdk, hn = _route_b_sources(tmp_path)
+    original = (root / "vmparams").read_text(encoding="utf-8")
+    plan = plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn)
+    plan["apply"] = True
+    result = apply_route_b(plan)
+    assert result["applied"] is True
+    assert (root / "route-b.vmparams").is_file()
+    first = (root / "route-b.vmparams").read_text(
+        encoding="utf-8").split()[0]
+    assert "java.exe" not in first.lower()
+    assert "bin\\java" not in first.lower()
+    assert (tmp_path / "scripts/launch-route-b.bat").is_file()
+    assert (root / "vmparams").read_text(encoding="utf-8") == original
+    enabled = json.loads(
+        (root / "mods/enabled_mods.json").read_text(encoding="utf-8"))
+    assert enabled["enabledMods"] == [
+        "mod_a", "mod_b", "hypernova_infinite_engine"]
+    rollback = result["rollback"]
+    assert Path(rollback["manifest"]).is_file()
+
+    rolled = rollback_route(
+        root, rollback["label"], dest=rollback["dest"], apply=True)
+    assert rolled["ok"] is True
+    assert (root / "vmparams").read_text(encoding="utf-8") == original
+    assert not (root / "route-b.vmparams").exists()
+    assert not (tmp_path / "scripts/launch-route-b.bat").exists()
+    assert json.loads(
+        (root / "mods/enabled_mods.json").read_text(encoding="utf-8")
+    ) == {"enabledMods": ["mod_a", "mod_b"]}
+    assert not (root / "mods/hypernova_infinite_engine").exists()
+    assert not (root / "starsector-core/fr.jar").exists()
+    assert not (root / "jdk-28+13").exists()
+
+
+def test_apply_route_b_refuses_corrupt_enabled_mods(tmp_path):
+    root, fr, jdk, hn = _route_b_sources(tmp_path, enabled=None)
+    _write(root / "mods/enabled_mods.json", "{bad json")
+    plan = plan_route_b(root, fr_dir=fr, jdk_dir=jdk, hypernova_mod=hn)
+    plan["apply"] = True
+    with pytest.raises(ValueError):
+        apply_route_b(plan)
+    assert not (root / "route-b.vmparams").exists()
+    assert (root / "mods/enabled_mods.json").read_text(
+        encoding="utf-8") == "{bad json"
+
+
+def test_cli_route_b_apply_failure_returns_nonzero(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "install"
+    _write(root / "vmparams", "java.exe com.fs.starfarer.StarfarerLauncher\n")
+
+    def fake_apply(plan):
+        return {"applied": True, "ok": False, "root": str(root),
+                "manifest": {"critical": ["missing_jar"]},
+                "agent": {"returncode": 1},
+                "rollback": {"label": "rollback-label"}}
+
+    monkeypatch.setattr("m7_stack.apply_route_b", fake_apply)
+    rc = main([
+        "route-b", "--root", str(root), "--fr-dir", str(tmp_path / "fr"),
+        "--jdk-dir", str(tmp_path / "jdk"),
+        "--hypernova-mod", str(tmp_path / "hn"), "--apply", "--text",
+    ])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "FATAL: route-b apply failed" in captured.err
+    assert "rollback-label" in captured.err
+
+
+def test_cli_route_b_text_and_json_out(tmp_path, capsys):
+    root, fr, jdk, hn = _route_b_sources(tmp_path)
+    out = tmp_path / "evidence/route-b-plan.json"
+    rc = main([
+        "route-b", "--root", str(root), "--fr-dir", str(fr),
+        "--jdk-dir", str(jdk), "--hypernova-mod", str(hn),
+        "--text", "--json-out", str(out),
+    ])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "launcher.java=..\\jdk-28+13\\bin\\java.exe" in captured.out
+    assert out.is_file()
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["vmparams_tokenless"] is True
+    assert data["root_vmparams_modified"] is False

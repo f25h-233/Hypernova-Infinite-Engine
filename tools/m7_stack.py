@@ -1,12 +1,15 @@
 """M7 统一部署包：实验根盘点、256 mod 迁移与路线 B 安装。
 
 Task 1 只读盘点；Task 2 迁移规划；Task 3 增加路线 B（FR 0.9.7rc2 +
-jdk-28+13 + Hypernova，可选 Prepatcher）。所有写操作都必须显式
-``--apply``，默认 dry-run；apply 前复用 ``m6_env_snapshot.snapshot``。
+jdk-28+13 + Hypernova，可选 Prepatcher）。路线 B 必须由显式
+``jdk-28+13/bin/java.exe @route-b.vmparams`` 启动器启动：``starsector.exe``
+与 ``fr.bat`` 都硬编码随包 JRE 17，不能用来跑 Java 28。所有写操作都必须
+显式 ``--apply``，默认 dry-run；apply 前生成 M7 自己的回滚清单。
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -20,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from hn_json import load  # noqa: E402
 import m6_env_snapshot  # noqa: E402  (快照复用；只调用，不修改 M6)
+from install_agent import AGENT_LINE as _INSTALL_AGENT_LINE  # noqa: E402
 
 MAIN_CLASS = "com.fs.starfarer.StarfarerLauncher"
 
@@ -65,15 +69,20 @@ EXCLUDED_MOD_IDS = frozenset({
 PRESERVED_MOD_IDS = frozenset({"vramoptimizer", "chineseinputfix"})
 
 # ---- 路线 B 常量（Task 3）----
-# Starsector 的启动档 CWD 是 starsector-core，因此 java 与 mods 都从该目录
-# 相对定位；这与 Inno 安装根 vmparams 的既有写法一致。
+# 启动链事实（审查 67fba6a）：starsector.exe 的 lpApplicationName 硬编码
+# `..\jre\bin\java.exe`，vmparams 首 token 只是子进程 argv[0]；fr.bat 同样
+# 硬编码 JRE 17。因此路线 B 必须生成 token-less argfile + 显式 java 启动器。
+# Starsector 的启动档 CWD 是 starsector-core，所以 java/mods/argfile 都从
+# 该目录相对定位。
 JDK_DIR_NAME = "jdk-28+13"
 JDK_JAVA_TOKEN = "..\\jdk-28+13\\bin\\java.exe"
+ROUTE_B_VMPARAMS_NAME = "route-b.vmparams"
+ROUTE_LAUNCHER_NAME = "launch-route-b.bat"
+ROUTE_ROLLBACK_MANIFEST = "route-rollback.json"
 HYPERNOVA_MOD_ID = "hypernova_infinite_engine"
 HYPERNOVA_MOD_REL = Path("mods") / HYPERNOVA_MOD_ID
-HYPERNOVA_AGENT_TOKEN = (
-    "-javaagent:..\\mods\\hypernova_infinite_engine\\jars\\hypernova.agent.jar"
-)
+# 与 install_agent.AGENT_LINE 共用同一真源，避免路径漂移。
+HYPERNOVA_AGENT_TOKEN = _INSTALL_AGENT_LINE
 FR_AGENT_TOKEN = "-javaagent:fr.agent.jar"
 PREPATCHER_MOD_REL = Path("mods") / "StarsectorPrepatcher"
 PREPATCHER_AGENT_TOKEN = (
@@ -85,6 +94,13 @@ ROUTE_B_FLAGS = (
     "-Dhypernova.textures.lazy.dds=true",
     "-Dhypernova.textures.lazy.eviction=true",
     "-Dhypernova.textures.lazy.eviction.sceneUnload=false",
+)
+# 回滚清单至少覆盖的配置/启动文件；apply 还会追加本次所有写入目标。
+ROUTE_SNAPSHOT_PATHS = (
+    VMPARAMS_PATH,
+    "mods/enabled_mods.json",
+    "mods/hypernova_infinite_engine/data/config/hypernova/hypernova.json",
+    "starsector-core/data/config/settings.json",
 )
 _HYPERNOVA_AGENT_NAMES = frozenset({
     "hypernova.agent.jar",
@@ -462,11 +478,10 @@ def apply_migrate(plan: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _route_b_effective_java(jdk_dir: str | Path) -> dict[str, object]:
-    """读取 ``jdk-28+13/release``，报告真正会被启动的 JVM 版本。
-
-    ``inspect_root`` 的 ``jre_version`` 只描述随包 JRE；路线 B 用的是
-    ``jdk-28+13/bin/java.exe``，两者必须分开报告。
+def _route_b_intended_java(jdk_dir: str | Path) -> dict[str, object]:
+    """读取 ``jdk-28+13/release``：这是**启动器打算使用**的 JDK，不是
+    已经证实的运行时 JVM。实际生效版本必须由实机 ``java -version`` 或
+    ``-Xlog`` 证据确认；``starsector.exe`` 本身固定用随包 JRE 17。
     """
     base = Path(jdk_dir)
     release = base / "release"
@@ -496,6 +511,318 @@ def _route_b_fr_version(fr_dir: str | Path) -> str | None:
         return path.read_text(encoding="utf-8-sig", errors="replace").strip() or None
     except OSError:
         return None
+
+
+def _audit_root(root: str | Path) -> Path:
+    """实验根的上层审计目录（`<audit>/install/<name>` → `<audit>`）。"""
+    resolved = Path(root).resolve()
+    if resolved.parent.name.lower() == "install":
+        return resolved.parent.parent
+    return resolved.parent
+
+
+def _default_backups(root: str | Path) -> Path:
+    return _audit_root(root) / "backups"
+
+
+def _validate_snapshot_label(label: str) -> str:
+    if not isinstance(label, str) or not label or label in {".", ".."}:
+        raise ValueError(f"invalid snapshot label: {label!r}")
+    if "/" in label or "\\" in label:
+        raise ValueError(f"invalid snapshot label: {label!r}")
+    candidate = Path(label)
+    if candidate.is_absolute() or candidate.drive or candidate.name != label:
+        raise ValueError(f"invalid snapshot label: {label!r}")
+    return label
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _tree_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    for item in sorted(path.rglob("*")):
+        if not item.is_file():
+            continue
+        rel = item.relative_to(path).as_posix()
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(_sha256_file(item).encode("ascii"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _route_launcher_path(root: str | Path) -> Path:
+    return _audit_root(root) / "scripts" / ROUTE_LAUNCHER_NAME
+
+
+def _route_launcher_text(root: str | Path) -> str:
+    scripts = _route_launcher_path(root).parent
+    core = (Path(root).resolve() / "starsector-core")
+    core_rel = os.path.relpath(core, scripts.resolve()).replace("/", "\\")
+    lines = [
+        "@echo off",
+        "setlocal",
+        "rem M7 Route B: explicit Java 28 launcher.",
+        "rem starsector.exe always starts ..\\jre\\bin\\java.exe (JRE 17);",
+        "rem this script is the only route B entry point.",
+        f'cd /d "%~dp0{core_rel}"',
+        f'"{JDK_JAVA_TOKEN}" @..\\{ROUTE_B_VMPARAMS_NAME}',
+    ]
+    return "\r\n".join(lines) + "\r\n"
+
+
+def _enabled_mods_state(path: Path) -> dict[str, object]:
+    """区分 missing / parse-error / ok；apply 必须 fail-closed。"""
+    if not path.is_file():
+        return {"state": "missing", "ids": [], "payload": None, "error": None}
+    try:
+        payload = load(path)
+    except Exception as exc:  # noqa: BLE001 - 由调用方决定 fail-closed
+        return {"state": "error", "ids": [], "payload": None,
+                "error": str(exc)}
+    if not isinstance(payload, dict):
+        return {"state": "error", "ids": [], "payload": None,
+                "error": "top-level must be an object"}
+    raw = payload.get("enabledMods")
+    if not isinstance(raw, list):
+        return {"state": "error", "ids": [], "payload": None,
+                "error": "enabledMods must be a list"}
+    ids: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            return {"state": "error", "ids": [], "payload": None,
+                    "error": "enabledMods must contain non-empty strings"}
+        ids.append(item)
+    return {"state": "ok", "ids": ids, "payload": payload, "error": None}
+
+
+def _snapshot_paths(root: Path, paths: list[str | Path]) -> list[Path]:
+    """把相对/绝对路径规范化，并限制在实验根或审计目录内。"""
+    resolved_root = root.resolve()
+    allowed = (resolved_root, _audit_root(root).resolve())
+    normalized: list[Path] = []
+    seen: set[Path] = set()
+    for raw in paths:
+        candidate = Path(raw)
+        target = (candidate if candidate.is_absolute()
+                  else resolved_root / candidate).resolve()
+        if not any(target.is_relative_to(base) for base in allowed):
+            raise ValueError(f"snapshot path escapes install/audit root: {raw}")
+        if target not in seen:
+            seen.add(target)
+            normalized.append(target)
+    return normalized
+
+
+def snapshot_route(
+    root: str | Path,
+    label: str,
+    *,
+    paths: list[str | Path] | None = None,
+    dest: str | Path | None = None,
+) -> dict[str, object]:
+    """M7 自建回滚快照：逐路径记录 existed_before / 备份 / sha256。
+
+    与 M6 快照并存（M6 仍按全局约束先跑），但回滚只依赖本清单，因为它
+    覆盖 ``vmparams``、生成文件与 absent-before 的删除语义。
+    """
+    base = Path(root).resolve()
+    if not base.is_dir():
+        raise FileNotFoundError(f"install root not found: {base}")
+    label = _validate_snapshot_label(label)
+    snap = (Path(dest).resolve() if dest is not None
+            else _default_backups(base).resolve()) / label
+    manifest_path = snap / ROUTE_ROLLBACK_MANIFEST
+    if manifest_path.exists():
+        raise FileExistsError(f"route rollback snapshot already exists: {snap}")
+
+    raw_paths = list(paths) if paths is not None else list(ROUTE_SNAPSHOT_PATHS)
+    targets = _snapshot_paths(base, raw_paths)
+    backups = snap / "rollback"
+    entries: list[dict[str, object]] = []
+    for index, target in enumerate(targets):
+        try:
+            rel = target.relative_to(base).as_posix()
+        except ValueError:
+            rel = None
+        entry: dict[str, object] = {
+            "path": str(target),
+            "rel": rel,
+            "existed_before": False,
+            "kind": "absent",
+            "backup": None,
+            "sha256": None,
+            "tree_sha256": None,
+            "file_count": 0,
+        }
+        if target.is_file():
+            backup = backups / f"{index:04d}.file"
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target, backup)
+            entry.update({
+                "existed_before": True,
+                "kind": "file",
+                "backup": backup.relative_to(snap).as_posix(),
+                "sha256": _sha256_file(target),
+                "size": target.stat().st_size,
+            })
+        elif target.is_dir():
+            backup = backups / f"{index:04d}.dir"
+            shutil.copytree(target, backup)
+            file_count = sum(1 for item in target.rglob("*") if item.is_file())
+            entry.update({
+                "existed_before": True,
+                "kind": "dir",
+                "backup": backup.relative_to(snap).as_posix(),
+                "tree_sha256": _tree_digest(target),
+                "file_count": file_count,
+            })
+        entries.append(entry)
+
+    meta = {
+        "version": 1,
+        "route": "b",
+        "root": str(base),
+        "label": label,
+        "created": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "entries": entries,
+    }
+    snap.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return meta
+
+
+def _load_rollback_manifest(
+    root: Path, label: str, dest: str | Path | None
+) -> tuple[Path, dict[str, object]]:
+    label = _validate_snapshot_label(label)
+    snap = (Path(dest).resolve() if dest is not None
+            else _default_backups(root).resolve()) / label
+    manifest_path = snap / ROUTE_ROLLBACK_MANIFEST
+    if not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"missing route rollback manifest: {manifest_path}")
+    meta = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(meta, dict) or meta.get("version") != 1:
+        raise ValueError("unsupported route rollback manifest")
+    if Path(str(meta.get("root"))).resolve() != root.resolve():
+        raise ValueError("rollback manifest root does not match")
+    entries = meta.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("empty route rollback manifest")
+    allowed = (root.resolve(), _audit_root(root).resolve())
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("invalid rollback entry")
+        target = Path(str(entry.get("path"))).resolve()
+        if not any(target.is_relative_to(base) for base in allowed):
+            raise ValueError(f"rollback path escapes install/audit root: {target}")
+    return snap, meta
+
+
+def rollback_route(
+    root: str | Path,
+    label: str,
+    *,
+    dest: str | Path | None = None,
+    apply: bool = False,
+) -> dict[str, object]:
+    """按 M7 回滚清单恢复：existed_before → 恢复；absent-before → 删除。"""
+    base = Path(root).resolve()
+    snap, meta = _load_rollback_manifest(base, label, dest)
+    entries = meta["entries"]
+    assert isinstance(entries, list)
+
+    actions: list[dict[str, object]] = []
+    for entry in entries:
+        assert isinstance(entry, dict)
+        target = Path(str(entry["path"])).resolve()
+        existed = bool(entry.get("existed_before"))
+        action = "absent"
+        if existed:
+            backup_rel = entry.get("backup")
+            if not backup_rel:
+                raise ValueError(f"missing backup for {target}")
+            backup = (snap / str(backup_rel)).resolve()
+            if not backup.is_relative_to(snap):
+                raise ValueError(f"backup escapes snapshot: {backup}")
+            if entry.get("kind") == "file":
+                if not backup.is_file():
+                    raise FileNotFoundError(f"missing snapshot file: {backup}")
+                expected = str(entry.get("sha256"))
+                if _sha256_file(backup) != expected:
+                    raise ValueError(f"snapshot payload sha256 mismatch: {backup}")
+                if target.is_file() and _sha256_file(target) == expected:
+                    action = "unchanged"
+                else:
+                    action = "restore-file"
+            else:
+                if not backup.is_dir():
+                    raise FileNotFoundError(f"missing snapshot tree: {backup}")
+                expected_tree = str(entry.get("tree_sha256"))
+                if _tree_digest(backup) != expected_tree:
+                    raise ValueError(f"snapshot tree digest mismatch: {backup}")
+                if target.is_dir() and _tree_digest(target) == expected_tree:
+                    action = "unchanged"
+                else:
+                    action = "restore-tree"
+        elif target.exists():
+            action = "delete"
+        actions.append({"path": str(target), "kind": entry.get("kind"),
+                        "action": action})
+
+    result: dict[str, object] = {
+        "applied": bool(apply),
+        "root": str(base),
+        "label": label,
+        "snapshot": str(snap),
+        "actions": actions,
+        "restored": 0,
+        "deleted": 0,
+    }
+    if not apply:
+        return result
+
+    restored = 0
+    for entry, item in zip(entries, actions):
+        assert isinstance(entry, dict)
+        action = item["action"]
+        target = Path(str(item["path"]))
+        if action in {"restore-file", "restore-tree"}:
+            backup = (snap / str(entry["backup"])).resolve()
+            if target.exists():
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if action == "restore-file":
+                shutil.copy2(backup, target)
+            else:
+                shutil.copytree(backup, target)
+            restored += 1
+    deleted = 0
+    deletes = [item for item in actions if item["action"] == "delete"]
+    deletes.sort(key=lambda item: len(Path(str(item["path"])).parts),
+                 reverse=True)
+    for item in deletes:
+        target = Path(str(item["path"]))
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.is_file():
+            target.unlink()
+        deleted += 1
+    result["restored"] = restored
+    result["deleted"] = deleted
+    result["ok"] = True
+    return result
 
 
 def _reject_route_a_components(root: Path, tokens: list[str]) -> None:
@@ -571,11 +898,9 @@ def _route_b_copies(
 def _route_b_enabled_mods(root: Path,
                           prepatcher: bool) -> dict[str, object]:
     path = root / ENABLED_MODS_PATH
-    payload = _read_json(path)
-    current: list[str] = []
-    if isinstance(payload, dict) and isinstance(payload.get("enabledMods"), list):
-        current = [item for item in payload["enabledMods"]
-                   if isinstance(item, str)]
+    state = _enabled_mods_state(path)
+    current = state["ids"] if state["state"] == "ok" else []
+    assert isinstance(current, list)
     wanted = [HYPERNOVA_MOD_ID]
     if prepatcher:
         wanted.append("starsector_prepatcher")
@@ -583,9 +908,23 @@ def _route_b_enabled_mods(root: Path,
     return {
         "path": str(path),
         "present": path.is_file(),
+        "state": state["state"],
+        "error": state["error"],
         "current_count": len(current),
         "add": [item for item in wanted if item.lower() not in lower],
     }
+
+
+def _read_mod_id(path: Path) -> str:
+    if not path.is_file():
+        raise FileNotFoundError(f"mod_info.json not found: {path}")
+    payload = load(path)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path}: top-level must be an object")
+    mod_id = payload.get("id")
+    if not isinstance(mod_id, str) or not mod_id:
+        raise ValueError(f"{path}: missing string id")
+    return mod_id
 
 
 def _prepatcher_capabilities(prepatcher_dir: Path) -> dict[str, object]:
@@ -612,27 +951,34 @@ def _prepatcher_capabilities(prepatcher_dir: Path) -> dict[str, object]:
 
 def _route_b_snapshot_plan(root: Path) -> dict[str, object]:
     resolved = root.resolve()
-    if resolved.parent.name.lower() == "install":
-        backups = resolved.parent.parent / "backups"
-    else:
-        backups = resolved.parent / "backups"
     label = "m7-route-b-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     return {
         "game_root": str(resolved),
-        "dest": str(backups),
+        "dest": str(_default_backups(resolved)),
         "label": label,
-        "files": list(m6_env_snapshot.SNAPSHOT_FILES),
-        "extra_backup": [VMPARAMS_PATH],
+        "m6_files": list(m6_env_snapshot.SNAPSHOT_FILES),
+        "rollback_manifest": ROUTE_ROLLBACK_MANIFEST,
+        "route_files": list(ROUTE_SNAPSHOT_PATHS),
     }
 
 
+def _route_b_arguments(tokens: list[str]) -> list[str]:
+    """生成 token-less 参数序列：丢掉原启动档的 argv[0]。
+
+    原 vmparams 的首 token 是给 ``starsector.exe`` 的 argv[0]，不是 JVM
+    参数；直接喂给 ``java @argfile`` 会被当作主类。若输入本身已 token-less
+    （首 token 以 ``-`` 开头或就是主类），原样保留，保证幂等。
+    """
+    args = list(tokens)
+    if args and not args[0].startswith("-") and args[0] != MAIN_CLASS:
+        args = args[1:]
+    return args
+
+
 def _route_b_tokens(tokens: list[str], *, prepatcher: bool) -> list[str]:
-    """清洗旧注入并生成路线 B 的完整参数 token 序列。"""
+    """清洗旧注入并生成路线 B 的 token-less 参数序列。"""
     out: list[str] = []
-    for index, token in enumerate(tokens):
-        if index == 0:
-            out.append(JDK_JAVA_TOKEN)
-            continue
+    for token in tokens:
         lowered = token.lower()
         if lowered.startswith("-javaagent:"):
             name = lowered[len("-javaagent:"):].replace("\\", "/")
@@ -648,7 +994,7 @@ def _route_b_tokens(tokens: list[str], *, prepatcher: bool) -> list[str]:
     if MAIN_CLASS not in out:
         raise ValueError(f"vmparams has no main class: {MAIN_CLASS}")
 
-    # 路线 B 通过根 vmparams 直接启动，classpath 必须包含 fr.jar。
+    # 显式 java 启动器的 argfile 也必须把 fr.jar 放到 classpath 首位。
     for index, token in enumerate(out[:-1]):
         if token in ("-classpath", "-cp"):
             parts = out[index + 1].split(";")
@@ -693,12 +1039,18 @@ def plan_route_b(
         raise ValueError(f"empty vmparams: {vmparams}")
 
     _reject_route_a_components(base, tokens)
+    args = _route_b_arguments(tokens)
     new_line = " ".join(
-        _route_b_tokens(tokens, prepatcher=prepatcher_dir is not None))
+        _route_b_tokens(args, prepatcher=prepatcher_dir is not None))
+    route_b_vmparams = base / ROUTE_B_VMPARAMS_NAME
+    launcher_path = _route_launcher_path(base)
+    launcher_text = _route_launcher_text(base)
 
     copies = _route_b_copies(base, fr_dir, jdk_dir, hypernova_mod,
                              prepatcher_dir)
-    effective_java = _route_b_effective_java(jdk_dir)
+    intended_java = _route_b_intended_java(jdk_dir)
+    intended_java["launcher_java"] = JDK_JAVA_TOKEN
+    intended_java["target"] = str(base / JDK_DIR_NAME / "bin" / "java.exe")
     fr_version = _route_b_fr_version(fr_dir)
 
     warnings: list[str] = []
@@ -708,16 +1060,26 @@ def plan_route_b(
     agent_source = _hypernova_agent_source(hypernova_mod)
     if not agent_source.is_file():
         warnings.append(f"missing agent jar: {agent_source}")
+    hypernova_json = (Path(hypernova_mod) / "data" / "config" /
+                      "hypernova" / "hypernova.json")
+    if not hypernova_json.is_file():
+        warnings.append(f"missing hypernova.json: {hypernova_json}")
+    if not Path(str(intended_java["java_exe"])).is_file():
+        warnings.append(
+            f"jdk java.exe not found: {intended_java['java_exe']}")
     if fr_version is None:
         warnings.append(f"fr.version.txt not found under {fr_dir}")
     elif "0.9.7rc2" not in fr_version:
         warnings.append(f"unexpected FR version: {fr_version}")
-    java_version = effective_java.get("java_version")
-    if java_version is None:
-        warnings.append(f"cannot read effective Java version from {jdk_dir}")
-    elif str(java_version) != "28":
+    intended_version = intended_java.get("java_version")
+    if intended_version is None:
+        warnings.append(f"cannot read intended Java version from {jdk_dir}")
+    elif str(intended_version) != "28":
         warnings.append(
-            f"effective Java is {java_version}, expected 28 for route B")
+            f"intended Java is {intended_version}, expected 28 for route B")
+    warnings.append(
+        "starsector.exe and fr.bat hardcode ..\\jre\\bin\\java.exe (JRE 17); "
+        "only the generated launcher bat runs jdk-28+13")
 
     prepatcher: dict[str, object] | None = None
     if prepatcher_dir is not None:
@@ -754,6 +1116,49 @@ def plan_route_b(
             "VramOptimizer not present in target mods; apply the 256-mod "
             "migration (Task 2) before route B")
 
+    mod_ids: dict[str, str] = {
+        HYPERNOVA_MOD_ID: str(Path(hypernova_mod) / "mod_info.json"),
+    }
+    if prepatcher_dir is not None:
+        mod_ids["starsector_prepatcher"] = str(
+            Path(prepatcher_dir) / "mod_info.json")
+    for mod_id, info_path in mod_ids.items():
+        try:
+            actual = _read_mod_id(Path(info_path))
+        except Exception as exc:  # noqa: BLE001 - dry-run 只告警
+            warnings.append(f"cannot verify mod id for {mod_id}: {exc}")
+            continue
+        if actual != mod_id:
+            warnings.append(
+                f"mod_info id mismatch: {info_path} is {actual!r}, "
+                f"expected {mod_id!r}")
+
+    enabled_mods = _route_b_enabled_mods(
+        base, prepatcher_dir is not None)
+    if enabled_mods["state"] == "error":
+        warnings.append(
+            "enabled_mods.json is unreadable/invalid; apply will refuse to "
+            f"write it: {enabled_mods['error']}")
+
+    rollback_paths = [
+        VMPARAMS_PATH,
+        ROUTE_B_VMPARAMS_NAME,
+        str(launcher_path),
+        ENABLED_MODS_PATH,
+        "starsector-core/data/config/settings.json",
+        "starsector-core/fr.vmparams.bak-hypernova",
+        str(base / HYPERNOVA_MOD_REL),
+        str(base / HYPERNOVA_MOD_REL / "data/config/hypernova/hypernova.json"),
+    ]
+    rollback_paths.extend(str(item["dst"]) for item in copies)
+
+    writes = [
+        {"path": str(route_b_vmparams), "kind": "file",
+         "content": new_line + "\n"},
+        {"path": str(launcher_path), "kind": "file",
+         "content": launcher_text},
+    ]
+
     return {
         "route": "b",
         "name": ROUTES["b"]["name"],
@@ -761,39 +1166,76 @@ def plan_route_b(
         "apply": False,
         "java": JDK_JAVA_TOKEN,
         "java_target": str(base / JDK_DIR_NAME / "bin" / "java.exe"),
-        "effective_java": effective_java,
+        "intended_java": intended_java,
+        "effective_java": {
+            "verified": False,
+            "java_version": None,
+            "evidence": None,
+            "note": "runtime JVM version is not proven; collect java -version "
+                    "or -Xlog evidence in smoke before claiming Java 28",
+        },
+        "launcher": {
+            "kind": "explicit-java",
+            "java": JDK_JAVA_TOKEN,
+            "java_target": str(base / JDK_DIR_NAME / "bin" / "java.exe"),
+            "bat": str(launcher_path),
+            "bat_content": launcher_text,
+            "cwd": str(base / "starsector-core"),
+            "argfile": f"..\\{ROUTE_B_VMPARAMS_NAME}",
+            "argfile_path": str(route_b_vmparams),
+            "command": f"{JDK_JAVA_TOKEN} @..\\{ROUTE_B_VMPARAMS_NAME}",
+            "note": "starsector.exe/fr.bat hardcode ..\\jre\\bin\\java.exe "
+                    "(JRE 17); this explicit launcher is the only Java 28 "
+                    "entry point",
+        },
+        "starsector_exe": {
+            "java": "..\\jre\\bin\\java.exe",
+            "jre_version": _jre_version(base),
+            "route_b": False,
+            "note": "hardcoded lpApplicationName; fallback/control only",
+        },
         "bundled_jre_version": _jre_version(base),
         "fr_version": fr_version,
-        "vmparams_path": str(vmparams),
+        "root_vmparams_path": str(vmparams),
+        "root_vmparams_modified": False,
+        "source_vmparams_sha256": _sha256_file(vmparams),
+        "hypernova_config": str(hypernova_json),
+        "vmparams_path": str(route_b_vmparams),
         "vmparams": new_line,
-        "vmparams_changed": new_line != original.strip(),
+        "vmparams_tokenless": True,
+        "vmparams_changed": False,
         "agents": agents,
         "flags": list(ROUTE_B_FLAGS),
+        "writes": writes,
         "copies": copies,
         "copy_count": len(copies),
         "missing_sources": [str(item["src"]) for item in copies
                             if not item["exists"]],
         "agent_jar": str(agent_source),
-        "enabled_mods": _route_b_enabled_mods(
-            base, prepatcher_dir is not None),
+        "enabled_mods": enabled_mods,
+        "mod_ids": mod_ids,
         "vram_optimizer": {
             "present": vram_present,
             "source": "256-mod migration (Task 2)",
         },
         "prepatcher": prepatcher,
         "snapshot": _route_b_snapshot_plan(base),
+        "rollback_paths": rollback_paths,
         "warnings": warnings,
     }
 
 
 def _apply_enabled_mods(root: Path, spec: dict[str, object]) -> dict[str, object]:
+    """合并启用列表；parse error 必须 fail-closed，不能覆盖 256 列表。"""
     path_text = spec.get("path")
     path = Path(str(path_text)) if path_text else root / ENABLED_MODS_PATH
-    payload = _read_json(path)
-    ids: list[str] = []
-    if isinstance(payload, dict) and isinstance(payload.get("enabledMods"), list):
-        ids = [item for item in payload["enabledMods"]
-               if isinstance(item, str)]
+    state = _enabled_mods_state(path)
+    if state["state"] == "error":
+        raise ValueError(
+            f"refusing to overwrite invalid enabled_mods.json: {state['error']}")
+    ids = list(state["ids"]) if isinstance(state["ids"], list) else []
+    payload = state.get("payload")
+    base_payload = dict(payload) if isinstance(payload, dict) else {}
     lower = {item.lower() for item in ids}
     raw_add = spec.get("add")
     add = [str(item) for item in raw_add] if isinstance(raw_add, list) else []
@@ -803,10 +1245,11 @@ def _apply_enabled_mods(root: Path, spec: dict[str, object]) -> dict[str, object
             ids.append(mod_id)
             lower.add(mod_id.lower())
             added.append(mod_id)
+    base_payload["enabledMods"] = ids
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(
-        json.dumps({"enabledMods": ids}, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(base_payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     os.replace(tmp, path)
@@ -848,7 +1291,13 @@ def _apply_install_agent(root: Path, agent_jar: str | Path) -> dict[str, object]
 
 
 def apply_route_b(plan: dict[str, object]) -> dict[str, object]:
-    """执行路线 B 计划。默认 dry-run；只有 ``plan["apply"]`` 为真才写盘。"""
+    """执行路线 B 计划。默认 dry-run；只有 ``plan["apply"]`` 为真才写盘。
+
+    写盘顺序：校验源与 enabled_mods → M6 快照（全局约束）+ M7 回滚快照
+    → token-less argfile + 显式 Java 28 启动器 → 复制 FR/jdk/Hypernova
+    [/Prepatcher] → 合并 enabled_mods → manifest → install_agent（JRE 17
+    回退路径）。根 ``vmparams`` 不改写。
+    """
     if not plan.get("apply"):
         return {"applied": False, "root": plan.get("root")}
 
@@ -860,33 +1309,88 @@ def apply_route_b(plan: dict[str, object]) -> dict[str, object]:
     agent_jar = Path(str(plan.get("agent_jar") or "")).resolve()
     if not agent_jar.is_file() and str(agent_jar) not in missing:
         missing.append(str(agent_jar))
+    intended = plan.get("intended_java")
+    intended = intended if isinstance(intended, dict) else {}
+    java_exe = Path(str(intended.get("java_exe") or ""))
+    if not java_exe.is_file() and str(java_exe) not in missing:
+        missing.append(str(java_exe))
+    hypernova_config = Path(str(plan.get("hypernova_config") or ""))
+    if not hypernova_config.is_file() and str(hypernova_config) not in missing:
+        missing.append(str(hypernova_config))
     if missing:
         raise FileNotFoundError(
             "missing route-b sources: " + ", ".join(missing))
 
-    # 快照先行（M6 的 4 个文件），vmparams 不在 M6 清单里，单独留档。
+    expected_vm_sha = plan.get("source_vmparams_sha256")
+    if expected_vm_sha:
+        source_vmparams = root / VMPARAMS_PATH
+        if (not source_vmparams.is_file()
+                or _sha256_file(source_vmparams) != str(expected_vm_sha)):
+            raise ValueError(
+                "source vmparams changed after planning; replan route-b")
+
+    # enabled_mods 解析失败必须在任何写盘之前拒绝，绝不能覆盖 256 列表。
+    raw_enabled = plan.get("enabled_mods")
+    enabled_spec = raw_enabled if isinstance(raw_enabled, dict) else {}
+    enabled_path = Path(str(enabled_spec.get("path") or
+                            root / ENABLED_MODS_PATH))
+    _snapshot_paths(root, [enabled_path])
+    state = _enabled_mods_state(enabled_path)
+    if state["state"] == "error":
+        raise ValueError(
+            f"refusing to apply with invalid enabled_mods.json: "
+            f"{state['error']}")
+    raw_add = enabled_spec.get("add")
+    add_ids = [str(item) for item in raw_add] if isinstance(raw_add, list) else []
+    raw_mod_ids = plan.get("mod_ids")
+    mod_ids = raw_mod_ids if isinstance(raw_mod_ids, dict) else {}
+    for mod_id in add_ids:
+        info_path = mod_ids.get(mod_id)
+        if not info_path:
+            raise ValueError(f"no mod_info.json declared for {mod_id!r}")
+        actual = _read_mod_id(Path(str(info_path)))
+        if actual != mod_id:
+            raise ValueError(
+                f"mod_info id mismatch: {info_path} is {actual!r}, "
+                f"expected {mod_id!r}")
+
+    raw_writes = plan.get("writes")
+    writes = raw_writes if isinstance(raw_writes, list) else []
+    if not writes:
+        raise ValueError("route-b plan has no generated files")
+    raw_rollback = plan.get("rollback_paths")
+    rollback_paths = (raw_rollback if isinstance(raw_rollback, list)
+                      else list(ROUTE_SNAPSHOT_PATHS))
+
+    # 快照先行：M6（全局约束） + M7 自己的完整回滚清单。
     raw_snapshot = plan.get("snapshot")
     snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
     dest = snapshot.get("dest")
     label = snapshot.get("label")
     if not dest or not label:
         raise ValueError("route-b plan has no snapshot dest/label")
-    snapshot_meta = m6_env_snapshot.snapshot(root, str(dest), str(label))
-    snapshot_dir = Path(str(dest)) / str(label)
-    vmparams = root / VMPARAMS_PATH
-    vmparams_backup: str | None = None
-    if vmparams.is_file():
-        backup = snapshot_dir / "vmparams.before-route-b"
-        shutil.copy2(vmparams, backup)
-        vmparams_backup = str(backup)
+    dest_path = Path(str(dest))
+    snapshot_meta = m6_env_snapshot.snapshot(root, str(dest_path), str(label))
+    snapshot_dir = dest_path.resolve() / str(label)
+    rollback_meta = snapshot_route(
+        root, str(label), paths=rollback_paths, dest=dest_path)
 
-    with vmparams.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write(str(plan["vmparams"]).rstrip("\r\n") + "\n")
+    generated: list[str] = []
+    for item in writes:
+        if not isinstance(item, dict) or not item.get("path"):
+            raise ValueError("invalid route-b generated file entry")
+        target = Path(str(item["path"]))
+        _snapshot_paths(root, [target])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(str(item.get("content", "")))
+        generated.append(str(target))
 
     copied: list[str] = []
     for item in copies:
         src = Path(str(item["src"])).resolve()
         dst = Path(str(item["dst"]))
+        _snapshot_paths(root, [dst])
         if item.get("kind") == "tree":
             shutil.copytree(src, dst, dirs_exist_ok=True)
         else:
@@ -894,9 +1398,7 @@ def apply_route_b(plan: dict[str, object]) -> dict[str, object]:
             shutil.copy2(src, dst)
         copied.append(str(dst))
 
-    raw_enabled = plan.get("enabled_mods")
-    enabled = _apply_enabled_mods(
-        root, raw_enabled if isinstance(raw_enabled, dict) else {})
+    enabled = _apply_enabled_mods(root, enabled_spec)
     manifest = _apply_install_manifest(root)
     agent = _apply_install_agent(root, agent_jar)
     ok = bool(manifest.get("ok")) and agent.get("returncode") == 0
@@ -905,12 +1407,21 @@ def apply_route_b(plan: dict[str, object]) -> dict[str, object]:
         "ok": ok,
         "root": str(root),
         "snapshot": snapshot_meta,
-        "vmparams_backup": vmparams_backup,
+        "rollback": {
+            "dest": str(snapshot_dir.parent),
+            "label": str(label),
+            "manifest": str(snapshot_dir / ROUTE_ROLLBACK_MANIFEST),
+            "entries": len(rollback_meta.get("entries", [])),
+        },
+        "generated": generated,
         "vmparams": plan["vmparams"],
+        "root_vmparams_modified": False,
         "copied": copied,
         "enabled_mods": enabled,
         "manifest": manifest,
         "agent": agent,
+        "launcher": plan.get("launcher"),
+        "intended_java": plan.get("intended_java"),
         "effective_java": plan.get("effective_java"),
     }
 
@@ -997,6 +1508,57 @@ def _format_migrate_text(data: dict[str, object]) -> str:
     ])
 
 
+def _format_route_b_text(data: dict[str, object]) -> str:
+    def flag(value: object) -> str:
+        return "true" if value else "false"
+
+    def joined(value: object) -> str:
+        items = value if isinstance(value, list) else []
+        return ",".join(str(item) for item in items) or "-"
+
+    if "applied" in data:
+        raw_rollback = data.get("rollback")
+        rollback = raw_rollback if isinstance(raw_rollback, dict) else {}
+        generated = data.get("generated")
+        copied = data.get("copied")
+        return "\n".join([
+            f"applied={flag(data.get('applied'))}",
+            f"ok={flag(data.get('ok'))}",
+            f"root={data.get('root')}",
+            f"rollback.label={rollback.get('label')}",
+            f"rollback.manifest={rollback.get('manifest')}",
+            f"generated={len(generated) if isinstance(generated, list) else 0}",
+            f"copied={len(copied) if isinstance(copied, list) else 0}",
+            f"root_vmparams_modified="
+            f"{flag(data.get('root_vmparams_modified'))}",
+        ])
+
+    raw_intended = data.get("intended_java")
+    intended = raw_intended if isinstance(raw_intended, dict) else {}
+    raw_launcher = data.get("launcher")
+    launcher = raw_launcher if isinstance(raw_launcher, dict) else {}
+    raw_enabled = data.get("enabled_mods")
+    enabled = raw_enabled if isinstance(raw_enabled, dict) else {}
+    raw_warnings = data.get("warnings")
+    raw_copies = data.get("copies")
+    return "\n".join([
+        f"route={data.get('route')}",
+        f"root={data.get('root')}",
+        f"intended_java.version={intended.get('java_version')}",
+        f"intended_java.runtime={intended.get('java_runtime_version')}",
+        f"launcher.java={launcher.get('java')}",
+        f"launcher.bat={launcher.get('bat')}",
+        f"launcher.argfile={launcher.get('argfile')}",
+        f"vmparams={data.get('vmparams_path')}",
+        f"root_vmparams_modified="
+        f"{flag(data.get('root_vmparams_modified'))}",
+        f"copies={len(raw_copies) if isinstance(raw_copies, list) else 0}",
+        f"enabled_mods.state={enabled.get('state')}",
+        f"enabled_mods.add={joined(enabled.get('add'))}",
+        f"warnings={len(raw_warnings) if isinstance(raw_warnings, list) else 0}",
+    ])
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1020,6 +1582,10 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="可选：StarsectorPrepatcher 目录（实验）")
     route_b.add_argument("--backups", type=Path,
                          help="快照根目录（默认为 <audit>/backups）")
+    route_b.add_argument("--text", action="store_true",
+                         help="以 key=value 输出摘要")
+    route_b.add_argument("--json-out", "--out", dest="json_out", type=Path,
+                         help="把 JSON 结果写入该文件（evidence）")
     route_b.add_argument("--apply", action="store_true",
                          help="真正写盘（默认只规划）")
     return parser
@@ -1055,7 +1621,31 @@ def main(argv: list[str] | None = None) -> int:
                 data = apply_route_b(plan)
             else:
                 data = plan
-            print(json.dumps(data, ensure_ascii=False, indent=2))
+            if args.json_out is not None:
+                args.json_out.parent.mkdir(parents=True, exist_ok=True)
+                args.json_out.write_text(
+                    json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+            if args.text:
+                print(_format_route_b_text(data))
+            else:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+            if args.apply and not data.get("ok"):
+                manifest = data.get("manifest")
+                manifest = manifest if isinstance(manifest, dict) else {}
+                agent = data.get("agent")
+                agent = agent if isinstance(agent, dict) else {}
+                rollback = data.get("rollback")
+                rollback = rollback if isinstance(rollback, dict) else {}
+                print(
+                    "FATAL: route-b apply failed "
+                    f"(manifest={manifest.get('critical') or manifest.get('error')}, "
+                    f"agent_rc={agent.get('returncode')}, "
+                    f"rollback_label={rollback.get('label')})",
+                    file=sys.stderr,
+                )
+                return 1
             return 0
         data = inspect_root(args.root)
     except Exception as exc:  # noqa: BLE001 - 失败返回非零
