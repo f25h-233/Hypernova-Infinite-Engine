@@ -64,4 +64,19 @@ class FrameProbeTest {
         assertTrue(due.contains("frames=2"));
         assertNull(s.sample(T0 + 48 * MS)); // frames=3
     }
+
+    @Test
+    void firstLineIsAtSixHundred() {
+        FrameProbe.State s = new FrameProbe.State(600);
+        assertNull(s.sample(T0));
+        long now = T0;
+        for (int i = 0; i < 599; i++) {
+            now += 16 * MS;
+            assertNull(s.sample(now), "no line before 600 valid frames");
+        }
+        now += 16 * MS;
+        String due = s.sample(now);
+        assertNotNull(due);
+        assertTrue(due.contains("frames=600"), due);
+    }
 }

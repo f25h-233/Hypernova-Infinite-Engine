@@ -13,17 +13,23 @@ class FrameProbeTransformTest {
     private static final String DISPLAY = "org/lwjgl/opengl/Display";
 
     @Test
-    void injectsIntoBothDisplayUpdateOverloads() {
+    void injectsOnceWhenBothOverloadsExist() {
         byte[] in = displayClass(true, true);
         byte[] out = new FrameProbeTransformer().transform(null, DISPLAY, null, null, in);
         assertNotNull(out);
-        assertEquals(2, calls(out, "hypernova/agent/FrameProbe", "frame"));
+        assertEquals(1, calls(out, "hypernova/agent/FrameProbe", "frame"));
     }
 
     @Test
-    void injectsIntoOnlyThePresentOverload() {
+    void delegatesOnlyClassIsUntouched() {
+        assertNull(new FrameProbeTransformer().transform(
+                null, DISPLAY, null, null, displayClass(true, false)));
+    }
+
+    @Test
+    void injectsIntoUpdateZOnlyClass() {
         byte[] out = new FrameProbeTransformer().transform(
-                null, DISPLAY, null, null, displayClass(true, false));
+                null, DISPLAY, null, null, displayClass(false, true));
         assertNotNull(out);
         assertEquals(1, calls(out, "hypernova/agent/FrameProbe", "frame"));
     }
@@ -40,6 +46,30 @@ class FrameProbeTransformTest {
                 null, "org/lwjgl/opengl/Other", null, null, displayClass(true, true)));
         assertNull(new FrameProbeTransformer().transform(
                 null, DISPLAY, null, null, new byte[]{1, 2, 3}));
+    }
+
+    @Test
+    void injectedCallIsTheFirstInstructionOfUpdateZ() {
+        byte[] out = new FrameProbeTransformer().transform(
+                null, DISPLAY, null, null, displayClass(true, true));
+        assertNotNull(out);
+        boolean[] found = {false};
+        new ClassReader(out).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override public MethodVisitor visitMethod(int a, String n, String d, String s, String[] e) {
+                if (!"update".equals(n) || !"(Z)V".equals(d)) return null;
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override public void visitMethodInsn(int op, String o, String mn,
+                                                          String dd, boolean itf) {
+                        if (!found[0]) {
+                            found[0] = true;
+                            assertEquals("hypernova/agent/FrameProbe", o);
+                            assertEquals("frame", mn);
+                        }
+                    }
+                };
+            }
+        }, 0);
+        assertTrue(found[0], "update(Z)V must contain the probe call");
     }
 
     private static byte[] displayClass(boolean noArg, boolean boolArg) {
