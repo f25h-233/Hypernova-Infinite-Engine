@@ -1,0 +1,36 @@
+[
+  {
+    "ok": true,
+    "menu_s": 87.3,
+    "wall_s": 133.4,
+    "stop": "forced",
+    "read_bytes_menu": 809097481,
+    "read_bytes_exit": 846773040,
+    "ws_menu_mb": 9474.8,
+    "ws_exit_mb": 9363.8,
+    "private_menu_mb": 13135.4,
+    "private_exit_mb": 13175.9,
+    "gpu_menu_mb": 4103.0,
+    "gpu_process_dedicated_mb": 496.6,
+    "gpu_process_shared_mb": 36.2,
+    "gpu_process_dedicated_exit_mb": 526.3,
+    "gpu_process_shared_exit_mb": 42.2,
+    "free_mb_menu": 1344.2,
+    "free_mb_exit": 2928.5,
+    "agent": {
+      "key_breakdown": "2026-11-03T09:14:29.270696400Z INFO cache key breakdown: files=12331, scan=1506 ms, load=125 ms, refresh=22 ms, canonical=35 ms, save=109 ms, total=1805 ms, rehash=false",
+      "key_ready": "2026-11-03T09:14:29.274234900Z INFO cache key ready (background): ff7ca37f94372bc16d33bb2298f7c585, took 1811 ms",
+      "file_index": [
+        "2026-11-03T09:14:33.337228600Z INFO file index: loaded mod_entries=223537, total_entries=229517, dirs=17389, bytes=3337666"
+      ],
+      "preload_cold": "2026-11-03T09:14:33.360018600Z INFO scripts cache cold: key=ff7ca37f94372bc16d33bb2298f7c585, preloaded=0, in 0 ms",
+      "textures_patched": "2026-11-03T09:14:44.101826700Z INFO textures: patched org/dark/shaders/util/TextureData (shaderLib 1.12.1 lazy normal cache)",
+      "writes": [
+        "2026-11-03T09:14:52.984679400Z INFO scripts cache written: key=ff7ca37f94372bc16d33bb2298f7c585, entries=1574, bytes=6539300, in 47 ms",
+        "2026-11-03T09:15:06.014151600Z INFO scripts cache written: key=ff7ca37f94372bc16d33bb2298f7c585, entries=1887, bytes=7962073, in 13 ms",
+        "2026-11-03T09:15:21.041794300Z INFO scripts cache written: key=ff7ca37f94372bc16d33bb2298f7c585, entries=2113, bytes=8781716, in 9 ms"
+      ],
+      "breakdown": "2026-11-03T09:16:27.486278400Z INFO miss breakdown: total=12942, sourceless=3, sourced=12939"
+    }
+  }
+]

@@ -42,6 +42,7 @@ Starsector 0.98a 的运行时纹理预取与兜底 mod，附带一个可选的�
 | GraphicsLib | 1.12.1（测试环境） |
 
 - 主 mod 不需要 FR；agent 的 file index / lazy textures 只在 **FR 0.9.7 / 0.9.7rc2** 上启用，其它版本 fail-open（不跳过、不代理），不会崩溃。
+- 汉化测试版 / ChineseInputFix / 字体 UI 的兼容性审计入口是 [`docs/m6-results.md`](docs/m6-results.md)；lazy / eviction / probe 默认仍为 off，用户实机 gate 见该文档 §4。
 - 本仓库**不包含** Starsector 游戏文件、汉化包或第三方 mod 文件。
 
 ## 安装
@@ -98,7 +99,7 @@ python tools/install_agent.py --game <游戏目录> --env <profile>
 
 > 表里的数字是各里程碑在当时环境下的门禁结果，不代表所有 mod 集/硬件都能复现。
 
-最近一次全量验证（2026-11-03）：main 115/115、agent 211/210/1（1 个已知 Windows symlink 用例跳过）、pytest 400。
+最近一次全量验证（2026-11-03）：main 115/115、agent 211/210/1（1 个已知 Windows symlink 用例跳过）、pytest 460。
 
 完整实测记录在 `docs/`；规格与裁决在 [`技术笔记-纹理按需加载.md`](技术笔记-纹理按需加载.md)。
 

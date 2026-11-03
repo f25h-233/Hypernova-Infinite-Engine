@@ -52,3 +52,8 @@ SS098_Hypernova_Compat_AuditTest/evidence/*.csv
 SS098_Hypernova_Compat_AuditTest/evidence/**/*.csv
 SS098_Hypernova_Compat_AuditTest/evidence/**/*.dump
 SS098_Hypernova_Compat_AuditTest/evidence/**/*.log
+SS098_Hypernova_Compat_AuditTest/evidence/**/screens/
+
+# ---- M7 统一部署包：实验安装与第三方工件永不入库 ----
+SS098_Hypernova_Compat_AuditTest/install/
+SS098_Hypernova_Compat_AuditTest/vendor/

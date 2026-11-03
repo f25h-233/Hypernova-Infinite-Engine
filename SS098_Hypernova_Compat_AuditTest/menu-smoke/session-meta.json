@@ -1,0 +1,15 @@
+{
+  "label": "menu-smoke",
+  "started_at": "2026-11-03T17:14:19+08:00",
+  "game_root": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods",
+  "logs": [
+    {
+      "name": "starsector",
+      "path": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\menu-smoke\\logs\\pre-starsector.log"
+    },
+    {
+      "name": "scripts-agent",
+      "path": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\menu-smoke\\logs\\pre-scripts-agent.log"
+    }
+  ]
+}
