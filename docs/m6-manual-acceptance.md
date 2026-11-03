@@ -168,11 +168,20 @@ python -I tools/m6_audit_matrix.py --game-root Starsector-098-260mods --text \
 - 游戏分辨率与窗口模式（窗口/全屏/无边框）
 - ChineseInputFix 版本（矩阵 `chinese_input_fix.version`）
 
+> **约束口径**：M6 的自动化工具（`m6_session.py`、`m6_audit_matrix.py`、
+> `m6_env_snapshot.py`）**从不写** `enabled_mods.json` / `hypernova.json` /
+> `Miko_Lite.txt` / `settings.json`；上面的修改只由操作者按 brief 手动
+> 执行，且必须用 §1.2 快照 + §7 `restore --force` 回滚。
+
 ## 3. 会话分组
 
 每组开始前**先完全退出游戏**，再执行 `start`（`start` 会把旧日志复制到
-evidence 后移走；游戏占用日志时 `os.replace` 会失败）。组内只跑本组场景，
-结束后退出游戏，再执行 `end`。
+evidence 后移走；游戏占用日志时移动会失败）。组内只跑本组场景，
+结束后退出游戏，再执行 `end`。`end` 要求同 label 的
+`evidence/<label>/session-meta.json` 存在；漏跑 `start` 或 label 拼错会
+`FATAL` 且不写 `session.json`。`start` 之后没有产生新日志（或日志仍是
+`start` 之前的旧文件）时，`end` 会给出 `ok=false`，`problems` 含
+`no new logs since start`，不会把旧日志记成本组证据。
 
 通用命令（把 `<label>` 换成下表的值）：
 
@@ -210,6 +219,33 @@ python -I tools/m6_session.py end \
 - **E**：重点看豆腐块（□□）、缺字、文字重叠/错位、按钮文字截断；每个
   界面至少截一张图。
 
+### 3.1 `start` 失败后的恢复
+
+`start` 在复制/移动/写 meta 任一步失败时会：
+
+- 删除本次创建的 `logs/pre-*.log`；
+- 把已经移动的 `logs/rotated-*.log` 移回原路径；
+- 只有在回滚完整时才删除空的 `logs/`；
+- 向 stderr 打一行 `FATAL: ...` 并返回 rc=1。
+
+恢复步骤：
+
+1. 若 stderr **没有** `rollback incomplete`：原日志已回到
+   `starsector-core/starsector.log` / `saves/hypernova/scripts-agent.log`，
+   直接重跑同一 label 即可（不会再有 `FileExistsError`）。
+2. 若出现 `rollback incomplete`：不要删除任何日志。先确认游戏已完全退出、
+   日志句柄已释放，再把 `evidence/<label>/logs/rotated-*.log` 手工移回
+   原路径；确认原日志恢复后删除该 `logs/` 目录，再重跑。仍被占用就换
+   label（如 `A-campaign-r2`），旧目录保留为失败现场。
+3. `logs/` 里若有非本工具命名的文件，`start` 会拒绝删除并抛
+   `FileExistsError`；这是防止误删，不是轮转成功。换 label，或确认文件
+   无用后手工处理。
+4. 跨盘 evidence root 已用 `shutil.move` 回退（必要时先复制再删除），
+   不需要手工处理 WinError 17。
+5. `start` 找不到任何日志时仍 rc=0（首次运行合法），但会向 stderr 打一行
+   `WARNING: no logs found under ...`；看到它说明 `--game-root` 指错或
+   游戏还没产生日志，本组不能作为证据。
+
 ## 4. 证据检查
 
 每组 `end` 后检查 `session.json`：
@@ -226,10 +262,16 @@ path = Path("SS098_Hypernova_Compat_AuditTest/evidence") / label / "session.json
 data = json.loads(path.read_text(encoding="utf-8"))
 keys = {
     "ok": data["ok"],
+    "problems": data["problems"],
     "anchor_found": data["starsector_session"]["anchor_found"],
     "frame_present": data["frame_probe"]["present"],
     "frame_source": data["frame_probe"].get("source"),
     "lazy_present": data["lazy"]["present"],
+    "lazy_failed_zero": data["health"]["lazy_failed_zero"],
+    "lazy_disabled_zero": data["health"]["lazy_disabled_zero"],
+    "lazy_dim_mismatch_zero": data["health"]["lazy_dim_mismatch_zero"],
+    "lazy_failed_parked_zero": data["health"]["lazy_failed_parked_zero"],
+    "new_logs_ok": data["new_logs_ok"],
     "texture_errors_total": data["texture_errors_total"],
     "log_audit_total": data["log_audit"]["total"],
     "log_audit_complete": data["log_audit"]["complete"],
@@ -240,8 +282,11 @@ PY
 ```
 
 - 通过条件：`ok=true`，即 `anchor_found=true`、`frame_probe.present=true`、
-  `lazy.present=true`、`texture_errors_total=0`、`log_audit.complete=true`、
-  `log_audit.total=0`。
+  `lazy.present=true`、lazy `failed/disabled/dimMismatch/failedParked`
+  全为 0、`new_logs_ok=true`、`texture_errors_total=0`、
+  `log_audit.complete=true`、`log_audit.total=0`；`problems` 为空。
+- `end` 失败（rc=1）时会同时向 stderr 打一行 `m6_session: session not ok:
+  label=...: <problems>`；把这行和 `session.json` 一起留档。
 - `frame_probe.source` 在 agent-only 会话必须是 `agent`；出现 `game` 说明
   主 mod probe 也在跑，不要混用两条来源。
 - `log_audit.observations`（ChineseInputFix / 独立词 IME 命中）是存在性
