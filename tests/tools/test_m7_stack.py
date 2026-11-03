@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from m7_stack import apply_migrate, inspect_root, plan_migrate
+from m7_stack import apply_migrate, inspect_root, plan_migrate, plan_route_b
 
 
 def _write(path: Path, text: str) -> None:
@@ -73,3 +73,26 @@ def test_apply_migrate_dry_run_writes_nothing(tmp_path):
     result = apply_migrate(plan)
     assert result["applied"] is False
     assert not (tmp_path / "dst").exists()
+
+
+def test_plan_route_b_inserts_flags_before_main_class(tmp_path):
+    root = tmp_path / "install"
+    _write(root / "vmparams", "java.exe -Xmx2g com.fs.starfarer.StarfarerLauncher\n")
+    plan = plan_route_b(root, fr_dir=tmp_path / "fr", jdk_dir=tmp_path / "jdk",
+                        hypernova_mod=tmp_path / "hn")
+    line = plan["vmparams"]
+    assert line.index("-javaagent:") < line.index(
+        "com.fs.starfarer.StarfarerLauncher")
+    assert "-Dhypernova.textures.lazy=true" in line
+    assert "jdk-28+13" in plan["java"]
+
+
+def test_plan_route_b_is_idempotent(tmp_path):
+    root = tmp_path / "install"
+    _write(root / "vmparams", "java.exe com.fs.starfarer.StarfarerLauncher\n")
+    first = plan_route_b(root, fr_dir=tmp_path / "fr", jdk_dir=tmp_path / "jdk",
+                         hypernova_mod=tmp_path / "hn")
+    _write(root / "vmparams", first["vmparams"] + "\n")
+    second = plan_route_b(root, fr_dir=tmp_path / "fr", jdk_dir=tmp_path / "jdk",
+                          hypernova_mod=tmp_path / "hn")
+    assert second["vmparams"] == first["vmparams"]
