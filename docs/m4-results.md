@@ -180,54 +180,184 @@ summary 中这两项已正确记录，不是 lazy 健康失败。
 
 **未执行（user gate，需用户按 `docs/m4-manual-acceptance.md` 跑）。**
 
-**前置限制（必须）**：frame probe 依赖 textures 模块（`HypernovaPlugin`）。
-`Starsector-098-260mods` 默认是 agent-only（`enabled_mods.json` 不含
-`hypernova_infinite_engine`），不启用主 mod 就不会产生 `HYPERNOVA_FRAME` 行。
-用户 gate 必须先在 260mods 临时启用该模块（备份/启用/恢复步骤见
-`docs/m4-manual-acceptance.md` §1），或改用已启用模块的 `Starsector-098-Base`
-（先刷新主 jar/agent，报告用 Base 路径；mod 数少）。外部帧时间工具只能补
-stutter 观察，**不能**填 `frame_probe.present=true`，也不能替代 Hypernova probe。
+> **M4.1 更新**：agent-side probe 已让 260mods agent-only 可采样（见
+> `## M4.1 agent-side frame probe`）。下面的“必须启用主 mod”是 M4 当时的
+> 限制记录；agent-only 路径不再需要改 `enabled_mods.json`。
 
-**I-5 口径（最终 review）**：probe 依赖主 mod（textures 模块）；260mods 默认
-agent-only，无法产生 `HYPERNOVA_FRAME`。临时启用模块后，测到的是
+**前置限制（M4 当时；M4.1 已解除 agent-only 限制）**：M4 时 frame probe 依赖
+textures 模块（`HypernovaPlugin`），`Starsector-098-260mods` 默认 agent-only
+（`enabled_mods.json` 不含 `hypernova_infinite_engine`）不会产生
+`HYPERNOVA_FRAME`。M4.1 起 agent-side probe 在 agent 日志里产帧（见下节），
+agent-only 不再需要启用主 mod 或修改 `enabled_mods.json`。完整产品环境仍可用
+`Starsector-098-Base`（已启用主 mod，mod 数少）；主 mod 与 agent 两条来源不能
+混用。外部帧时间工具只能补 stutter 观察，**不能**填
+`frame_probe.present=true`，也不能替代 Hypernova probe。
+
+**I-5 口径（M4 最终 review；M4.1 更新见下节）**：M4 时临时启用模块后测到的是
 “textures 模块 + agent”，**不能**与 M2.6/M2.8 的 agent-only 数字直接比较，
-也不能把差异归因于 lazy/DDS 单独一项。M5 决策若要保持 agent-only，必须使用
-外部帧时间工具或 agent-side probe 的替代证据；不能用 agent-only 环境冒充
-frame probe。
+也不能把差异归因于 lazy/DDS 单独一项。M4.1 的 agent-only probe 解决了
+“agent-only 无帧”问题，但 agent 与主 mod 两条来源仍不能混用；A→B/stutter
+仍需用户实机，不能拿菜单 smoke 冒充。
 
 本轮没有：
 
 - 真实存档的 A→B 各 10 min 长会话；
 - `build/m4/gpu-a.csv` / `gpu-b.csv` 或 `gpu.dedicated_mb.median` 的 A/B 对比；
-- `frame_probe.present=true` 的实机帧行；
 - `over200` / `maxMs` / `p99Ms` / `longGaps` 的人工验收读数；
 - 崩溃/白块/错位的人工观察。
 
+> M4.1 的 menu-only smoke 已有 `frame_probe.present=true`（`source=agent`，
+> 5400 帧），但那不是 A→B，也不是战斗验收。
+
 不要在 M5 默认开启决策中把这些项目当作“已通过”。执行前需确认：
 
-1. 使用**已启用 `hypernova_infinite_engine`** 的游戏环境（`Starsector-098-Base`
-   已启用；`Starsector-098-260mods` 当前未启用）；
-2. 该环境的主 jar 已刷新到当前构建（`install-manifest.sh` 或等价安装），
-   否则 probe 仍是旧 class；
+1. agent-only 260mods 可直接跑（M4.1 主路径）；完整产品环境用
+   `Starsector-098-Base`（已启用主 mod，mod 数少）；
+2. 无论哪条路径，agent jar 与主 jar 都必须刷新到当前构建
+   （`build-mod.sh` + `install-manifest.sh` + `install_agent.py`），否则跑的
+   是旧 class；
 3. 按 `docs/m4-manual-acceptance.md` 使用临时启动参数，不改发行默认值。
 
 ## 6. 限制
 
-- **frame probe 前置**：必须启用 textures 模块（`HypernovaPlugin`）；260mods
-  默认 agent-only，不启用就不会有 `HYPERNOVA_FRAME`。用户 gate 需按
-  `docs/m4-manual-acceptance.md` §1 临时启用/恢复，或改用 Base 的
-  `fr.vmparams` 路径；外部工具只补 stutter，不能填 frame probe。
-- **I-5 可比性**：启用模块后的数据是“textures 模块 + agent”，不能与
-  M2.6/M2.8 的 agent-only 数字直接比较，也不能单独归因于 lazy/DDS。
+- **frame probe 前置**：M4 时 probe 依赖 textures 模块（`HypernovaPlugin`）；
+  M4.1 起 agent-side probe 已使 260mods agent-only 可采样（见
+  `## M4.1 agent-side frame probe`）。主 mod 与 agent 两条来源不能混用；
+  外部工具只补 stutter，不能填 frame probe。
+- **I-5 可比性**：M4 时启用模块后的数据是“textures 模块 + agent”，不能与
+  M2.6/M2.8 的 agent-only 数字直接比较，也不能单独归因于 lazy/DDS。M4.1 起
+  agent-only 有独立 probe，但 agent 与主 mod 两条来源仍不能拼成一条曲线。
 - summary 每 10 s 一条，最后一条最多旧 10 s；
 - `p99Ms` 是 1 ms 桶估算，不是逐帧原始值；
 - `longGaps` 只排除 >5 s，短暂停仍会算作大帧；
 - 260mods 大地图/mod 环境问题不归因 Hypernova；
 - 本轮不默认开启、不宣称显存收益；
-- miko-lite smoke 未加载 Hypernova 主 mod，probe 实机加载未被本轮 smoke 覆盖
-  （详见第 3 节）；
+- M4 的 miko-lite smoke 未加载 Hypernova 主 mod；M4.1 agent-side smoke 已覆盖
+  agent-only 菜单帧（见下节），但战斗与 A→B/stutter 仍未覆盖；
 - A/B 只有单轮（`--rounds 1`），差值不作为收益证据。
 
 ## 7. 下一步
 
 M6（汉化/中文输入兼容审计）→ M5（默认开启 canary + 发行）。
+
+## M4.1 agent-side frame probe
+
+- **日期**：2026-11-03
+- **状态**：agent-side probe 完成；260mods agent-only 实测产帧；A→B/stutter
+  仍为 user gate（**未执行**）。
+- **默认**：未改任何默认开关；frame probe 默认 off。
+
+### 设计
+
+`-javaagent` 的 `FrameProbeTransformer` 在
+`org.lwjgl.opengl.Display.update()V` 与 `update(Z)V` 入口注入
+`FrameProbe.frame("Display.update")`。`Display.update` 是
+title/campaign/combat 循环里的每帧 buffer swap，因此 260mods 的 agent-only
+配置（`enabled_mods.json` 不含 `hypernova_infinite_engine`）也能采样。probe
+独立于 lazy/DDS/FR/scripts；关闭时只保留一次 property 检查。主 mod 的
+`HypernovaPlugin`/`FrameTimeProbe` 保留给完整产品；agent 与主 mod 两条来源
+不能混用，报告用 `frame_probe.source` 标明。
+
+**为什么换 hook**：原计划注入 `BaseGameState.traverse` /
+`CombatState.traverse`。Task 3 第一次 smoke 证明这两个方法是整段 state loop，
+只在进入状态时调用一次：日志只有 1 条
+`samples started from com/fs/starfarer/BaseGameState`、0 条
+`HYPERNOVA_FRAME`。fix1（`3a34b6b`）改为 `Display.update` 两个重载。
+
+### 验证
+
+| 命令 | rc | 结果 |
+|---|---|---|
+| `bash tools/java/run-agent-tests.sh` | 0 | 208 tests found / 207 successful / 1 aborted / 0 failed（abort 为已知 Windows symlink 用例） |
+| `python -I -m pytest tests/tools -q` | 0 | 400 passed in 37.78s |
+| `bash tools/java/build-mod.sh` | 0 | 主 jar 与 `hypernova-0.1.0.zip` 构建成功；release_check OK |
+| `bash tools/java/install-manifest.sh Starsector-098-260mods` | 0 | `baked=80286/80286 unresolved=0`；`verified: installed jar matches build output` |
+| `python tools/install_agent.py --game Starsector-098-260mods --env 260mods-lite` | 0 | `installed: ...hypernova.agent.jar`；`no vmparams change: ...Miko_Lite.txt` |
+
+### 实机 smoke（menu-only）
+
+命令：
+
+```bash
+python -I tools/smoke_run.py --profile miko-lite --rounds 1 --linger 20 \
+  --jvm-arg=-Dhypernova.frameProbe=true \
+  --jvm-arg=-Dhypernova.textures.lazy=true \
+  --jvm-arg=-Dhypernova.textures.lazy.dds=true \
+  --json-out build/m41/smoke-probe.json
+```
+
+结果 rc=0，`build/m41/smoke-probe.json`：
+
+| 指标 | 值 |
+|---|---|
+| `ok` | `true` |
+| `menu_s` / `wall_s` | 124.7 / 172.1 |
+| `stop` | `forced` |
+| `gpu_process_dedicated_mb`（menu） | 496.6 |
+| `gpu_process_shared_mb`（menu） | 34.2 |
+
+最后一个 agent session（`scripts-agent.log` 共 731 行；最后一个
+`hypernova agent premain` 在 line 550）：
+
+| 检查 | 实测 |
+|---|---|
+| `frame probe: enabled` | 1（line 548，`05:09:00.808`） |
+| `frame probe: hook added to Display.update` | 1（line 560，`05:09:02.533`） |
+| `frame probe: samples started from Display.update` | 1（line 561，`05:09:03.022`） |
+| `HYPERNOVA_FRAME` 行数 | 9 |
+| 首行 | line 628：`frames=600 over200=3 maxMs=1225 p99Ms=60 lastMs=19 longGaps=0`（`05:09:20.283`） |
+| 最后一行 | line 731：`frames=5400 over200=4 maxMs=1225 p99Ms=54 lastMs=18 longGaps=1`（`05:11:46.338`） |
+| 战斗帧 | 本次 smoke 未进战斗；`Display.update` 覆盖战斗循环，但战斗帧仍需用户实机确认 |
+
+### 报告
+
+命令：
+
+```bash
+python -I tools/m4_session_report.py \
+  --agent-log Starsector-098-260mods/saves/hypernova/scripts-agent.log \
+  --starsector-log Starsector-098-260mods/starsector-core/starsector.log \
+  --out build/m41/smoke-report.json --require-frame --text
+```
+
+结果 rc=0，`build/m41/smoke-report.json`：
+
+| 项 | 值 |
+|---|---|
+| `frame_probe.source` | `agent` |
+| `frame_probe.present` / `complete` | `true` / `true` |
+| `frames` / `over200` / `maxMs` / `p99Ms` / `longGaps` | 5400 / 4 / 1225 / 54 / 1 |
+| `frame_probe.file_line` | 731 |
+| `lazy.present` | `true` |
+| `lazy.summary.failed / disabled / dimMismatch / failedParked` | 0 / 0 / 0 / 0 |
+| `lazy.summary.main` | `main` |
+| `lazy.summary.liveBytes / evictableBytes` | 14537856 / 627196 |
+| `lazy.summary.budgetBytes` | 268435456 |
+| `lazy.summary.dds / ddsHit / ddsFallback` | 1 / 36 / 2 |
+| `texture_errors_total` | 0（五类全 0） |
+| `health` | 全 `true` |
+| `starsector_session.anchor_found / anchor_count` | `true` / 6 |
+
+**口径**：
+
+- 这是 **menu-only** 的 1 轮 smoke（20 s linger），不是 A→B。`frames=5400`
+  覆盖 JVM 启动后的 title/menu/load；`maxMs=1225` / `over200=4` 发生在启动/
+  加载/菜单阶段，不是战斗 stutter 证据；`longGaps=1` 是启动/菜单切换的 >5 s
+  间隔，被正确排除在帧统计外。
+- 未进入战斗；`Display.update` 在战斗循环中同样每帧调用，但战斗帧仍需用户
+  实机验证。**不能**把菜单 smoke 当作战斗验收。
+- 未执行 A→B：没有 10 min A/B 会话、`gpu-a.csv` / `gpu-b.csv`、B−A 差值或
+  人工 stutter 读数。A→B/stutter 仍按 `docs/m4-manual-acceptance.md` 由用户
+  执行。
+- 未改默认值，不宣称启动或显存收益。
+
+### I-5 限制（M4.1 更新）
+
+M4 时的 I-5 是“probe 依赖 textures 模块，260mods agent-only 无法产帧；启用
+模块后测到的是 textures+agent，不能与 agent-only 数字比较”。M4.1 后：
+
+- agent-only 配置**有** probe；本节的 `source=agent` 就是 agent-only 证据。
+- 但 **agent 与主 mod 两条来源不能混用**：一份报告只认一个 source；agent-only
+  验收必须是 `source=agent`，出现 `source=game` 说明主 mod probe 也在跑。
+- 仍不能把 agent-side 数字与主 mod probe 的数字拼成一条 A→B 曲线。
+- 本节是菜单 smoke；A→B/stutter 仍未执行，不能当作已通过。
