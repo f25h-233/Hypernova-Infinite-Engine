@@ -23,6 +23,7 @@ EXTRA_ERROR_PATTERNS: tuple[str, ...] = (
     "java.awt.HeadlessException",
     "Fontconfig error",
     "Font config error",
+    "font file not found",
     "Glyph not found",
     "missing glyph",
 )

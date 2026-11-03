@@ -53,6 +53,12 @@ SS098_Hypernova_Compat_AuditTest/evidence/**/*.csv
 SS098_Hypernova_Compat_AuditTest/evidence/**/*.dump
 SS098_Hypernova_Compat_AuditTest/evidence/**/*.log
 SS098_Hypernova_Compat_AuditTest/evidence/**/screens/
+# m6_session 的实际产物在 <audit-root>/<label>/（不是 evidence/<label>/）。
+# `evidence/*.json` 与 `<label>/session*.json` 仍可入库。
+SS098_Hypernova_Compat_AuditTest/**/screens/
+SS098_Hypernova_Compat_AuditTest/**/logs/
+SS098_Hypernova_Compat_AuditTest/**/*.csv
+SS098_Hypernova_Compat_AuditTest/**/*.dump
 
 # ---- M7 统一部署包：实验安装与第三方工件永不入库 ----
 SS098_Hypernova_Compat_AuditTest/install/

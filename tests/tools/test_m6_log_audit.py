@@ -93,6 +93,16 @@ def test_matches_are_capped_and_flagged_truncated():
     assert result["ok"] is False
 
 
+def test_font_file_not_found_is_error_case_insensitive():
+    result = scan_log_text(
+        "java.io.IOException: font file not found: a.ttf\n"
+        "FONT FILE NOT FOUND: b.ttf\n"
+    )
+    assert result["errors"]["font file not found"] == 2
+    assert result["total"] == 2
+    assert result["ok"] is False
+
+
 def test_scan_logs_aggregates_errors_and_observations(tmp_path):
     game = tmp_path / "starsector.log"
     agent = tmp_path / "scripts-agent.log"

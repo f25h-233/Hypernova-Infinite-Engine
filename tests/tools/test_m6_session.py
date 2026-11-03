@@ -115,6 +115,64 @@ def test_end_flags_unhealthy_lazy_counts(tmp_path):
     assert any(problem.startswith("lazy health") for problem in report["problems"])
 
 
+def test_end_flags_game_frame_source(tmp_path):
+    game = tmp_path / "game"
+    _seed_logs(game, agent_text="previous session\n", game_text="old\n")
+    start(game, tmp_path / "evidence", "game-source")
+    # agent 有 anchor 与 lazy summary，但没有 HYPERNOVA_FRAME；
+    # 主 mod 的 game 日志里有 frame 行，build_report 会取 game 来源。
+    agent = HEALTHY_AGENT.replace(
+        "HYPERNOVA_FRAME frames=600 over200=0 maxMs=10 p99Ms=5 lastMs=5 "
+        "longGaps=0\n",
+        "",
+    )
+    _write_session_logs(
+        game,
+        agent,
+        "Fast Rendering: v0.9.7rc2\n"
+        "HYPERNOVA_FRAME frames=600 over200=0 maxMs=10 p99Ms=5 lastMs=5 "
+        "longGaps=0\n",
+    )
+    report = end(game, tmp_path / "evidence", "game-source")
+    assert report["frame_probe"]["source"] == "game"
+    assert report["ok"] is False
+    assert any("source is not agent" in problem
+               for problem in report["problems"])
+
+
+def test_end_flags_lazy_main_not_bound(tmp_path):
+    game = tmp_path / "game"
+    _seed_logs(game, agent_text="previous session\n", game_text="old\n")
+    start(game, tmp_path / "evidence", "main-none")
+    _write_session_logs(
+        game,
+        HEALTHY_AGENT.replace("main=bound", "main=none"),
+        HEALTHY_GAME,
+    )
+    report = end(game, tmp_path / "evidence", "main-none")
+    assert report["health"]["lazy_main_bound"] is False
+    assert report["ok"] is False
+    assert "lazy probe main not bound" in report["problems"]
+
+
+def test_end_flags_incomplete_frame_probe(tmp_path):
+    game = tmp_path / "game"
+    _seed_logs(game, agent_text="previous session\n", game_text="old\n")
+    start(game, tmp_path / "evidence", "frame-partial")
+    _write_session_logs(
+        game,
+        "hypernova agent premain\n"
+        "lazy probe: summary queue=1 failed=0 disabled=0 dimMismatch=0 "
+        "failedParked=0 main=bound liveBytes=10 evictableBytes=5\n"
+        "HYPERNOVA_FRAME frames=600 over200=0 maxMs=10\n",
+        HEALTHY_GAME,
+    )
+    report = end(game, tmp_path / "evidence", "frame-partial")
+    assert report["health"]["frame_probe_complete"] is False
+    assert report["ok"] is False
+    assert "frame probe incomplete" in report["problems"]
+
+
 @pytest.mark.parametrize(
     "label", ["", ".", "..", "../escape", "/abs", "a/b", "a\\b", "C:\\x"]
 )
@@ -232,6 +290,88 @@ def test_start_refuses_pre_only_evidence_without_source(tmp_path):
     assert (logs / "pre-starsector.log").read_text(
         encoding="utf-8"
     ) == "only copy\n"
+
+
+def test_start_refuses_to_overwrite_differing_pre(tmp_path):
+    """F3：旧 pre 是唯一失败现场时，不能被新源日志静默覆盖。"""
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    (game / "saves" / "hypernova").mkdir(parents=True)
+    (game / "starsector-core" / "starsector.log").write_text(
+        "NEW-GAME-LOG\n", encoding="utf-8"
+    )
+    logs = tmp_path / "evidence" / "crash-diff" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "pre-starsector.log").write_text(
+        "OLD-FAILURE-EVIDENCE\n", encoding="utf-8"
+    )
+
+    with pytest.raises(
+        FileExistsError, match="previous pre-\\* differs from source"
+    ):
+        start(game, tmp_path / "evidence", "crash-diff")
+
+    assert (logs / "pre-starsector.log").read_text(
+        encoding="utf-8"
+    ) == "OLD-FAILURE-EVIDENCE\n"
+    assert (game / "starsector-core" / "starsector.log").read_text(
+        encoding="utf-8"
+    ) == "NEW-GAME-LOG\n"
+    assert not (tmp_path / "evidence/crash-diff/session-meta.json").exists()
+
+
+def test_start_refuses_to_overwrite_pre_differs_from_rotated(tmp_path):
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    (game / "saves" / "hypernova").mkdir(parents=True)
+    logs = tmp_path / "evidence" / "crash-rotated" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "pre-starsector.log").write_text(
+        "OLD-FAILURE-EVIDENCE\n", encoding="utf-8"
+    )
+    (logs / "rotated-starsector.log").write_text(
+        "NEW-GAME-LOG\n", encoding="utf-8"
+    )
+
+    with pytest.raises(
+        FileExistsError, match="previous pre-\\* differs from rotated"
+    ):
+        start(game, tmp_path / "evidence", "crash-rotated")
+
+    assert (logs / "pre-starsector.log").read_text(
+        encoding="utf-8"
+    ) == "OLD-FAILURE-EVIDENCE\n"
+    assert (logs / "rotated-starsector.log").read_text(
+        encoding="utf-8"
+    ) == "NEW-GAME-LOG\n"
+
+
+def test_cli_start_refuses_differing_pre_one_stderr_line(tmp_path, capsys):
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    (game / "saves" / "hypernova").mkdir(parents=True)
+    (game / "starsector-core" / "starsector.log").write_text(
+        "NEW-GAME-LOG\n", encoding="utf-8"
+    )
+    logs = tmp_path / "evidence" / "crash-cli" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "pre-starsector.log").write_text(
+        "OLD-FAILURE-EVIDENCE\n", encoding="utf-8"
+    )
+
+    rc = main([
+        "start",
+        "--game-root", str(game),
+        "--evidence-root", str(tmp_path / "evidence"),
+        "--label", "crash-cli",
+    ])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.err.strip().count("\n") == 0
+    assert "FATAL: previous pre-* differs from source" in captured.err
+    assert (logs / "pre-starsector.log").read_text(
+        encoding="utf-8"
+    ) == "OLD-FAILURE-EVIDENCE\n"
 
 
 def test_start_cleans_orphan_rotated_when_source_complete(tmp_path, monkeypatch):

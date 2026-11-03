@@ -114,6 +114,56 @@ def test_restore_rejects_corrupt_payload_without_writing(tmp_path):
     assert original == f"content:{SNAPSHOT_FILES[0]}\n"
 
 
+def test_restore_rejects_empty_snapshot_files(tmp_path):
+    game = tmp_path / "game"
+    _seed(game)
+    snapshot(game, tmp_path / "backups", "baseline")
+    snap = tmp_path / "backups" / "baseline"
+    manifest_path = snap / "manifest.json"
+    meta = json.loads(manifest_path.read_text(encoding="utf-8"))
+    meta["files"] = []
+    meta["missing"] = list(SNAPSHOT_FILES)
+    manifest_path.write_text(json.dumps(meta), encoding="utf-8")
+    original = {
+        rel: (game / rel).read_text(encoding="utf-8")
+        for rel in SNAPSHOT_FILES
+    }
+    with pytest.raises(ValueError, match="empty snapshot"):
+        restore(snap, force=True)
+    for rel in SNAPSHOT_FILES:
+        assert (game / rel).read_text(encoding="utf-8") == original[rel]
+
+
+def test_restore_rejects_partial_snapshot(tmp_path):
+    game = tmp_path / "game"
+    _seed(game)
+    removed = SNAPSHOT_FILES[0]
+    (game / removed).unlink()
+    snapshot(game, tmp_path / "backups", "partial")
+    snap = tmp_path / "backups" / "partial"
+    # 快照时缺一个文件；之后源文件被写回，用户可能误以为 4/4 都能恢复。
+    (game / removed).write_text("live\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="partial snapshot"):
+        restore(snap, force=True)
+    assert (game / removed).read_text(encoding="utf-8") == "live\n"
+
+
+def test_cli_restore_partial_returns_one_stderr_line(tmp_path, capsys):
+    game = tmp_path / "game"
+    _seed(game)
+    (game / SNAPSHOT_FILES[0]).unlink()
+    snapshot(game, tmp_path / "backups", "partial")
+    rc = main([
+        "restore",
+        "--snapshot", str(tmp_path / "backups" / "partial"),
+        "--force",
+    ])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.err.strip().count("\n") == 0
+    assert captured.err.strip().startswith("FATAL: partial snapshot")
+
+
 def test_snapshot_rejects_unsafe_label(tmp_path):
     game = tmp_path / "game"
     _seed(game)

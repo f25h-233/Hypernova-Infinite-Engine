@@ -10,7 +10,7 @@
 **自动化部分完成；用户实机 gate 未执行（§4 全部 `pending`），因此不写“M6 通过”。**
 
 - 构建与测试：Java 主测试 115/115；agent 测试 211 个中 210 通过、1 个已知
-  Windows symlink 用例跳过；Python `tests/tools` 481 passed（时点值）。
+  Windows symlink 用例跳过；Python `tests/tools` 491 passed（时点值）。
 - 260mods 的 manifest / skip 已重新生成并通过审计：`installed.ok=true`，
   generation 配对，无宿主污染；fail-open 4/4 场景通过。
 - 当前真实日志扫描：五类纹理错误 0，`observations_total=14`（均为
@@ -49,7 +49,7 @@
 |---|---|---:|---|
 | 1 | `bash tools/java/run-tests.sh` | 0 | 115 tests / 0 failed |
 | 2 | `bash tools/java/run-agent-tests.sh` | 0 | 211 found / 210 successful / 1 aborted（已知 Windows symlink 用例） |
-| 3 | `python -I -m pytest tests/tools -q` | 0 | 481 passed（时点值；Task 6 首跑 460） |
+| 3 | `python -I -m pytest tests/tools -q` | 0 | 491 passed（时点值；Task 6 首跑 460，最终修复前 481） |
 | 4 | `bash tools/java/build-mod.sh` | 0 | L1=185 L2=509 L3=2614，baked=3285/3285，unresolved=0 |
 | 5 | `bash tools/java/install-manifest.sh Starsector-098-260mods` | 0 | L1=6624 L2=18525 L3=55445，baked=80286/80286，unresolved=0；skip v1/v2=73447 |
 | 6 | `m6_audit_matrix.py` | 0 | 256/256 mods，parse_errors=0，duplicate_ids=4，默认 lazy/eviction/scene_unload=false |
@@ -114,6 +114,13 @@ manifest 审计读数：
 - 本组 `log_audit` 只看到 2 条 `ChineseInputFix` 观察词（菜单加载 mod 列表），
   无错误。
 
+> 注：committed 的 `menu-smoke/session.json` 生成于 wrapper 最终修复
+> （`0eb5cdb`/`03f265d`）之前，缺少 `new_logs`、`new_logs_ok`、`problems`
+> 字段（`session-meta.json` 也缺 `started_at_epoch`/`rotated`/`pre_size`/
+> `pre_mtime`）。用最终 `end()` 对同一份日志重算，结果为 `ok=true`、
+> `new_logs_ok=true`、`problems=[]`；本文不伪造缺失字段，也不据此改动
+> 读数。
+
 ### 3.3 证据文件
 
 | 文件 | 内容 |
@@ -128,8 +135,8 @@ manifest 审计读数：
 
 > 路径口径：`m6_session.py` 的产物按实现落在 `<evidence-root>/<label>`。
 > 本次传入 `--evidence-root SS098_Hypernova_Compat_AuditTest`，所以会话证据
-> 实际在 `SS098_Hypernova_Compat_AuditTest/menu-smoke/`；runbook 中写的
-> `evidence/<label>/` 是文档口径差异，不影响读数。
+> 实际在 `SS098_Hypernova_Compat_AuditTest/menu-smoke/`。runbook 已统一为
+> 同一口径（`<audit-root>/<label>/`），不再使用 `evidence/<label>/`。
 
 ## 4. 用户实机 gate
 
@@ -146,9 +153,10 @@ manifest 审计读数：
 
 > 证据路径口径：`m6_session` 实际写到 `<evidence-root>/<label>`；本次
 > `--evidence-root SS098_Hypernova_Compat_AuditTest`，所以会话证据在
-> `SS098_Hypernova_Compat_AuditTest/<label>/`（runbook §4/§6 写的
-> `evidence/<label>/` 是文档漂移）。出口 4 的自动化证据见 §3.1，按 runbook
-> §6 本表仍记 `pending`，待用户实机确认；出口 1–3、5 也必须由用户实机执行。
+> `SS098_Hypernova_Compat_AuditTest/<label>/`。runbook §4/§6 已统一为该
+> 口径，不再使用 `evidence/<label>/`。出口 4 的自动化证据见 §3.1，按
+> runbook §6 本表仍记 `pending`，待用户实机确认；出口 1–3、5 也必须由
+> 用户实机执行。
 
 分组记录：
 
@@ -172,9 +180,8 @@ manifest 审计读数：
 - 对照判定只看 `texture_errors_total` 与 `log_audit.total`；对照会话没有
   Hypernova，`frame_probe`/`lazy` 按设计缺失，`m6_session end` 的 `ok=false`
   是预期行为，不能当成失败证据。
-- 已知 deferred minor：日志审计的错误模式未包含 `font file not found`
-  （Task 4 复审记录）；当前真实日志 0 命中，本次不计为失败。是否加回模式
-  留待后续工具修订。
+- 日志审计的错误模式已包含 `font file not found`（大小写不敏感）；重跑
+  当前真实日志仍为 0 命中，本次读数不变。该项不再是 deferred minor。
 - 菜单 smoke 的 `stop=forced` 是 smoke 脚本在 linger 后的正常强制退出路径，
   不是游戏崩溃；本次未观察到 `AsyncException` / 状态损坏。
 

@@ -160,7 +160,7 @@ python -I tools/m6_audit_matrix.py --game-root Starsector-098-260mods --text \
   | grep -A4 '"chinese_input_fix"'
 ```
 
-记录到 `SS098_Hypernova_Compat_AuditTest/evidence/D-ime/env.md`（或本组
+记录到 `SS098_Hypernova_Compat_AuditTest/D-ime/env.md`（或本组
 `session-meta.json` 旁边）：
 
 - 输入法（如 微软拼音 / 搜狗 / 小狼毫）
@@ -176,12 +176,12 @@ python -I tools/m6_audit_matrix.py --game-root Starsector-098-260mods --text \
 ## 3. 会话分组
 
 每组开始前**先完全退出游戏**，再执行 `start`（`start` 会把旧日志复制到
-evidence 后移走；游戏占用日志时移动会失败）。组内只跑本组场景，
+审计目录后移走；游戏占用日志时移动会失败）。组内只跑本组场景，
 结束后退出游戏，再执行 `end`。`end` 要求同 label 的
-`evidence/<label>/session-meta.json` 存在；漏跑 `start` 或 label 拼错会
-`FATAL` 且不写 `session.json`。`start` 之后没有产生新日志（或日志仍是
-`start` 之前的旧文件）时，`end` 会给出 `ok=false`，`problems` 含
-`no new logs since start`，不会把旧日志记成本组证据。
+`SS098_Hypernova_Compat_AuditTest/<label>/session-meta.json` 存在；漏跑
+`start` 或 label 拼错会 `FATAL` 且不写 `session.json`。`start` 之后没有
+产生新日志（或日志仍是 `start` 之前的旧文件）时，`end` 会给出 `ok=false`，
+`problems` 含 `no new logs since start`，不会把旧日志记成本组证据。
 
 通用命令（把 `<label>` 换成下表的值）：
 
@@ -243,11 +243,17 @@ python -I tools/m6_session.py end \
      移回源路径或另存），再重跑；无法判断就换 label。
    - 只有 `pre-*` 而源日志缺失：同样拒绝（`pre` 可能是唯一副本），
      不得手工删除。
+   - 源日志存在但与 `pre-*` 内容不同，或 `pre-*` 与 `rotated-*` 内容
+     不同：`start` 拒绝并报
+     `FATAL: previous pre-* differs from source/rotated; refuse to overwrite`。
+     `pre-*` 可能是上一组失败现场的唯一副本，**不要覆盖或删除**；先另存
+     （或人工确认哪份是原始现场）再重跑。
 3. 若 `session-meta.json` 已存在（完整旧会话）：`start` 一律拒绝
    （`session already started`）。只有确认旧证据已另存后，才可手工删除
-   `evidence/<label>/` 来重用该 label。
+   `SS098_Hypernova_Compat_AuditTest/<label>/` 来重用该 label。
 4. 若出现 `rollback incomplete`：不要删除任何日志。先确认游戏已完全退出、
-   日志句柄已释放，再把 `evidence/<label>/logs/rotated-*.log` 手工移回
+   日志句柄已释放，再把
+   `SS098_Hypernova_Compat_AuditTest/<label>/logs/rotated-*.log` 手工移回
    原路径；确认原日志恢复后删除该 `logs/` 目录，再重跑。仍被占用就换
    label（如 `A-campaign-r2`），旧目录保留为失败现场。
 5. `logs/` 里若有非本工具命名的文件，`start` 会拒绝删除并抛
@@ -261,7 +267,9 @@ python -I tools/m6_session.py end \
 
 ## 4. 证据检查
 
-每组 `end` 后检查 `session.json`：
+每组 `end` 后检查 `session.json`（实际路径是
+`SS098_Hypernova_Compat_AuditTest/<label>/session.json`，不是
+`evidence/<label>/`）：
 
 ```bash
 # 把 A-campaign 换成当前组的 label（作为 stdin 脚本的第一个参数传入）
@@ -271,7 +279,7 @@ import sys
 from pathlib import Path
 
 label = sys.argv[1]
-path = Path("SS098_Hypernova_Compat_AuditTest/evidence") / label / "session.json"
+path = Path("SS098_Hypernova_Compat_AuditTest") / label / "session.json"
 data = json.loads(path.read_text(encoding="utf-8"))
 keys = {
     "ok": data["ok"],
@@ -279,7 +287,9 @@ keys = {
     "anchor_found": data["starsector_session"]["anchor_found"],
     "frame_present": data["frame_probe"]["present"],
     "frame_source": data["frame_probe"].get("source"),
+    "frame_complete": data["health"]["frame_probe_complete"],
     "lazy_present": data["lazy"]["present"],
+    "lazy_main_bound": data["health"]["lazy_main_bound"],
     "lazy_failed_zero": data["health"]["lazy_failed_zero"],
     "lazy_disabled_zero": data["health"]["lazy_disabled_zero"],
     "lazy_dim_mismatch_zero": data["health"]["lazy_dim_mismatch_zero"],
@@ -295,24 +305,26 @@ PY
 ```
 
 - 通过条件：`ok=true`，即 `anchor_found=true`、`frame_probe.present=true`、
-  `lazy.present=true`、lazy `failed/disabled/dimMismatch/failedParked`
-  全为 0、`new_logs_ok=true`、`texture_errors_total=0`、
-  `log_audit.complete=true`、`log_audit.total=0`；`problems` 为空。
+  `frame_probe.source="agent"`、`health.frame_probe_complete=true`、
+  `lazy.present=true`、`health.lazy_main_bound=true`、lazy
+  `failed/disabled/dimMismatch/failedParked` 全为 0、`new_logs_ok=true`、
+  `texture_errors_total=0`、`log_audit.complete=true`、`log_audit.total=0`；
+  `problems` 为空。
 - `end` 失败（rc=1）时会同时向 stderr 打一行 `m6_session: session not ok:
   label=...: <problems>`；把这行和 `session.json` 一起留档。
 - `frame_probe.source` 在 agent-only 会话必须是 `agent`；出现 `game` 说明
-  主 mod probe 也在跑，不要混用两条来源。
+  主 mod probe 也在跑，不要混用两条来源（`end` 会判 `ok=false`）。
 - `log_audit.observations`（ChineseInputFix / 独立词 IME 命中）是存在性
   观察，**不参与失败判定**；不要因为出现观察词就把 `ok` 判成 false，也
   不要用 0 次命中反推“中文输入正常”（以 D 组实际输入结果为准）。
 - `start` 会把旧日志复制为 `logs/pre-*.log`，移走的现场是
   `logs/rotated-*.log`；两者都保留，便于追上一组失败。
-- 截图放 `SS098_Hypernova_Compat_AuditTest/evidence/<label>/screens/`。
-  **截图不入库**：不要 `git add` 该目录；Task 6 提交 evidence 时只提交
-  `.json` 摘要（若届时仍缺忽略规则，由 Task 6 在 `.gitignore` 补
-  `SS098_Hypernova_Compat_AuditTest/evidence/**/screens/`）。
+- 截图放 `SS098_Hypernova_Compat_AuditTest/<label>/screens/`。
+  **截图不入库**：`.gitignore` 已忽略
+  `SS098_Hypernova_Compat_AuditTest/**/screens/`、`**/logs/`、`*.csv`、
+  `*.dump`；只提交 `.json`/`.md` 摘要。
 - 手动观察（豆腐块/缺字/错位/输入失败）按组记在
-  `SS098_Hypernova_Compat_AuditTest/evidence/<label>/notes.md`，并汇总到
+  `SS098_Hypernova_Compat_AuditTest/<label>/notes.md`，并汇总到
   `docs/m6-results.md` §4。
 
 ## 5. no-Hypernova 对照
@@ -325,8 +337,9 @@ PY
    （`Miko_Lite_noagent.txt`，无 Hypernova agent）。
 2. 对照同样可用 `m6_session.py start/end` 轮转日志；但对照会话没有
    Hypernova，`frame_probe`/`lazy` 按设计会缺失，`end` 的 `ok` 会是
-   false。**对照只看 `texture_errors_total` 与 `log_audit.total`**，
-   并与 Hypernova 组的日志切片逐条比对。
+   false（`problems` 会含 no frame probe / source 不是 agent 等）。
+   **对照只看 `texture_errors_total` 与 `log_audit.total`**，不套用 §4 的
+   `ok=true` 判定，并与 Hypernova 组的日志切片逐条比对。
 3. 判定：
    - 对照也复现 → 260mods/汉化/字体/UI 既有问题，标注“非 Hypernova”；
    - 只有 Hypernova 组复现 → 记录最小复现步骤、日志行号、对应注入点，
@@ -341,11 +354,11 @@ PY
 
 | 出口 | 场景/证据 | 通过条件 | 结果 | 证据路径 |
 |---|---|---|---|---|
-| 1. 汉化测试版可用 | A/B/D/E 组菜单、战役、战斗、读档画面 | 无豆腐块、无缺字、无错位；A/B `session.json` `ok=true` | pending | `evidence/A-campaign/`、`evidence/B-combat/`、`evidence/E-visual/screens/` |
-| 2. ChineseInputFix 中文输入 | D 组改名/搜索/对话输入 | 每个场景至少 2 个中文字成功输入，不失败、不崩；`session.json` `ok=true` | pending | `evidence/D-ime/`、`evidence/D-ime/env.md` |
-| 3. 字体/UI/纹理 mod 无五类错误 | A–E 全部 `session.json` | `texture_errors_total=0` 且 `log_audit.total=0`（五类：`Failed to load texture` / `VerifyError` / `ClassFormatError` / `AsyncException` / `isStateCorrupted`） | pending | `evidence/<label>/session.json` |
-| 4. manifest/skip generation 与 fail-open | `m6_manifest_audit.py` 自动证据 | `installed.ok=true`、skip v1/v2 generation 与 manifest 一致、无宿主 `starsector-core/lazy-skip-*`、`defaults.lazy/eviction/scene_unload=false`；`fail_open.ok=true` | pending | `evidence/manifest-audit.json`、`evidence/fail-open.json` |
-| 5. 分辨率/全屏/alt-tab | C 组 | 切换与 alt-tab 后不崩、可继续操作、无纹理错误；`session.json` `ok=true` | pending | `evidence/C-resolution/` |
+| 1. 汉化测试版可用 | A/B/D/E 组菜单、战役、战斗、读档画面 | 无豆腐块、无缺字、无错位；A/B `session.json` `ok=true` | pending | `SS098_Hypernova_Compat_AuditTest/A-campaign/`、`.../B-combat/`、`.../E-visual/screens/` |
+| 2. ChineseInputFix 中文输入 | D 组改名/搜索/对话输入 | 每个场景至少 2 个中文字成功输入，不失败、不崩；`session.json` `ok=true` | pending | `SS098_Hypernova_Compat_AuditTest/D-ime/`、`.../D-ime/env.md` |
+| 3. 字体/UI/纹理 mod 无五类错误 | A–E 全部 `session.json` | `texture_errors_total=0` 且 `log_audit.total=0`（五类：`Failed to load texture` / `VerifyError` / `ClassFormatError` / `AsyncException` / `isStateCorrupted`） | pending | `SS098_Hypernova_Compat_AuditTest/<label>/session.json` |
+| 4. manifest/skip generation 与 fail-open | `m6_manifest_audit.py` 自动证据 | `installed.ok=true`、skip v1/v2 generation 与 manifest 一致、无宿主 `starsector-core/lazy-skip-*`、`defaults.lazy/eviction/scene_unload=false`；`fail_open.ok=true` | pending | `SS098_Hypernova_Compat_AuditTest/evidence/manifest-audit.json`、`.../evidence/fail-open.json` |
+| 5. 分辨率/全屏/alt-tab | C 组 | 切换与 alt-tab 后不崩、可继续操作、无纹理错误；`session.json` `ok=true` | pending | `SS098_Hypernova_Compat_AuditTest/C-resolution/` |
 
 出口 6（默认仍 off）与出口 7（结果为 `docs/m6-results.md`）由自动化
 证据与 Task 6 结果文档覆盖，不在此表重复判定；`docs/m6-results.md` §6
@@ -370,6 +383,12 @@ PY
      --snapshot SS098_Hypernova_Compat_AuditTest/backups/baseline-2026-11-03 \
      --force
    ```
+
+   > 威胁模型：manifest 里的 sha256 视为本机可信输入（快照目录本身不在
+   > 攻击面内）；`game_root` 取自 manifest，restore 只保证写入目标不逃逸
+   > 该 root。`files` 为空、manifest 记录了 `missing`，或文件数与预期不符
+   > 的 partial 快照会被拒绝（一行 `FATAL` + rc1），不会假成功；遇到时
+   > 补齐文件后重做快照，不要手工只恢复一部分。
 
 2. 复核：
 

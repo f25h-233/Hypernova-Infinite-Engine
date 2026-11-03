@@ -86,7 +86,9 @@ def _recover_incomplete_start(
     - `rotated-*` 存在而对应源日志缺失：先把 rotated 移回源路径；
     - 源日志也存在（无法判断哪份是原始现场）或 pre 是唯一副本：
       拒绝重跑，保留所有 pre/rotated，由操作者手工确认；
-    - 源日志完整时，残留的 pre 副本会在正常复制阶段被覆盖。
+    - 源日志与 pre 内容不同，或 pre 与 rotated 内容不同：拒绝覆盖，
+      因为 pre 可能是上一次失败现场的唯一副本；
+    - 源日志完整且与 pre 内容一致时，残留的 pre 副本会在正常复制阶段被覆盖。
     """
     unknown = sorted(names - KNOWN_ARTIFACTS)
     if unknown:
@@ -114,11 +116,28 @@ def _recover_incomplete_start(
             )
     for name, pre_path in pre.items():
         src = root / LOG_RELS[name]
-        if not src.exists() and name not in rotated:
-            raise FileExistsError(
-                f"incomplete previous start: {pre_path} exists but {src} "
-                "is missing; refusing to delete the only copy"
-            )
+        if name in rotated:
+            # 恢复 rotated 后源日志就是 rotated 的内容；若 pre 与 rotated
+            # 不同，pre 可能是上一次失败现场的唯一副本，覆盖即丢证据。
+            if not _same_content(pre_path, rotated[name]):
+                raise FileExistsError(
+                    "previous pre-* differs from rotated; refuse to overwrite: "
+                    f"{pre_path} vs {rotated[name]} (both kept)"
+                )
+            continue
+        if src.exists():
+            # 源日志已存在但内容与 pre 不同：pre 可能是旧失败现场
+            # （例如用户重启游戏重写了源日志），不得静默覆盖。
+            if not _same_content(pre_path, src):
+                raise FileExistsError(
+                    "previous pre-* differs from source; refuse to overwrite: "
+                    f"{pre_path} vs {src} (both kept)"
+                )
+            continue
+        raise FileExistsError(
+            f"incomplete previous start: {pre_path} exists but {src} "
+            "is missing; refusing to delete the only copy"
+        )
     for name, rotated_path in rotated.items():
         src = root / LOG_RELS[name]
         try:
@@ -300,13 +319,25 @@ def end(game_root: str | Path, evidence_root: str | Path, label: str) -> dict:
     problems: list[str] = []
     if not report["starsector_session"]["anchor_found"]:
         problems.append("no session anchor")
-    if not report["frame_probe"]["present"]:
+    frame = report["frame_probe"]
+    if not frame["present"]:
         problems.append("no frame probe")
+    else:
+        # M6 只验 agent-only：主 mod 的 game 来源不能混进来。
+        if frame.get("source") != "agent":
+            problems.append(
+                f"frame probe source is not agent: {frame.get('source')!r}")
+        if not health["frame_probe_complete"]:
+            problems.append("frame probe incomplete")
     if not report["lazy"]["present"]:
         problems.append("no lazy summary")
-    elif not lazy_health_ok:
-        unhealthy = [name for name, value in lazy_health.items() if value is not True]
-        problems.append("lazy health not zero: " + ", ".join(unhealthy))
+    else:
+        if not lazy_health_ok:
+            unhealthy = [name for name, value in lazy_health.items()
+                         if value is not True]
+            problems.append("lazy health not zero: " + ", ".join(unhealthy))
+        if health.get("lazy_main_bound") is not True:
+            problems.append("lazy probe main not bound")
     if report["texture_errors_total"] != 0:
         problems.append(f"texture errors: {report['texture_errors_total']}")
     if not audit["complete"]:

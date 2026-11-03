@@ -1,4 +1,10 @@
-"""M6：备份/恢复影响兼容性判定的 4 个环境文件（只复制，不修改源）。"""
+"""M6：备份/恢复影响兼容性判定的 4 个环境文件（只复制，不修改源）。
+
+威胁模型：`manifest.json` 里的 sha256 视为本机可信输入（快照目录本身不是
+攻击面）；`game_root` 取自 manifest，restore 只保证写入目标不逃逸该 root，
+不验证它是否真的是游戏根目录。partial/空快照一律拒绝恢复，避免“只恢复了
+一部分却当作完整回滚”。
+"""
 from __future__ import annotations
 
 import argparse
@@ -78,10 +84,28 @@ def restore(snapshot_dir: str | Path, *, force: bool = False) -> dict:
     if not manifest_path.is_file():
         raise FileNotFoundError(f"missing manifest: {manifest_path}")
     meta = json.loads(manifest_path.read_text(encoding="utf-8"))
+    files = meta.get("files")
+    if not isinstance(files, list) or not files:
+        raise ValueError(
+            "empty snapshot (manifest has no files); refusing restore")
+    missing = meta.get("missing") or []
+    if not isinstance(missing, list):
+        raise ValueError("invalid snapshot manifest: 'missing' must be a list")
+    if missing:
+        raise ValueError(
+            "partial snapshot (missing: " + ", ".join(map(str, missing))
+            + "); refusing restore")
+    paths = [item.get("path") for item in files if isinstance(item, dict)]
+    if (len(paths) != len(files)
+            or len(paths) != len(SNAPSHOT_FILES)
+            or set(paths) != set(SNAPSHOT_FILES)):
+        raise ValueError(
+            f"partial snapshot: {len(paths)}/{len(SNAPSHOT_FILES)} expected "
+            "files; refusing restore")
     root = Path(meta["game_root"]).resolve()
     files_root = (snap / "files").resolve()
     conflicts = []
-    for item in meta["files"]:
+    for item in files:
         rel = item.get("path")
         if rel not in SNAPSHOT_FILES:
             raise ValueError(f"unexpected path in manifest: {rel!r}")
@@ -104,11 +128,13 @@ def restore(snapshot_dir: str | Path, *, force: bool = False) -> dict:
             + ", ".join(conflicts)
         )
     restored = 0
-    for item in meta["files"]:
+    for item in files:
         target = root / item["path"]
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(snap / "files" / item["path"], target)
         restored += 1
+    if restored == 0:
+        raise ValueError("restore restored 0 files; refusing success")
     return {"restored": restored, "game_root": str(root), "label": meta["label"]}
 
 
