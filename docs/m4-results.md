@@ -63,6 +63,9 @@ verified: installed jar matches build output
 
 主 jar（构建 vs 安装）与 agent jar（构建 vs 安装）的 SHA256 均一致。
 
+以上为 Task 5 验证时点快照；`run-agent-tests.sh`/`build-agent.sh` 会重建
+agent jar，后续运行前需重新 `install_agent.py` 才能保证 build 与安装一致。
+
 ## 3. 实机 smoke
 
 命令：
@@ -100,7 +103,7 @@ python -I tools/m4_session_report.py \
 
 | 项 | 值 |
 |---|---|
-| `frame_probe.present` | `false`（菜单没有 `Global.getSector()`，符合预期） |
+| `frame_probe.present` | `false`（本次主 mod 未启用/未实例化；即使启用，菜单无 `Global.getSector()` 也不会产帧行） |
 | `lazy.present` | `true`（anchor_count=2，summary line=186） |
 | `texture_errors_total` | 0（五类全 0） |
 | `lazy.summary.failed / disabled / dimMismatch / failedParked` | 0 / 0 / 0 / 0 |
@@ -108,7 +111,7 @@ python -I tools/m4_session_report.py \
 | `lazy.summary.dds / ddsHit / ddsFallback` | 1 / 31 / 2 |
 | `lazy.summary.liveBytes / evictableBytes` | 14658304 / 747644 |
 | `lazy.summary.budgetBytes` | 268435456 |
-| `health` | 除 `frame_probe_present=false` 外全 true |
+| `health` | 除 `frame_probe_present` 与 `frame_probe_complete` 外全 true（后者在无帧行时必然为 false） |
 
 **重要限制（实测发现）**：`Starsector-098-260mods/mods/enabled_mods.json` 的
 `enabledMods`（256 个）**不包含** `hypernova_infinite_engine`，因此本次 miko-lite
@@ -182,12 +185,20 @@ summary 中这两项已正确记录，不是 lazy 健康失败。
 `hypernova_infinite_engine`），不启用主 mod 就不会产生 `HYPERNOVA_FRAME` 行。
 用户 gate 必须先在 260mods 临时启用该模块（备份/启用/恢复步骤见
 `docs/m4-manual-acceptance.md` §1），或改用已启用模块的 `Starsector-098-Base`
-（先刷新主 jar；mod 数少），或使用外部帧时间工具。
+（先刷新主 jar/agent，报告用 Base 路径；mod 数少）。外部帧时间工具只能补
+stutter 观察，**不能**填 `frame_probe.present=true`，也不能替代 Hypernova probe。
+
+**I-5 口径（最终 review）**：probe 依赖主 mod（textures 模块）；260mods 默认
+agent-only，无法产生 `HYPERNOVA_FRAME`。临时启用模块后，测到的是
+“textures 模块 + agent”，**不能**与 M2.6/M2.8 的 agent-only 数字直接比较，
+也不能把差异归因于 lazy/DDS 单独一项。M5 决策若要保持 agent-only，必须使用
+外部帧时间工具或 agent-side probe 的替代证据；不能用 agent-only 环境冒充
+frame probe。
 
 本轮没有：
 
 - 真实存档的 A→B 各 10 min 长会话；
-- `build/m4/gpu-ab.csv` 或 `gpu.dedicated_mb.median` 的 A/B 对比；
+- `build/m4/gpu-a.csv` / `gpu-b.csv` 或 `gpu.dedicated_mb.median` 的 A/B 对比；
 - `frame_probe.present=true` 的实机帧行；
 - `over200` / `maxMs` / `p99Ms` / `longGaps` 的人工验收读数；
 - 崩溃/白块/错位的人工观察。
@@ -204,7 +215,10 @@ summary 中这两项已正确记录，不是 lazy 健康失败。
 
 - **frame probe 前置**：必须启用 textures 模块（`HypernovaPlugin`）；260mods
   默认 agent-only，不启用就不会有 `HYPERNOVA_FRAME`。用户 gate 需按
-  `docs/m4-manual-acceptance.md` §1 临时启用/恢复，或改用 Base/外部工具。
+  `docs/m4-manual-acceptance.md` §1 临时启用/恢复，或改用 Base 的
+  `fr.vmparams` 路径；外部工具只补 stutter，不能填 frame probe。
+- **I-5 可比性**：启用模块后的数据是“textures 模块 + agent”，不能与
+  M2.6/M2.8 的 agent-only 数字直接比较，也不能单独归因于 lazy/DDS。
 - summary 每 10 s 一条，最后一条最多旧 10 s；
 - `p99Ms` 是 1 ms 桶估算，不是逐帧原始值；
 - `longGaps` 只排除 >5 s，短暂停仍会算作大帧；

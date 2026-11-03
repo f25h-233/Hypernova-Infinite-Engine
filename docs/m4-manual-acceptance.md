@@ -36,12 +36,22 @@
 
    > **口径**：启用主 mod 会同时激活 `HypernovaPlugin` 的 manifest/prefetch
    > 路径，所以本验收测的是“**textures 模块 + agent**”，不是 agent-only。
-   > 若必须保留 agent-only 数据，probe 无法运行，请改用外部帧时间工具
-   > （如 RTSS / MSI Afterburner）。
+   > 若必须保留 agent-only 数据，probe 无法运行；此时只能用外部帧时间工具
+   > （如 RTSS / MSI Afterburner）观察 stutter，**不能**填
+   > `frame_probe.present=true`，也不能替代 Hypernova probe。
    >
-   > **替代环境**：`Starsector-098-Base` 已启用该模块；先用
-   > `bash tools/java/install-manifest.sh Starsector-098-Base` 刷新主 jar，
-   > 再在该环境跑同一协议。缺点是 mod 数远少于 260mods。
+   > **替代环境（高级）**：`Starsector-098-Base` 已启用该模块，但它使用
+   > `starsector-core/fr.vmparams` 作为启动参数文件。必须：
+   > 1. `bash tools/java/install-manifest.sh Starsector-098-Base` 刷新主 jar；
+   > 2. `python tools/install_agent.py --game Starsector-098-Base --env base`
+   >    刷新 agent（`--env base` 对应 `starsector-core/fr.vmparams`）；
+   > 3. 用 §2 的脚本把 `fr.vmparams` 派生成
+   >    `Starsector-098-Base/starsector-core/fr_m4_probe.vmparams`
+   >    （只改 src/dst；保持 `-D` 在主类之前；需要 lazy/DDS 时也在主类前加）；
+   > 4. 报告命令改用 Base 路径：
+   >    `Starsector-098-Base/saves/hypernova/scripts-agent.log` 与
+   >    `Starsector-098-Base/starsector-core/starsector.log`。
+   > 缺点：Base 的 mod 数远少于 260mods。
 
 2. 构建并安装（主 jar + agent jar 都要刷新，否则 probe 仍是旧 class）：
    `bash tools/java/build-mod.sh` →
@@ -57,18 +67,41 @@
 
 ## 2. 启动参数（probe + 当前 LRU）
 
-复制 `Starsector-098-260mods/Miko_Lite.txt` 为
-`Starsector-098-260mods/Miko_Lite_m4_probe.txt`，追加：
+**`-D` 必须写在 `com.fs.starfarer.StarfarerLauncher` 之前。** argfile 里主类
+之后的 token 会被 JVM 当作应用参数，不再是 JVM 选项；在文件末尾追加 `-D`
+不会生效。不要手工往 `Miko_Lite.txt` 末尾追加。
 
-```text
--Dhypernova.frameProbe=true
--Dhypernova.textures.lazy=true
--Dhypernova.textures.lazy.dds=true
--Dhypernova.textures.lazy.eviction=true
--Dhypernova.textures.lazy.eviction.sceneUnload=false
+以 `Miko_Lite_m28_treatment.txt` 为模板（它的 lazy flags 已在主类之前），
+用下面的脚本生成 `Miko_Lite_m4_probe.txt`：
+
+```bash
+python -I - <<'PY'
+from pathlib import Path
+src = Path("Starsector-098-260mods/Miko_Lite_m28_treatment.txt")
+dst = Path("Starsector-098-260mods/Miko_Lite_m4_probe.txt")
+lines = src.read_text(encoding="utf-8").splitlines()
+out = []
+for line in lines:
+    s = line.strip()
+    if s.startswith("-Dhypernova.textures.lazy.eviction.sceneUnload="):
+        out.append("-Dhypernova.textures.lazy.eviction.sceneUnload=false")
+    elif s == "com.fs.starfarer.StarfarerLauncher":
+        if "-Dhypernova.frameProbe=true" not in out:
+            out.append("-Dhypernova.frameProbe=true")
+        out.append(line)
+    else:
+        out.append(line)
+dst.write_text("\n".join(out) + "\n", encoding="utf-8")
+PY
 ```
 
-启动：
+脚本保证 `-Dhypernova.frameProbe=true` 在主类之前，并把
+`textures.lazy.eviction.sceneUnload` 设为 `false`；template 里已有
+`lazy=true` / `dds=true` / `eviction=true`。
+
+启动（把下面保存为 `Starsector-098-260mods\run_m4.bat` 后双击/执行；
+`%~dp0` 只在 .bat 中展开，直接粘进 PowerShell/cmd 会解析错路径。
+PowerShell 内联可用 `$PSScriptRoot`）：
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0tools\LaunchMiko.ps1" "jdk-28+13" "..\Miko_Lite_m4_probe.txt"
@@ -76,13 +109,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0to
 
 不要改 `hypernova.json`，不要设置 `budgetBytes`。
 
-## 3. GPU 曲线
+## 3. GPU 曲线（A/B 各自独立采样）
 
-进程启动后取游戏 PID，另开一个 shell 采样到 `build/m4/gpu-ab.csv`：
+**不要用同一个累计 CSV 生成 A/B 两份报告。** 如果从进程启动一直写到 B 结束，
+B 的 `gpu.dedicated_mb.median` 会包含“启动 + 菜单 + A + B”，把 A→B 差值稀释。
+
+A 场景开始时取游戏 PID，另开一个 shell 采样到 `build/m4/gpu-a.csv`：
 
 ```bash
 mkdir -p build/m4
-python -I - "$PID" > build/m4/gpu-ab.csv <<'PY'
+GPU_OUT=build/m4/gpu-a.csv   # B 场景改为 build/m4/gpu-b.csv
+python -I - "$PID" > "$GPU_OUT" <<'PY'
 import sys
 import time
 
@@ -100,7 +137,9 @@ while True:
 PY
 ```
 
-Ctrl-C 结束采样。采样期间不要最小化窗口或长时间暂停。
+A 结束立即 Ctrl-C 停止采样。进入 B 场景后，用新的游戏 PID 重新启动同一个
+采样器，并把 `GPU_OUT` 改为 `build/m4/gpu-b.csv`；B 结束再 Ctrl-C。
+采样期间不要最小化窗口或长时间暂停。
 
 ## 4. A→B 会话
 
@@ -122,13 +161,19 @@ Ctrl-C 结束采样。采样期间不要最小化窗口或长时间暂停。
    python -I tools/m4_session_report.py \
      --agent-log Starsector-098-260mods/saves/hypernova/scripts-agent.log \
      --starsector-log Starsector-098-260mods/starsector-core/starsector.log \
-     --gpu-csv build/m4/gpu-ab.csv \
+     --gpu-csv build/m4/gpu-a.csv \
      --out build/m4/session-a.json --require-frame --text
    ```
 4. **B 场景 10 min**：跳跃到另一个星系，重复类似活动。
-5. B 结束再跑一次同命令，`--out build/m4/session-b.json`。
+5. B 结束再跑一次同命令（`--gpu-csv build/m4/gpu-b.csv`），
+   `--out build/m4/session-b.json`。
 6. 对比 A/B 的 `gpu.dedicated_mb.median`、`liveBytes`、`evictableBytes`；
    记录差值，不把单点当净 VRAM。
+7. **帧计数是累计值**：`session-a.json` 覆盖启动+A，`session-b.json` 覆盖
+   启动+A+B。要得到 B-only 计数，必须做差：
+   `B.frames - A.frames`、`B.over200 - A.over200`、`B.longGaps - A.longGaps`。
+   `maxMs` / `p99Ms` 是累计会话统计，**不能相减**；两份都报，并把 B 的
+   标为 cumulative，不能当作 B-only P99。GPU 同理必须用 §3 的独立 CSV。
 
 ## 5. >200 ms stutter 判定
 
@@ -145,8 +190,12 @@ Ctrl-C 结束采样。采样期间不要最小化窗口或长时间暂停。
 判定：
 
 - **帧行合理性**：`frames` 应接近“会话时长 × 帧率”（例如 10 min × 60 fps ≈ 36,000）。
-  如果明显只有一半，说明两个入口收到的 `amount` 不一致、探针按 amount 去重时误丢帧；
-  这是首次实机必须确认的假设（`FrameTimeProbe` 用 `amount` 作为引擎帧身份）。
+  如果明显只有一半，先怀疑**相邻真实帧拿到相同的 `amount`**：`amount` 不是唯一
+  帧身份，按 amount 去重会误丢帧。反过来，两个入口收到**不同** amount 会导致
+  重复计数，而不是丢帧。这是首次实机必须确认的假设。
+- `frames`/`over200`/`longGaps` 是探针启动以来的**累计值**；B 的读数包含 A，
+  必须按 §4 第 7 步做差。`maxMs`/`p99Ms` 是累计统计，不能相减；B 的 P99
+  不是 B-only。
 - `longGaps` 应接近 0；若 >0，先说明是暂停/读档/alt-tab，还是真实冻结。
 - `over200 > 0` 时必须结合时间点和场景说明；不能只报数字。
 - 短于 5 s 的暂停仍会被计为一次大帧；验收期间不要暂停。
@@ -161,6 +210,7 @@ Ctrl-C 结束采样。采样期间不要最小化窗口或长时间暂停。
 | A→B GPU dedicated | 记录 A/B 中位与差；不宣称净收益除非有重复证据 | 待填 |
 | A→B live/evictable | 记录漂移；`evictable` 恒等式成立 | 待填 |
 | stutter | `over200`/`maxMs`/`p99Ms` 有数；异常需场景解释 | 待填 |
+| 外部帧工具（仅 stutter 兜底） | 提供外部 `over200`/`maxMs` 读数；**不能**填 `frame_probe.present=true`，也不能替代 Hypernova probe | 待填 |
 | 崩溃/白块/错位 | 无 | 待填 |
 
 任一项失败：记录日志与读数，关闭临时参数，回退到默认 off；不要修改发行默认值。
