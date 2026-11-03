@@ -24,7 +24,7 @@
 | 路线 | Java | FR | MixinFR | Parallel | VramOpt | Hypernova | 汉化优化版 | 高清字体 | IME | Prepatcher | 状态 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | **A**：MixinFR + JRE 17 + Parallel | JRE **17.0.10**（`jre/release`；启动器显式 `..\jre\bin\java.exe`；运行时待验证） | **0.9.5**（MixinFR 内置） | **1.2.5**（mod id `MixinLib`；含 `MixinFRImeFix.jar`） | **0.1.0**（依赖 MixinLib） | **1.0.45**（由 256-mod 迁移带入） | **0.1.0** agent + mod；`lazy` / DDS / file-index 受 FR 0.9.5 门禁关闭；scripts / normal-cache 待实机 | **推断**（上游声明：MixinFR README 明确 2026.10.15） | **推断**（上游声明：1.2.4 重定向、1.2.5 修竖条；待实机看 `REMAP-OK`） | **推断**（上游声明：`MixinFRImeFix`）；备选 `disable-ime` + ChineseInputFix | **不支持**（0.18.4 在 MixinLib 下 20/34 `SKIPPED_LOADER`；Java 27+ fatal） | `dry-run 结构`（Task 4，commit `581eb51`；实机待 Task 7） |
-| **B**：FR 0.9.7rc2 + Java 28 | Temurin **28-beta+13-ea**（`jdk-28+13`；启动器显式；运行时待验证） | **0.9.7rc2** | 无 | 无（缺 MixinLib 依赖） | **1.0.45** | **0.1.0** agent + mod；`lazy` / DDS / file-index 可用（M6 实测组合） | **推断**（21835 明确说优化版自带启动加速，与 plain FR 会打架；M7 目标根是优化版） | **不支持**（plain FR 不重定向矢量字体；上游 21705 说明） | 无 `MixinFRImeFix`；用 `disable-ime` + ChineseInputFix | **推断**（可选 0.18.4；实验；Java 28 未声明） | `dry-run 结构`（Task 3，commit `80666a9`；实机待 Task 7） |
+| **B**：FR 0.9.7rc2 + Java 28 | Temurin **28-beta+13-ea**（`jdk-28+13`；启动器显式；运行时待验证） | **0.9.7rc2** | 无 | 无（缺 MixinLib 依赖） | **1.0.45** | **0.1.0** agent + mod；`lazy` / DDS / file-index 可用（M6 **260mods 单环境 agent-only**，非 M7 根；M7 待 Task 7） | **推断**（21835 明确说优化版自带启动加速，与 plain FR 会打架；M7 目标根是优化版） | **不支持**（plain FR 不重定向矢量字体；上游 21705 说明） | 无 `MixinFRImeFix`；用 `disable-ime` + ChineseInputFix | **推断**（可选 0.18.4；实验；Java 28 未声明） | `dry-run 结构`（Task 3，commit `80666a9`；实机待 Task 7） |
 | **B + Prepatcher**（可选） | 28（Prepatcher **未声明** Java 28） | 0.9.7rc2 | 无 | 无 | 1.0.45 | 0.1.0 | 同上（实验） | 不支持 | ChineseInputFix | **0.18.4**；agent 顺序 Hypernova → FR → Prepatcher；`SKIPPED_LOADER` 需实机看 | `dry-run 结构`（Task 3 Prepatcher 计划；实机待 Task 7） |
 
 ### 表注
@@ -57,7 +57,7 @@
 | 实验根是优化测试版 2026.10.15；JRE 17.0.10；`dyn_font=true`；`ssime.dll` 存在 | A/B | `实测`（Task 1 / `m7-env.json`） | `docs/m7-environment.md`；`SS098_Hypernova_Compat_AuditTest/evidence/m7-env.json` |
 | 上游称 MixinFR **1.2.5** 支持游戏自带 JRE 17、支持启动优化版 2026.09.04 / 2026.10.15、内置 IME 修复；1.2.4 修高清字体重定向，1.2.5 修文字压成竖条 | A | `推断`（上游声明；本机未复测） | `https://www.fossic.org/thread-21705-1-1.html`；`MixinFR/README.md`；`MixinFR/CHANGELOG.md` 1.2.4 / 1.2.5 |
 | 上游称 StarsectorParallel **0.1.0** 依赖 MixinLib、使用游戏自带 JRE 17；传统汉化（ZYT）与启动优化版（YHCS）均已实测 | A | `推断`（上游声明；本机只做 dry-run） | `https://www.fossic.org/thread-21836-1-1.html`；`StarsectorParallel/README.md`；`mod_info.json` |
-| Prepatcher 0.18.4 × MixinFR：`TargetClassLoader` 下 **20/34** 精确目标 `SKIPPED_LOADER`；Java 27+ 还会 `FatalCompatibilityException` | A（排除） | `实测`（2026-10-29） | `docs/audit-2026-10-31-coremod-ecosystem.md` §7.1（E2）；Task 4 `plan_route_a` 的 `prepatcher.excluded` |
+| Prepatcher 0.18.4 × MixinFR：`TargetClassLoader` 下 **20/34** 精确目标 `SKIPPED_LOADER`；Java 27+ 还会 `FatalCompatibilityException` | A（排除） | `实测`（2026-10-29） | `docs/audit-2026-10-31-coremod-ecosystem.md` §7.1（E2，20/34 静默跳过）；目标摘要：`coreui/A/*`、`CampaignState`、`Market` 等全跳过（Task 4 plan/brief、2026-10-29 实测记录）；Task 4 `plan_route_a` 的 `prepatcher.excluded` |
 | Prepatcher 0.18.4 官方声明 Java 17 与 Miko Java 27+22；**Java 28 未声明**，只做能力检查 | B（可选） | `推断`（上游声明；本机未复测） | Prepatcher 0.18.4 release notes / 包内 `docs/COMPATIBILITY.md`；`https://github.com/kirpoly/StarsectorPrepatcher` |
 | Hypernova + FR 0.9.7rc2 + Java 28 + VOpt 1.0.45 在 260mods 菜单 smoke 跑通 | B | `实测`（M6 单环境；不是 M7 安装根） | `docs/m6-results.md` §3.2；`SS098_Hypernova_Compat_AuditTest/evidence/menu-smoke.json`；`starsector.log` `Java version: 28-beta (64-bit)` |
 | Hypernova 的 FR 绑定功能只接受 FR 0.9.7rc2 / 0.9.7；0.9.5 会关闭 lazy / file-index | A | `推断`（源码门禁；待实机日志确认） | `src/agent/java/hypernova/agent/FileIndexHook.java` 第 66–75 行；`plan_route_a` 的 `bundled_fr_version=0.9.5` |
@@ -95,7 +95,7 @@
 | Fast Rendering | 0.9.7rc2 | `fr.jar` + `fr.agent.jar` | 仅路线 B；与 VOpt 1.0.45 集成 | Fast Rendering（genir）发布页 `https://github.com/Halke1986/starsector-render`（21835 与 Prepatcher README 均引用） |
 | VramOptimizer | 1.0.45 | `VramOptimizer`（mod） | 锁 1.0.45；不要升到 1.0.46+ | `https://github.com/DeCEll-1/VramOptimizer/releases/tag/v1.0.45` |
 | Hypernova Infinite Engine | 0.1.0 | `hypernova_infinite_engine`（mod + agent） | 发行默认 lazy/eviction/scene_unload/frame probe 全关；FR 0.9.7rc2/0.9.7 才支持 file-index/lazy | `https://github.com/f25h-233/Hypernova-Infinite-Engine` |
-| ChineseInputFix | 2.0.0 | `ChineseInputFix`（mod） | IME 备选；路线 B 建议启用 | 作者 Chesand 的远星论坛发布帖（fossic 搜索 `ChineseInputFix`）；本仓库不打包 |
+| ChineseInputFix | 2.0.0 | `ChineseInputFix`（mod） | IME 备选；路线 B 建议启用 | `https://www.fossic.org/thread-20561-1-1.html`（作者 Chesand）；本仓库不打包 |
 | StarsectorPrepatcher | 0.18.4 | `starsector_prepatcher`（mod + agent） | 仅路线 B 可选；Java 17 / Miko 27+22；Java 28 未声明 | `https://github.com/kirpoly/StarsectorPrepatcher`（包内 README 指向该仓库） |
 | Temurin JDK | 28+13-ea-beta | `jdk-28+13` | 仅路线 B；启动器显式调用 | `https://github.com/adoptium/temurin28-binaries/releases/tag/jdk-28+13-ea-beta` |
 
@@ -126,7 +126,9 @@
 - 路线 A dry-run：Task 4 报告 + commit `581eb51`（当前没有单独的 evidence JSON）
 - Hypernova 真实运行（260mods）：`docs/m6-results.md` §3.2、`.../evidence/menu-smoke.json`
 - FR + VOpt 真实运行（M1f）：`docs/m1f-results.md` §5.3
-- Prepatcher × MixinFR 20/34：`docs/audit-2026-10-31-coremod-ecosystem.md` §7.1
+- Prepatcher × MixinFR 20/34：`docs/audit-2026-10-31-coremod-ecosystem.md` §7.1；
+  目标摘要 `coreui/A/*`、`CampaignState`、`Market` 等全跳过（Task 4 brief /
+  2026-10-29 实测记录）
 - 上游声明：`https://www.fossic.org/thread-21705-1-1.html`（MixinFR）、
   `https://www.fossic.org/thread-21836-1-1.html`（Parallel）、
   `https://www.fossic.org/thread-21835-1-1.html`（Java 28 教程 / 路线 B 来源）

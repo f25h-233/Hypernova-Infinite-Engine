@@ -113,7 +113,7 @@ py -3 -I tools\m7_stack.py inspect --root "%ROOT%" --text
 | Temurin JDK | **28+13-ea-beta** | 路线 B：Java 28 | `https://github.com/adoptium/temurin28-binaries/releases/tag/jdk-28+13-ea-beta` | `%REPO%\Starsector-098-260mods\jdk-28+13` |
 | VramOptimizer | **1.0.45**（锁定） | 显存优化；两路线都用 | `https://github.com/DeCEll-1/VramOptimizer/releases/tag/v1.0.45`，文件 `VramOptimizer-win-x64-sc.zip` | 由 256-mod 迁移带入 `%ROOT%\mods\VramOptimizer`；不要升 1.0.46+ |
 | Hypernova Infinite Engine | 0.1.0 | 两路线都用（agent + mod） | `https://github.com/f25h-233/Hypernova-Infinite-Engine`（Release 或自行构建） | `%REPO%`（`--hypernova-mod` 指向含 `mod_info.json`、`data/`、`graphics/`、`jars/` 或 `build/` 的目录） |
-| ChineseInputFix | 2.0.0 | IME 备选（路线 B 建议） | 作者 **Chesand** 的远星论坛发布帖（在 fossic 搜索 `ChineseInputFix`）；260mods 自带 2.0.0 | `%REPO%\Starsector-098-260mods\mods\ChineseInputFix`，或 `disable-ime --cif-source` 指定 |
+| ChineseInputFix | 2.0.0 | IME 备选（路线 B 建议） | `https://www.fossic.org/thread-20561-1-1.html`（作者 Chesand；260mods 自带 2.0.0） | `%REPO%\Starsector-098-260mods\mods\ChineseInputFix`，或 `disable-ime --cif-source` 指定 |
 | StarsectorPrepatcher | **0.18.4**（仅 B 可选） | 实验性预加载补丁 | `https://github.com/kirpoly/StarsectorPrepatcher`（0.18.4 包内 README / `docs/COMPATIBILITY.md` 指向该仓库） | `%REPO%\.cache\prepatcher\extracted\StarsectorPrepatcher` |
 
 > **Prepatcher 来源更正**：M7 计划文档里写的 `cyrrp/StarsectorPrepatcher`
@@ -174,7 +174,11 @@ enabled=256
 excluded=hypernova_infinite_engine
 extras=ChineseInputFix
 missing_enabled_ids=-
+duplicate_ids=lw_console:ConsoleCommands,shaderLib:GraphicsLib,lw_lazylib:LazyLib,particleengine:Particle Engine
 ```
+
+`duplicate_ids` 是已知的 4 组重复 id 选择（按排序取第一个文件夹），不是
+fail-closed 错误，也不影响 `copy=256` / `enabled=256`。
 
 `--link` 用目录联接，省空间但依赖源目录；想长期独立使用就去掉
 `--link`，改为完整复制（12 GB，耗时更久）。
@@ -211,6 +215,13 @@ enabled=256
 
 #### 第 3 步：dry-run 路线 A
 
+> **前置 blocker：必须先完成 `migrate --apply`。** `route-a --apply` 只在
+> `enabled_mods.json` **解析错误**时 fail-closed；`state=missing` 时它不会
+> 拒绝，而会新建一个只含 `hypernova_infinite_engine`、`MixinLib`、
+> `starsectorparallel` 的 3 项启用列表，等于只启用这 3 个 mod（256 个 mod
+> 不会自动启用）。dry-run 必须看到 `enabled_mods.state=ok` 才能进入第 4
+> 步；`state=missing` 就先回第 2 步迁移。
+
 ```bat
 python -I tools\m7_stack.py route-a --root "%ROOT%" --mixinfr "%AUDIT%\vendor\MixinFR-1.2.5\MixinFR" --parallel "%AUDIT%\vendor\StarsectorParallel-0.1.0\StarsectorParallel" --hypernova-mod "%REPO%" --text
 ```
@@ -224,13 +235,15 @@ jre_version=17.0.10
 agents=-javaagent:..\mods\MixinFR\jars\MixinLib-bridge.jar,-javaagent:../mods/hypernova_infinite_engine/jars/hypernova.agent.jar
 root_vmparams_modified=false
 copies=8
+enabled_mods.state=ok
 enabled_mods.add=hypernova_infinite_engine,MixinLib,starsectorparallel
 enabled_mods.order=hypernova_infinite_engine,MixinLib,starsectorparallel
 ```
 
 `warnings` 在迁移完成后应只剩两类固定说明：Prepatcher 被排除、
 `starsector.exe` 硬编码 JRE 17。若还有 `missing source` / `missing agent
-jar` / `VramOptimizer not present`，先修好再 apply。
+jar` / `VramOptimizer not present` / `enabled_mods.state=missing`，先修好
+再 apply。
 
 #### 第 4 步：apply 路线 A
 
