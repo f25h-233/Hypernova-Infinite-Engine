@@ -6,9 +6,11 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Agent-side per-frame timer for the M4 A→B/stutter gate.
  *
- * <p>Injected into {@code org.lwjgl.opengl.Display.update} (both overloads),
- * the per-frame buffer swap used by the title/campaign/combat loops. Enabled
- * only by {@code -Dhypernova.frameProbe=true}; independent of lazy textures,
+ * <p>Injected into {@code org.lwjgl.opengl.Display.update(Z)V} only, the
+ * per-frame buffer swap used by the title/campaign/combat loops.
+ * {@code update()V} delegates to {@code update(Z)V} and is not patched, so
+ * each frame is sampled once. Enabled only by
+ * {@code -Dhypernova.frameProbe=true}; independent of lazy textures,
  * FR and the scripts cache.
  *
  * <p>Gaps &gt; 5 s are counted as {@code longGaps} and excluded from frames,

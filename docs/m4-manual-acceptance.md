@@ -59,32 +59,44 @@ probe 不能混成一份报告。
 不会生效。不要手工往 `Miko_Lite.txt` 末尾追加。
 
 以 `Miko_Lite_m28_treatment.txt` 为模板（`lazy=true` / `lazy.dds=true` /
-`eviction=true` / `sceneUnload=true` 已在主类之前），用下面的脚本生成
-`Miko_Lite_m4_probe.txt`，只插入 `-Dhypernova.frameProbe=true`：
+`eviction=true` 已在主类之前；模板里 M2.8 实验的 `sceneUnload=true` 会被脚本
+归一化为 `false`），用下面的脚本生成 `Miko_Lite_m4_probe.txt`。生成的文件是
+**probe + 当前 LRU**（`sceneUnload=false`），不是 M2.8 treatment：
 
 ```bash
 python -I - <<'PY'
 from pathlib import Path
 src = Path("Starsector-098-260mods/Miko_Lite_m28_treatment.txt")
 dst = Path("Starsector-098-260mods/Miko_Lite_m4_probe.txt")
+SCENE = "-Dhypernova.textures.lazy.eviction.sceneUnload=false"
+FS = "-Dhypernova.frameProbe=true"
 lines = src.read_text(encoding="utf-8").splitlines()
 out = []
 for line in lines:
     s = line.strip()
     if s == "com.fs.starfarer.StarfarerLauncher":
-        if "-Dhypernova.frameProbe=true" not in out:
-            out.append("-Dhypernova.frameProbe=true")
+        if SCENE not in out:
+            out.append(SCENE)
+        if FS not in out:
+            out.append(FS)
         out.append(line)
+    elif s.startswith("-Dhypernova.textures.lazy.eviction.sceneUnload="):
+        if SCENE not in out:
+            out.append(SCENE)
     elif not s.startswith("-Dhypernova.frameProbe="):
         out.append(line)
 dst.write_text("\n".join(out) + "\n", encoding="utf-8")
 PY
 ```
 
-**报告工具要求 lazy summary（fail-closed）**：A→B 会话保持 treatment 模板的
-lazy 开关，不要为了只测 probe 关掉 lazy。若只想快速确认 probe 是否工作，可以
-临时关 lazy 只看日志，但**不要**用这种 probe-only 会话跑
-`m4_session_report.py`，也不要把它填进验收表。
+> `sceneUnload=true` 是 M2.8 实验开关。若要测它，单独记录为 M2.8 session，
+> 不要把结果归因于当前 LRU，也不要把它算进默认 M4.1 gate。
+
+**报告工具要求 lazy summary（fail-closed）**：A→B 会话保持生成文件的 lazy
+开关（`lazy=true` / `lazy.dds=true` / `eviction=true` / `sceneUnload=false`），
+不要为了只测 probe 关掉 lazy。若只想快速确认 probe 是否工作，可以临时关 lazy
+只看日志，但**不要**用这种 probe-only 会话跑 `m4_session_report.py`，也不要
+把它填进验收表。
 
 启动（把下面保存为 `Starsector-098-260mods\run_m4.bat` 后双击/执行；
 `%~dp0` 只在 .bat 中展开，直接粘进 PowerShell/cmd 会解析错路径）：
@@ -178,8 +190,10 @@ B 结束再 Ctrl-C。重启游戏会使 `frames`/`over200`/`longGaps` 的 B−A 
    包含 title/menu/load；`session-a.json` 覆盖启动+A，`session-b.json` 覆盖
    启动+A+B。要得到 B-only 计数，必须做差：
    `B.frames - A.frames`、`B.over200 - A.over200`、`B.longGaps - A.longGaps`。
+   `HYPERNOVA_FRAME` 每 600 个有效帧才输出一条，所以 `B.frames − A.frames`
+   有最多 **599 帧**的采样边界误差，不是精确的逐场景帧数。
    `maxMs` / `p99Ms` 是累计会话统计，**不能相减**；两份都报，并把 B 的
-   标为 cumulative，不能当作 B-only P99。GPU 同理必须用 §4 的独立 CSV。
+   标为累积（cumulative），不能当作 B-only P99。GPU 同理必须用 §4 的独立 CSV。
 8. **报告读两份日志**：`--agent-log` 提供 `HYPERNOVA_FRAME` 与 lazy summary；
    `--starsector-log` 提供 FR session anchor 与五类纹理错误。帧行只认最后一个
    `hypernova agent premain` 之后的会话；`frame_probe.source` 由报告标明

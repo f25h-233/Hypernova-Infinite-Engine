@@ -648,7 +648,7 @@ git commit -m "feat(m4.1): read frame probe from the agent log"
 - [ ] **Step 1: 更新 `docs/m4-manual-acceptance.md`**
 
 - §1 前置：删掉“启用主 mod / `enabled_mods.json` 备份恢复”的强制步骤；改成“probe 在 agent 里，260mods agent-only 即可”。保留 build-mod/install-manifest/install_agent、日志清理、干净存档。
-- §2 启动参数：仍从 `Miko_Lite_m28_treatment.txt` 派生 `Miko_Lite_m4_probe.txt`，但只要求插入 `-Dhypernova.frameProbe=true`（lazy flags 由 treatment 模板自带；若只想测 probe 可关 lazy）；强调 `-D` 在主类之前。
+- §2 启动参数：仍从 `Miko_Lite_m28_treatment.txt` 派生 `Miko_Lite_m4_probe.txt`，插入 `-Dhypernova.frameProbe=true`，并把 `sceneUnload` 归一化为 `false`（M2.8 实验开关不进入默认 M4.1 gate；生成文件是 probe + 当前 LRU，不是 M2.8 treatment）；lazy flags 由 treatment 模板自带；强调 `-D` 在主类之前。
 - §3 启动检查：`grep -c "frame probe: enabled"` 与 `grep -c "samples started from Display.update"` 在 `scripts-agent.log`；`Display.update` 覆盖 title/campaign/combat，不再区分状态来源。
 - §4/5：`HYPERNOVA_FRAME` 行在 `scripts-agent.log`；报告工具同时读 agent/game 日志；frame 计数从 JVM 启动（含 title/menu/load）累计，B-only = B−A；max/p99 不可相减；GPU 用独立 `gpu-a.csv`/`gpu-b.csv`，B 用同一 PID。**报告工具要求 lazy summary**，所以 A→B 会话保持 lazy 开启（treatment 模板自带）；不要用 probe-only 的懒关闭会话去跑报告。
 - 删除/降级 Base 替代为“可选完整产品环境”，不再要求启用主 mod。

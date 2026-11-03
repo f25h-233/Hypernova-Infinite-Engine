@@ -278,6 +278,12 @@ M6（汉化/中文输入兼容审计）→ M5（默认开启 canary + 发行）�
 | `bash tools/java/install-manifest.sh Starsector-098-260mods` | 0 | `baked=80286/80286 unresolved=0`；`verified: installed jar matches build output` |
 | `python tools/install_agent.py --game Starsector-098-260mods --env 260mods-lite` | 0 | `installed: ...hypernova.agent.jar`；`no vmparams change: ...Miko_Lite.txt` |
 
+> **安装的 agent jar SHA256（本次 smoke 时点）**：
+> `95bfa7c3953b38bb7b2c57887140eae15bd96f789f5b1eddb2e4fa04ba948aa9`。
+> 该值对应实际装入 `Starsector-098-260mods` 并参与本次 smoke 的 jar；
+> `run-agent-tests.sh` / `build-agent.sh` 会重建 `build/agent`，重新打包可能
+> 改变 SHA。不要把它当作跨构建稳定的发布哈希。
+
 ### 实机 smoke（menu-only）
 
 命令：
@@ -357,6 +363,9 @@ python -I tools/m4_session_report.py \
 - fix1 的旧 smoke 是 5400 帧 / wall 172.1 s，本次 fix2 是 3600 帧 / wall
   99.5 s；两次 wall 时间不同，不能只凭帧数差推断双采样。fix2 通过只 patch
   `update(Z)V` 从代码上消除了 `update()V` 委托造成的双采样。
+- **B−A 边界**：`HYPERNOVA_FRAME` 每 600 个有效帧才输出一条，所以
+  `B.frames − A.frames` 最多有 **599 帧**的采样边界误差，不是精确的逐场景
+  帧数；`over200`/`longGaps` 的差值同样受此边界影响。
 - 未进入战斗；`Display.update` 在战斗循环中同样每帧调用，但战斗帧仍需用户
   实机验证。**不能**把菜单 smoke 当作战斗验收。
 - 未执行 A→B：没有 10 min A/B 会话、`gpu-a.csv` / `gpu-b.csv`、B−A 差值或
