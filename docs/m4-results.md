@@ -207,7 +207,7 @@ agent-only 不再需要启用主 mod 或修改 `enabled_mods.json`。完整产�
 - 崩溃/白块/错位的人工观察。
 
 > M4.1 的 menu-only smoke 已有 `frame_probe.present=true`（`source=agent`，
-> 5400 帧），但那不是 A→B，也不是战斗验收。
+> 3600 帧），但那不是 A→B，也不是战斗验收。
 
 不要在 M5 默认开启决策中把这些项目当作“已通过”。执行前需确认：
 
@@ -249,12 +249,14 @@ M6（汉化/中文输入兼容审计）→ M5（默认开启 canary + 发行）�
 
 ### 设计
 
-`-javaagent` 的 `FrameProbeTransformer` 在
-`org.lwjgl.opengl.Display.update()V` 与 `update(Z)V` 入口注入
-`FrameProbe.frame("Display.update")`。`Display.update` 是
-title/campaign/combat 循环里的每帧 buffer swap，因此 260mods 的 agent-only
-配置（`enabled_mods.json` 不含 `hypernova_infinite_engine`）也能采样。probe
-独立于 lazy/DDS/FR/scripts；关闭时只保留一次 property 检查。主 mod 的
+`-javaagent` 的 `FrameProbeTransformer` 只在
+`org.lwjgl.opengl.Display.update(Z)V` 入口注入
+`FrameProbe.frame("Display.update")`；`update()V` 内部委托到 `update(Z)V`
+（`iconst_1; invokestatic update:(Z)V`），只 patch `(Z)V` 可避免同一帧被采样
+两次。`Display.update` 是 title/campaign/combat 循环里的每帧 buffer swap，
+因此 260mods 的 agent-only 配置（`enabled_mods.json` 不含
+`hypernova_infinite_engine`）也能采样。probe 独立于 lazy/DDS/FR/scripts；
+关闭时只保留一次 property 检查。主 mod 的
 `HypernovaPlugin`/`FrameTimeProbe` 保留给完整产品；agent 与主 mod 两条来源
 不能混用，报告用 `frame_probe.source` 标明。
 
@@ -262,15 +264,17 @@ title/campaign/combat 循环里的每帧 buffer swap，因此 260mods 的 agent-
 `CombatState.traverse`。Task 3 第一次 smoke 证明这两个方法是整段 state loop，
 只在进入状态时调用一次：日志只有 1 条
 `samples started from com/fs/starfarer/BaseGameState`、0 条
-`HYPERNOVA_FRAME`。fix1（`3a34b6b`）改为 `Display.update` 两个重载。
+`HYPERNOVA_FRAME`。fix1（`3a34b6b`）改为 `Display.update`；fix2
+（`fdc9c7d`）进一步只 patch `update(Z)V`，因为 `update()V` 会委托到它，
+两个重载都 patch 会双采样。
 
 ### 验证
 
 | 命令 | rc | 结果 |
 |---|---|---|
-| `bash tools/java/run-agent-tests.sh` | 0 | 208 tests found / 207 successful / 1 aborted / 0 failed（abort 为已知 Windows symlink 用例） |
-| `python -I -m pytest tests/tools -q` | 0 | 400 passed in 37.78s |
-| `bash tools/java/build-mod.sh` | 0 | 主 jar 与 `hypernova-0.1.0.zip` 构建成功；release_check OK |
+| `bash tools/java/run-agent-tests.sh` | 0 | 211 tests found / 210 successful / 1 aborted / 0 failed（abort 为已知 Windows symlink 用例） |
+| `python -I -m pytest tests/tools -q` | 0 | 400 passed in 20.24s |
+| `bash tools/java/build-mod.sh` | 0 | 主 jar 与 `hypernova-0.1.0.zip` 构建成功；release_check OK（首次尝试因 `build/agent/textures` 资源瞬时缺失 rc=1，重跑 `build-texture-patch.sh` 后 rc=0；未改代码） |
 | `bash tools/java/install-manifest.sh Starsector-098-260mods` | 0 | `baked=80286/80286 unresolved=0`；`verified: installed jar matches build output` |
 | `python tools/install_agent.py --game Starsector-098-260mods --env 260mods-lite` | 0 | `installed: ...hypernova.agent.jar`；`no vmparams change: ...Miko_Lite.txt` |
 
@@ -283,31 +287,36 @@ python -I tools/smoke_run.py --profile miko-lite --rounds 1 --linger 20 \
   --jvm-arg=-Dhypernova.frameProbe=true \
   --jvm-arg=-Dhypernova.textures.lazy=true \
   --jvm-arg=-Dhypernova.textures.lazy.dds=true \
-  --json-out build/m41/smoke-probe.json
+  --json-out build/m41/smoke-probe-final.json
 ```
 
-结果 rc=0，`build/m41/smoke-probe.json`：
+结果 rc=0，`build/m41/smoke-probe-final.json`：
 
 | 指标 | 值 |
 |---|---|
 | `ok` | `true` |
-| `menu_s` / `wall_s` | 124.7 / 172.1 |
+| `menu_s` / `wall_s` | 55.6 / 99.5 |
 | `stop` | `forced` |
-| `gpu_process_dedicated_mb`（menu） | 496.6 |
-| `gpu_process_shared_mb`（menu） | 34.2 |
+| `gpu_process_dedicated_mb`（menu） | 496.5 |
+| `gpu_process_shared_mb`（menu） | 32.2 |
 
-最后一个 agent session（`scripts-agent.log` 共 731 行；最后一个
-`hypernova agent premain` 在 line 550）：
+最后一个 agent session（`scripts-agent.log` 共 897 行；最后一个
+`hypernova agent premain` 在 `05:44:27.104`）：
 
 | 检查 | 实测 |
 |---|---|
-| `frame probe: enabled` | 1（line 548，`05:09:00.808`） |
-| `frame probe: hook added to Display.update` | 1（line 560，`05:09:02.533`） |
-| `frame probe: samples started from Display.update` | 1（line 561，`05:09:03.022`） |
-| `HYPERNOVA_FRAME` 行数 | 9 |
-| 首行 | line 628：`frames=600 over200=3 maxMs=1225 p99Ms=60 lastMs=19 longGaps=0`（`05:09:20.283`） |
-| 最后一行 | line 731：`frames=5400 over200=4 maxMs=1225 p99Ms=54 lastMs=18 longGaps=1`（`05:11:46.338`） |
+| `frame probe: enabled` | 启动标记，可在整份日志任意位置找到；本次会话在 `05:44:27.071`（premain anchor 之前） |
+| `frame probe: hook added to Display.update` | 1（line 744，`05:44:28.132`） |
+| `frame probe: samples started from Display.update` | 1（line 745，`05:44:28.388`） |
+| `HYPERNOVA_FRAME` 行数 | 6 |
+| 首行 | line 812：`frames=600 over200=2 maxMs=868 p99Ms=60 lastMs=17 longGaps=0`（`05:44:42.485`） |
+| 最后一行 | line 897：`frames=3600 over200=2 maxMs=868 p99Ms=55 lastMs=18 longGaps=1`（`05:45:59.722`） |
 | 战斗帧 | 本次 smoke 未进战斗；`Display.update` 覆盖战斗循环，但战斗帧仍需用户实机确认 |
+
+> `frame probe: enabled` 是启动标记，可在整份日志任意位置找到（本次在
+> `hypernova agent premain` anchor 之前输出）；`hook added` 是 transform 标记。
+> 需要按 anchor 之后会话读取的采样证据是
+> `samples started from Display.update` 与 `HYPERNOVA_FRAME`。
 
 ### 报告
 
@@ -317,33 +326,37 @@ python -I tools/smoke_run.py --profile miko-lite --rounds 1 --linger 20 \
 python -I tools/m4_session_report.py \
   --agent-log Starsector-098-260mods/saves/hypernova/scripts-agent.log \
   --starsector-log Starsector-098-260mods/starsector-core/starsector.log \
-  --out build/m41/smoke-report.json --require-frame --text
+  --out build/m41/smoke-report-final.json --require-frame --text
 ```
 
-结果 rc=0，`build/m41/smoke-report.json`：
+结果 rc=0，`build/m41/smoke-report-final.json`：
 
 | 项 | 值 |
 |---|---|
 | `frame_probe.source` | `agent` |
-| `frame_probe.present` / `complete` | `true` / `true` |
-| `frames` / `over200` / `maxMs` / `p99Ms` / `longGaps` | 5400 / 4 / 1225 / 54 / 1 |
-| `frame_probe.file_line` | 731 |
+| `health.frame_probe_present` / `health.frame_probe_complete` | `true` / `true` |
+| `frames` / `over200` / `maxMs` / `p99Ms` / `longGaps` | 3600 / 2 / 868 / 55 / 1 |
+| `frame_probe.file_line` | 897 |
 | `lazy.present` | `true` |
 | `lazy.summary.failed / disabled / dimMismatch / failedParked` | 0 / 0 / 0 / 0 |
 | `lazy.summary.main` | `main` |
-| `lazy.summary.liveBytes / evictableBytes` | 14537856 / 627196 |
+| `lazy.summary.liveBytes / evictableBytes` | 14517058 / 606398 |
 | `lazy.summary.budgetBytes` | 268435456 |
-| `lazy.summary.dds / ddsHit / ddsFallback` | 1 / 36 / 2 |
+| `lazy.summary.dds / ddsHit / ddsFallback` | 1 / 32 / 2 |
 | `texture_errors_total` | 0（五类全 0） |
 | `health` | 全 `true` |
-| `starsector_session.anchor_found / anchor_count` | `true` / 6 |
+| `starsector_session.anchor_found / anchor_count` | `true` / 7 |
 
 **口径**：
 
-- 这是 **menu-only** 的 1 轮 smoke（20 s linger），不是 A→B。`frames=5400`
-  覆盖 JVM 启动后的 title/menu/load；`maxMs=1225` / `over200=4` 发生在启动/
-  加载/菜单阶段，不是战斗 stutter 证据；`longGaps=1` 是启动/菜单切换的 >5 s
-  间隔，被正确排除在帧统计外。
+- 这是 **menu-only** 的 1 轮 smoke（20 s linger），不是 A→B。`frames=3600`
+  覆盖 JVM 启动后的 title/menu/load；`maxMs=868` / `over200=2` 发生在启动/
+  加载/菜单阶段，不是战斗 stutter 证据。`longGaps=1` 出现在
+  `frames=1800→2400` 之间（菜单/linger 期间），**原因未确定**，不归因于
+  启动或菜单切换；该间隔不计入帧统计。
+- fix1 的旧 smoke 是 5400 帧 / wall 172.1 s，本次 fix2 是 3600 帧 / wall
+  99.5 s；两次 wall 时间不同，不能只凭帧数差推断双采样。fix2 通过只 patch
+  `update(Z)V` 从代码上消除了 `update()V` 委托造成的双采样。
 - 未进入战斗；`Display.update` 在战斗循环中同样每帧调用，但战斗帧仍需用户
   实机验证。**不能**把菜单 smoke 当作战斗验收。
 - 未执行 A→B：没有 10 min A/B 会话、`gpu-a.csv` / `gpu-b.csv`、B−A 差值或
@@ -356,7 +369,9 @@ python -I tools/m4_session_report.py \
 M4 时的 I-5 是“probe 依赖 textures 模块，260mods agent-only 无法产帧；启用
 模块后测到的是 textures+agent，不能与 agent-only 数字比较”。M4.1 后：
 
-- agent-only 配置**有** probe；本节的 `source=agent` 就是 agent-only 证据。
+- agent-only 配置**有** probe；本节报告**选中了 agent 来源**
+  （`source=agent`）。报告在 agent 与 game 两条来源都有帧时优先 agent，所以
+  这只能说明报告选了 agent，不能证明主 mod probe 不存在。
 - 但 **agent 与主 mod 两条来源不能混用**：一份报告只认一个 source；agent-only
   验收必须是 `source=agent`，出现 `source=game` 说明主 mod probe 也在跑。
 - 仍不能把 agent-side 数字与主 mod probe 的数字拼成一条 A→B 曲线。

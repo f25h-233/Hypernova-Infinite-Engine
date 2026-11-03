@@ -4,7 +4,14 @@
 
 **Goal:** 让 frame-time probe 在 260mods 的 agent-only 配置里也能工作：由 `-javaagent` 加载的 agent 在 campaign/title/combat 的每帧 `Display.update` 上采样，输出 `HYPERNOVA_FRAME` 到 `scripts-agent.log`，报告工具优先解析 agent 日志。
 
-**Architecture:** 新增 `hypernova.agent.FrameProbe`（纯计时器）与 `FrameProbeTransformer`（ASM 在 `org.lwjgl.opengl.Display.update()V` 和 `update(Z)V` 的入口注入采样调用）。`Display.update` 是每帧的 buffer swap，在 title/campaign/combat 的帧循环里各调用一次；`BaseGameState.traverse`/`CombatState.traverse` 本身是**整个状态循环**，不是逐帧回调，不能作为采样点。`HypernovaAgent.premain` 在 `-Dhypernova.frameProbe=true` 时注册 transformer，独立于 lazy/FR/scripts 开关。`tools/m4_session_report.py` 先从最后一个 agent premain 之后的日志找帧行，找不到再回退到 starsector.log；`frame_probe.source` 标明来源。
+**Architecture:** 新增 `hypernova.agent.FrameProbe`（纯计时器）与 `FrameProbeTransformer`（ASM 在 `org.lwjgl.opengl.Display.update(Z)V` 的入口注入采样调用；`update()V` 内部委托到 `update(Z)V`，只 patch `(Z)V` 以避免同一帧双采样）。`Display.update` 是每帧的 buffer swap，在 title/campaign/combat 的帧循环里各调用一次；`BaseGameState.traverse`/`CombatState.traverse` 本身是**整个状态循环**，不是逐帧回调，不能作为采样点。`HypernovaAgent.premain` 在 `-Dhypernova.frameProbe=true` 时注册 transformer，独立于 lazy/FR/scripts 开关。`tools/m4_session_report.py` 先从最后一个 agent premain 之后的日志找帧行，找不到再回退到 starsector.log；`frame_probe.source` 标明来源。
+
+> **Implementation update (fix2 `fdc9c7d`)**: 最终实现只 hook
+> `Display.update(Z)V`；`update()V` 通过 `iconst_1; invokestatic
+> update:(Z)V` 委托到它，两个重载都 hook 会双采样。下面的 Task 1 代码块
+> 保留 fix1 的两重载版本作为历史；实际代码/测试以 `fdc9c7d` 为准，日志标记
+> 仍是 `frame probe: hook added to Display.update` 与
+> `frame probe: samples started from Display.update`。
 
 **Tech Stack:** Java 17、ASM 9.1、JUnit 5、Python 3/pytest。
 
@@ -14,7 +21,7 @@
 
 - probe 默认 off；只有 `-Dhypernova.frameProbe=true` 才注册 transformer/采样；关闭时零采样成本。
 - probe 不能依赖 lazy、FR、scripts、主 mod；260mods agent-only 必须可用。
-- 每帧采样点在 `org.lwjgl.opengl.Display.update`（`()V` 与 `(Z)V` 两个重载）的入口；这是 title/campaign/combat 帧循环里的 buffer swap。**不要**注入 `BaseGameState.traverse`/`CombatState.traverse`，它们是整段状态循环，只在状态切换时返回。
+- 每帧采样点在 `org.lwjgl.opengl.Display.update(Z)V` 的入口；这是 title/campaign/combat 帧循环里的 buffer swap。`update()V` 委托到 `update(Z)V`，**只 patch `(Z)V`**，不要两个重载都 patch（会双采样）。**不要**注入 `BaseGameState.traverse`/`CombatState.traverse`，它们是整段状态循环，只在状态切换时返回。
 - `HYPERNOVA_FRAME` 行格式与主 mod 完全一致：`frames=<int> over200=<int> maxMs=<int> p99Ms=<int> lastMs=<int> longGaps=<int>`。
 - `over200` 严格 >200 ms；`longGaps` >5 s，不计入 frames/max/直方图；`p99Ms` 1 ms 直方图；`maxMs` 向上取整。
 - 注入失败必须 fail-open+可见：写 `frame probe: ... failed/missing`，不影响游戏。
@@ -45,7 +52,7 @@
 - Produces:
   - `public static void FrameProbe.frame(String source)`
   - `public static final String FrameProbe.LINE_PREFIX = "HYPERNOVA_FRAME "`
-  - `FrameProbeTransformer` targets `org/lwjgl/opengl/Display`, methods `update()V` and `update(Z)V`
+  - `FrameProbeTransformer` targets `org/lwjgl/opengl/Display`, method `update(Z)V` only (`update()V` delegates to it)
   - log markers: `frame probe: enabled`, `frame probe: hook added to Display.update` (once per class), `frame probe: samples started from Display.update`
 
 **Dependencies:** 无
@@ -649,7 +656,7 @@ git commit -m "feat(m4.1): read frame probe from the agent log"
 - [ ] **Step 2: 更新 `docs/m4-results.md`**
 
 追加 `## M4.1 agent-side frame probe`：
-- 说明 probe 现在由 `-javaagent` agent 注入 `org.lwjgl.opengl.Display.update`（两个重载），260mods agent-only 可用；主 mod probe 保留给完整产品。
+- 说明 probe 现在由 `-javaagent` agent 注入 `org.lwjgl.opengl.Display.update(Z)V`（`update()V` 委托到它，只 patch `(Z)V`），260mods agent-only 可用；主 mod probe 保留给完整产品。
 - 记录 smoke 证据（实际数字）：`frame probe: enabled`、`samples started from Display.update`、`HYPERNOVA_FRAME` 行、report `source=agent`、rc0。
 - 明确：`Display.update` 覆盖战斗帧循环，但 A→B/stutter 仍未执行；不要把菜单 smoke 当成战斗验收。
 - 更新 I-5 限制：agent-only 配置现在有 probe；仍不能把主 mod/agent 两条来源混用。

@@ -5,8 +5,9 @@
 > 真实游戏进程 + 真实存档完成；菜单快照、单轮 smoke、`sceneEvictMsMax`
 > 都不能替代。
 >
-> **M4.1 起 probe 在 agent 侧**：`-javaagent` 的 `FrameProbeTransformer` 在
-> `org.lwjgl.opengl.Display.update()V` / `update(Z)V` 入口采样。
+> **M4.1 起 probe 在 agent 侧**：`-javaagent` 的 `FrameProbeTransformer` 只在
+> `org.lwjgl.opengl.Display.update(Z)V` 入口采样；`update()V` 内部委托到
+> `update(Z)V`，只 patch 后者可避免同一帧重复采样。
 > `Display.update` 是 title/campaign/combat 循环里的每帧 buffer swap，所以
 > 260mods 的 **agent-only** 配置即可产帧，不需要启用
 > `hypernova_infinite_engine`，也不需要改 `enabled_mods.json`。主 mod 的
@@ -29,11 +30,25 @@
    260mods 默认 agent-only 就是本验收的主路径。
 
 **可选完整产品环境（Base）**：`Starsector-098-Base` 已启用主 mod，mod 数少，
-可作为完整产品环境。probe 仍是 agent 侧；用
-`python tools/install_agent.py --game Starsector-098-Base --env base` 安装
-agent，并在 `starsector-core/fr.vmparams` 的主类前插入
-`-Dhypernova.frameProbe=true`（argfile 中主类之后不生效）。报告命令改用
-`Starsector-098-Base/saves/hypernova/scripts-agent.log` 与
+可作为完整产品环境。probe 仍是 agent 侧：
+
+1. 刷新主 jar：`bash tools/java/install-manifest.sh Starsector-098-Base`
+2. 刷新 agent：`python tools/install_agent.py --game Starsector-098-Base --env base`
+3. 在 `Starsector-098-Base/starsector-core/fr.vmparams` 的
+   `com.fs.starfarer.StarfarerLauncher` **之前**插入下面五行
+   （argfile 中主类之后不生效）：
+
+   ```text
+   -Dhypernova.textures.lazy=true
+   -Dhypernova.textures.lazy.dds=true
+   -Dhypernova.textures.lazy.eviction=true
+   -Dhypernova.textures.lazy.eviction.sceneUnload=false
+   -Dhypernova.frameProbe=true
+   ```
+
+`fr.vmparams` 本身没有 lazy flags；**必须**补上，否则
+`m4_session_report.py` 会 fail-closed，报 `no valid lazy probe summary`。
+报告命令改用 `Starsector-098-Base/saves/hypernova/scripts-agent.log` 与
 `Starsector-098-Base/starsector-core/starsector.log`。主 mod probe 与 agent
 probe 不能混成一份报告。
 
