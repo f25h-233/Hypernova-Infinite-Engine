@@ -18,6 +18,11 @@ public final class HypernovaAgent {
         try {
             RuntimeContext ctx = RuntimeContext.fromEnvironment();
             AgentLog.init(ctx.logFile());
+            if (Boolean.getBoolean("hypernova.frameProbe")) {
+                instrumentation.addTransformer(new FrameProbeTransformer(), false);
+                AgentLog.info("frame probe: enabled (-Dhypernova.frameProbe=true);"
+                        + " hook BaseGameState/CombatState, log every 600 frames");
+            }
             StartupTimeline.start();
             FileIndexHook.setContext(ctx);
             if (frPresent()) {
