@@ -7,11 +7,16 @@ from pathlib import Path
 import pytest
 
 from m7_stack import (
+    apply_disable_ime,
+    apply_disable_mixinfr_fonts,
     apply_migrate,
     apply_route_a,
     apply_route_b,
+    collect_logs,
     inspect_root,
     main,
+    plan_disable_ime,
+    plan_disable_mixinfr_fonts,
     plan_migrate,
     plan_route_a,
     plan_route_b,
@@ -758,3 +763,179 @@ def test_cli_route_a_text_summary(tmp_path, capsys):
     assert "route=a" in captured.out
     assert "launcher.java=..\\jre\\bin\\java.exe" in captured.out
     assert "agents=" in captured.out
+
+
+# ---- 短路、回滚与日志收集（Task 5）----
+
+
+def test_disable_ime_plan_renames_dll(tmp_path):
+    root = tmp_path / "install"
+    (root / "starsector-core/native/windows").mkdir(parents=True)
+    (root / "starsector-core/native/windows/ssime.dll").write_bytes(b"x")
+    plan = plan_disable_ime(root)
+    assert plan["rename"] == [("ssime.dll", "ssime.dll.disabled")]
+    assert plan["apply"] is False
+
+
+def test_collect_logs_copies_existing_only(tmp_path):
+    root = tmp_path / "install"
+    (root / "starsector-core").mkdir(parents=True)
+    (root / "starsector-core/starsector.log").write_text("x", encoding="utf-8")
+    out = tmp_path / "out"
+    report = collect_logs(root, out)
+    assert (out / "starsector.log").is_file()
+    assert "mixinlib.log" in report["missing"]
+
+
+def _ime_install(tmp_path):
+    root = tmp_path / "install"
+    (root / "starsector-core/native/windows").mkdir(parents=True)
+    (root / "starsector-core/native/windows/ssime.dll").write_bytes(b"x")
+    _write(root / "mods/enabled_mods.json", '{"enabledMods":["mod_a"]}')
+    cif_src = tmp_path / "cif"
+    _write(cif_src / "mod_info.json", '{"id":"ChineseInputFix"}')
+    return root, cif_src
+
+
+def test_plan_disable_ime_requires_cif_before_enabling(tmp_path):
+    root, cif_src = _ime_install(tmp_path)
+    plan = plan_disable_ime(root, cif_source=cif_src)
+    assert plan["cif"]["verified"] is True
+    assert plan["cif"]["need_copy"] is True
+    assert plan["enabled_mods"]["add"] == ["ChineseInputFix"]
+    assert plan["enabled_mods"]["state"] == "ok"
+
+
+def test_apply_disable_ime_renames_enables_cif_and_rolls_back(tmp_path):
+    root, cif_src = _ime_install(tmp_path)
+    plan = plan_disable_ime(root, cif_source=cif_src)
+    plan["apply"] = True
+    result = apply_disable_ime(plan)
+    assert result["changed"] is True
+    assert not (root / "starsector-core/native/windows/ssime.dll").exists()
+    assert (root / "starsector-core/native/windows/ssime.dll.disabled").is_file()
+    assert (root / "mods/ChineseInputFix/mod_info.json").is_file()
+    assert json.loads(
+        (root / "mods/enabled_mods.json").read_text(encoding="utf-8")
+    ) == {"enabledMods": ["mod_a", "ChineseInputFix"]}
+
+    rolled = rollback_route(
+        root, result["rollback"]["label"], dest=result["rollback"]["dest"],
+        apply=True)
+    assert rolled["ok"] is True
+    assert (root / "starsector-core/native/windows/ssime.dll").is_file()
+    assert not (root / "starsector-core/native/windows/ssime.dll.disabled").exists()
+    assert not (root / "mods/ChineseInputFix").exists()
+    assert json.loads(
+        (root / "mods/enabled_mods.json").read_text(encoding="utf-8")
+    ) == {"enabledMods": ["mod_a"]}
+
+
+def test_apply_disable_ime_refuses_missing_cif_source(tmp_path):
+    root, _ = _ime_install(tmp_path)
+    plan = plan_disable_ime(root, cif_source=tmp_path / "missing-cif")
+    assert plan["cif"]["verified"] is False
+    plan["apply"] = True
+    with pytest.raises((FileNotFoundError, ValueError)):
+        apply_disable_ime(plan)
+    assert (root / "starsector-core/native/windows/ssime.dll").is_file()
+    assert json.loads(
+        (root / "mods/enabled_mods.json").read_text(encoding="utf-8")
+    ) == {"enabledMods": ["mod_a"]}
+
+
+def test_disable_ime_is_idempotent(tmp_path):
+    root, cif_src = _ime_install(tmp_path)
+    first = plan_disable_ime(root, cif_source=cif_src)
+    first["apply"] = True
+    apply_disable_ime(first)
+
+    second = plan_disable_ime(root, cif_source=cif_src)
+    assert second["rename"] == []
+    assert second["enabled_mods"]["add"] == []
+    second["apply"] = True
+    result = apply_disable_ime(second)
+    assert result["changed"] is False
+    assert (root / "starsector-core/native/windows/ssime.dll.disabled").is_file()
+
+
+def test_apply_disable_ime_snapshots_before_writes(tmp_path, monkeypatch):
+    root, cif_src = _ime_install(tmp_path)
+    plan = plan_disable_ime(root, cif_source=cif_src)
+    plan["apply"] = True
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("snapshot boom")
+
+    monkeypatch.setattr("m7_stack.snapshot_route", boom)
+    with pytest.raises(RuntimeError, match="snapshot boom"):
+        apply_disable_ime(plan)
+    assert (root / "starsector-core/native/windows/ssime.dll").is_file()
+    assert not (root / "starsector-core/native/windows/ssime.dll.disabled").exists()
+    assert not (root / "mods/ChineseInputFix").exists()
+    assert json.loads(
+        (root / "mods/enabled_mods.json").read_text(encoding="utf-8")
+    ) == {"enabledMods": ["mod_a"]}
+
+
+def test_plan_disable_mixinfr_fonts_reports_no_switch(tmp_path):
+    root = tmp_path / "install"
+    _write(root / "mods/MixinFR/mod_info.json",
+           '{"id":"MixinLib","version":"1.2.5"}')
+    plan = plan_disable_mixinfr_fonts(root)
+    assert plan["applicable"] is True
+    assert plan["version"] == "1.2.5"
+    assert plan["switch_available"] is False
+    assert plan["writes"] == []
+    assert "1.2.5" in plan["recommendation"]
+    plan["apply"] = True
+    result = apply_disable_mixinfr_fonts(plan)
+    assert result["applied"] is False
+    assert result["changed"] is False
+
+
+def test_disable_mixinfr_fonts_edits_explicit_switch_and_rolls_back(tmp_path):
+    root = tmp_path / "install"
+    _write(root / "mods/MixinFR/mod_info.json",
+           '{"id":"MixinLib","version":"1.2.5"}')
+    switch = root / "mods/MixinFR/mixinfr.font.json"
+    _write(switch, '{"FrFontHd": true}\n')
+    plan = plan_disable_mixinfr_fonts(root)
+    assert plan["switch_available"] is True
+    assert len(plan["writes"]) == 1
+    plan["apply"] = True
+    result = apply_disable_mixinfr_fonts(plan)
+    assert result["changed"] is True
+    assert json.loads(switch.read_text(encoding="utf-8")) == {"FrFontHd": False}
+
+    rolled = rollback_route(
+        root, result["rollback"]["label"], dest=result["rollback"]["dest"],
+        apply=True)
+    assert rolled["ok"] is True
+    assert json.loads(switch.read_text(encoding="utf-8")) == {"FrFontHd": True}
+
+
+def test_collect_logs_finds_agent_log_under_saves(tmp_path):
+    root = tmp_path / "install"
+    _write(root / "saves/hypernova/scripts-agent.log", "agent")
+    out = tmp_path / "out"
+    report = collect_logs(root, out)
+    assert report["copied"] == ["scripts-agent.log"]
+    assert (out / "scripts-agent.log").read_text(encoding="utf-8") == "agent"
+
+
+def test_cli_rollback_apply_restores_snapshot(tmp_path, capsys):
+    root = tmp_path / "install"
+    _write(root / "vmparams", "original\n")
+    dest = tmp_path / "backups"
+    snapshot_route(root, "label", paths=["vmparams"], dest=dest)
+    _write(root / "vmparams", "changed\n")
+
+    rc = main([
+        "rollback", "--root", str(root), "--label", "label",
+        "--backups", str(dest), "--apply", "--text",
+    ])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "restored=1" in captured.out
+    assert (root / "vmparams").read_text(encoding="utf-8") == "original\n"

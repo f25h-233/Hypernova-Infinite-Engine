@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -35,6 +36,39 @@ VMPARAMS_PATH = "vmparams"
 ENABLED_MODS_PATH = "mods/enabled_mods.json"
 DYN_FONT_DIR = "starsector-core/graphics/fonts/dyn_font"
 SSIME_DLL_PATH = "starsector-core/native/windows/ssime.dll"
+SSIME_DLL_NAME = Path(SSIME_DLL_PATH).name
+SSIME_DLL_DISABLED_NAME = SSIME_DLL_NAME + ".disabled"
+SSIME_DLL_DISABLED_PATH = SSIME_DLL_PATH + ".disabled"
+
+# Task 5：IME 短路、日志收集与 MixinFR 字体开关。
+CIF_MOD_ID = "ChineseInputFix"
+CIF_MOD_FOLDER = "ChineseInputFix"
+CIF_MOD_REL = Path("mods") / CIF_MOD_FOLDER
+DEFAULT_CIF_SOURCE = (
+    Path(__file__).resolve().parent.parent
+    / "Starsector-098-260mods" / "mods" / CIF_MOD_FOLDER
+)
+LOG_NAMES = (
+    "starsector.log",
+    "mixinlib.log",
+    "mixinfr-fonthd.log",
+    "scripts-agent.log",
+)
+# 游戏日志在 starsector-core；agent 日志默认写在 saves/hypernova。
+LOG_SEARCH_DIRS = ("starsector-core", "", "saves/hypernova", "saves")
+MIXINFR_FONT_CONFIG_NAMES = (
+    "mixinfr.imefix.mixin.json",
+    "mixinfr.font.json",
+    "fonts.json",
+)
+_FONT_SWITCH_KEYS = frozenset(name.lower() for name in (
+    "FrFontHd",
+    "frFontHd",
+    "fontHd",
+    "font_hd",
+    "fr_font_hd",
+    "hdFonts",
+))
 
 _AGENT_RE = re.compile(r"-javaagent:(\S+)")
 _HYPERNOVA_FLAG_RE = re.compile(r"-Dhypernova\.[^\s]+")
@@ -2034,6 +2068,751 @@ def apply_route_a(plan: dict[str, object]) -> dict[str, object]:
     }
 
 
+# ---- Task 5：IME 短路、MixinFR 字体开关、回滚与日志收集 ----
+
+
+def _mod_id_and_error(info_path: Path) -> tuple[str | None, str | None]:
+    try:
+        return _read_mod_id(info_path), None
+    except Exception as exc:  # noqa: BLE001 - dry-run 只报告，不中断
+        return None, str(exc)
+
+
+def _cif_state(root: Path, cif_source: str | Path | None) -> dict[str, object]:
+    """检查 ChineseInputFix 的目标/源目录；写 enabled 前必须 verified。"""
+    target = root / CIF_MOD_REL
+    source = (Path(cif_source) if cif_source is not None
+              else DEFAULT_CIF_SOURCE)
+    target_present = target.is_dir()
+    source_present = source.is_dir()
+    target_id: str | None = None
+    source_id: str | None = None
+    error: str | None = None
+    if target_present:
+        target_id, error = _mod_id_and_error(target / "mod_info.json")
+        if target_id != CIF_MOD_ID:
+            error = error or (
+                f"mod_info id mismatch: {target_id!r}, "
+                f"expected {CIF_MOD_ID!r}")
+            verified = False
+        else:
+            verified = True
+    elif source_present:
+        source_id, error = _mod_id_and_error(source / "mod_info.json")
+        if source_id != CIF_MOD_ID:
+            error = error or (
+                f"mod_info id mismatch: {source_id!r}, "
+                f"expected {CIF_MOD_ID!r}")
+            verified = False
+        else:
+            verified = True
+    else:
+        error = f"ChineseInputFix folder not found: {target} or {source}"
+        verified = False
+    return {
+        "expected_id": CIF_MOD_ID,
+        "target": str(target),
+        "target_present": target_present,
+        "source": str(source),
+        "source_present": source_present,
+        "target_id": target_id,
+        "source_id": source_id,
+        "verified": verified,
+        "need_copy": not target_present,
+        "error": error if not verified else None,
+    }
+
+
+def _enabled_cif_state(root: Path) -> dict[str, object]:
+    path = root / ENABLED_MODS_PATH
+    state = _enabled_mods_state(path)
+    ids = state["ids"] if isinstance(state["ids"], list) else []
+    lowered = {str(item).lower() for item in ids}
+    return {
+        "path": str(path),
+        "state": state["state"],
+        "error": state["error"],
+        "count": len(ids),
+        "has_chinese_input_fix": CIF_MOD_ID.lower() in lowered,
+    }
+
+
+def plan_disable_ime(
+    root: str | Path,
+    *,
+    cif_source: str | Path | None = None,
+) -> dict[str, object]:
+    """规划 IME 短路：改名 ssime.dll，并确保 ChineseInputFix 已复制/启用。
+
+    只读。``apply_disable_ime`` 才会先做 M6+M7 快照再写盘。
+    """
+    base = Path(root)
+    if not base.is_dir():
+        raise FileNotFoundError(f"install root not found: {base}")
+    dll = base / SSIME_DLL_PATH
+    disabled = base / SSIME_DLL_DISABLED_PATH
+    dll_present = dll.is_file()
+    disabled_present = disabled.is_file()
+    conflict = dll_present and disabled_present
+    rename = ([(SSIME_DLL_NAME, SSIME_DLL_DISABLED_NAME)]
+              if dll_present and not disabled_present else [])
+
+    cif = _cif_state(base, cif_source)
+    enabled = _enabled_cif_state(base)
+    verified = bool(cif["verified"])
+    add = ([CIF_MOD_ID]
+           if verified and not enabled["has_chinese_input_fix"] else [])
+
+    warnings: list[str] = []
+    if conflict:
+        warnings.append(
+            "both ssime.dll and ssime.dll.disabled exist; refusing to guess")
+    elif disabled_present and not dll_present:
+        warnings.append("ssime.dll is already disabled")
+    elif not dll_present:
+        warnings.append("ssime.dll not found; nothing to rename")
+    if not verified:
+        warnings.append(str(cif["error"]))
+    if enabled["state"] != "ok":
+        warnings.append(
+            f"enabled_mods.json state is {enabled['state']}; apply will "
+            "refuse to write it (run the 256-mod migration first)")
+    if dll_present and verified and not add:
+        warnings.append(
+            "ChineseInputFix is already enabled; only the DLL rename remains")
+
+    label = "m7-disable-ime-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    snapshot = {
+        "dest": str(_default_backups(base)),
+        "label": label,
+        "paths": [
+            SSIME_DLL_PATH,
+            SSIME_DLL_DISABLED_PATH,
+            ENABLED_MODS_PATH,
+            CIF_MOD_REL.as_posix(),
+        ],
+    }
+    writes: list[dict[str, object]] = []
+    if rename:
+        writes.append({
+            "kind": "rename",
+            "from": SSIME_DLL_NAME,
+            "to": SSIME_DLL_DISABLED_NAME,
+        })
+    if cif["need_copy"] and verified:
+        writes.append({
+            "kind": "copy-tree",
+            "src": cif["source"],
+            "dst": cif["target"],
+        })
+    if add:
+        writes.append({"kind": "enabled-mods", "add": add})
+
+    return {
+        "route": "ime",
+        "root": str(base),
+        "apply": False,
+        "dll_present": dll_present,
+        "disabled_present": disabled_present,
+        "already_disabled": disabled_present and not dll_present,
+        "conflict": conflict,
+        "rename": rename,
+        "cif": cif,
+        "enabled_mods": {
+            **enabled,
+            "need_enable": bool(add),
+            "add": add,
+        },
+        "writes": writes,
+        "snapshot": snapshot,
+        "warnings": warnings,
+    }
+
+
+def apply_disable_ime(plan: dict[str, object]) -> dict[str, object]:
+    """执行 IME 短路。默认 dry-run；只有 ``plan["apply"]`` 为真才写盘。"""
+    if not plan.get("apply"):
+        return {"applied": False, "root": plan.get("root")}
+
+    base = Path(str(plan["root"])).resolve()
+    if not base.is_dir():
+        raise FileNotFoundError(f"install root not found: {base}")
+
+    raw_cif = plan.get("cif")
+    cif = raw_cif if isinstance(raw_cif, dict) else {}
+    source = Path(str(cif.get("source") or DEFAULT_CIF_SOURCE))
+    target = base / CIF_MOD_REL
+    target_present = target.is_dir()
+    try:
+        if target_present:
+            verified = _read_mod_id(target / "mod_info.json") == CIF_MOD_ID
+        elif source.is_dir():
+            verified = _read_mod_id(source / "mod_info.json") == CIF_MOD_ID
+        else:
+            verified = False
+    except Exception as exc:  # noqa: BLE001 - 统一成可读的 fail-closed 错误
+        raise ValueError(
+            f"cannot verify ChineseInputFix before apply: {exc}") from exc
+    if not verified:
+        raise FileNotFoundError(
+            "ChineseInputFix is not verified; refusing to disable IME "
+            f"(target={target}, source={source})")
+
+    enabled_path = base / ENABLED_MODS_PATH
+    state = _enabled_mods_state(enabled_path)
+    if state["state"] != "ok":
+        raise ValueError(
+            "refusing to modify enabled_mods.json "
+            f"(state={state['state']}, error={state['error']})")
+    ids = state["ids"] if isinstance(state["ids"], list) else []
+    has_cif = any(str(item).lower() == CIF_MOD_ID.lower() for item in ids)
+
+    dll = base / SSIME_DLL_PATH
+    disabled = base / SSIME_DLL_DISABLED_PATH
+    do_rename = dll.is_file()
+    if do_rename and disabled.exists():
+        raise FileExistsError(
+            f"both {dll.name} and {disabled.name} exist; refusing to guess")
+    do_copy = not target_present
+    do_enable = not has_cif
+    if not (do_rename or do_copy or do_enable):
+        return {
+            "applied": True,
+            "ok": True,
+            "changed": False,
+            "root": str(base),
+            "renamed": [],
+            "copied_cif": False,
+            "enabled_mods": {
+                "path": str(enabled_path),
+                "added": [],
+                "count": len(ids),
+            },
+            "snapshot": None,
+            "rollback": None,
+        }
+
+    raw_snapshot = plan.get("snapshot")
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    label = str(snapshot.get("label")
+                or "m7-disable-ime-" + datetime.now().strftime(
+                    "%Y%m%d-%H%M%S-%f"))
+    dest = Path(str(snapshot.get("dest")
+                    or _default_backups(base))).resolve()
+    raw_paths = snapshot.get("paths")
+    paths = ([str(item) for item in raw_paths]
+             if isinstance(raw_paths, list) else [
+                 SSIME_DLL_PATH,
+                 SSIME_DLL_DISABLED_PATH,
+                 ENABLED_MODS_PATH,
+                 CIF_MOD_REL.as_posix(),
+             ])
+
+    # 快照先行：M6（全局约束）+ M7 自己的完整回滚清单。
+    snapshot_meta = m6_env_snapshot.snapshot(base, str(dest), label)
+    rollback_meta = snapshot_route(
+        base, label, paths=paths, dest=dest, route="ime")
+
+    enabled_result: dict[str, object] = {
+        "path": str(enabled_path),
+        "added": [],
+        "count": len(ids),
+    }
+    copied = False
+    try:
+        if do_copy:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source, target)
+            actual = _read_mod_id(target / "mod_info.json")
+            if actual != CIF_MOD_ID:
+                raise ValueError(
+                    f"mod_info id mismatch after copy: {actual!r}, "
+                    f"expected {CIF_MOD_ID!r}")
+            copied = True
+        if do_enable:
+            enabled_result = _apply_enabled_mods(
+                base, {"path": str(enabled_path), "add": [CIF_MOD_ID]})
+        if do_rename:
+            dll.rename(disabled)
+    except BaseException as exc:
+        try:
+            rollback_route(base, label, dest=dest, apply=True)
+        except Exception as rollback_exc:  # noqa: BLE001 - 保留原始异常
+            add_note = getattr(exc, "add_note", None)
+            if callable(add_note):
+                add_note(f"automatic rollback failed: {rollback_exc}")
+        raise
+
+    return {
+        "applied": True,
+        "ok": True,
+        "changed": True,
+        "root": str(base),
+        "renamed": ([{"from": SSIME_DLL_NAME,
+                      "to": SSIME_DLL_DISABLED_NAME}]
+                    if do_rename else []),
+        "copied_cif": copied,
+        "enabled_mods": enabled_result,
+        "snapshot": snapshot_meta,
+        "rollback": {
+            "dest": str(dest),
+            "label": label,
+            "manifest": str(dest / label / ROUTE_ROLLBACK_MANIFEST),
+            "entries": len(rollback_meta.get("entries", [])),
+        },
+    }
+
+
+def _mixinfr_version(mod_dir: Path) -> str | None:
+    payload = _read_json(mod_dir / "mod_info.json")
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("version")
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        parts = [value.get("major"), value.get("minor"), value.get("patch")]
+        if all(isinstance(part, int) for part in parts):
+            return ".".join(str(part) for part in parts)
+    return None
+
+
+def _font_switch_paths(
+    data: object, prefix: tuple[str, ...] = ()
+) -> list[tuple[str, ...]]:
+    """在 JSON 里找显式字体开关（bool 或 {"enabled": bool}）。
+
+    只认字典键；mixin 列表里的类名不是开关，不能当成开关改写。
+    """
+    found: list[tuple[str, ...]] = []
+    if not isinstance(data, dict):
+        return found
+    for key, value in data.items():
+        key_text = str(key)
+        if key_text.lower() in _FONT_SWITCH_KEYS:
+            if isinstance(value, bool):
+                found.append(prefix + (key_text,))
+            elif (isinstance(value, dict)
+                  and isinstance(value.get("enabled"), bool)):
+                found.append(prefix + (key_text, "enabled"))
+        found.extend(_font_switch_paths(value, prefix + (key_text,)))
+    return found
+
+
+def _dict_value(data: object, path: tuple[str, ...]) -> object:
+    node = data
+    for key in path:
+        if not isinstance(node, dict) or key not in node:
+            return None
+        node = node[key]
+    return node
+
+
+def _set_dict_bool(
+    data: object, path: tuple[str, ...], value: bool
+) -> None:
+    if not path:
+        raise ValueError("empty font switch path")
+    node = data
+    for key in path[:-1]:
+        if not isinstance(node, dict) or key not in node:
+            raise ValueError(f"font switch path not found: {'.'.join(path)}")
+        node = node[key]
+    if not isinstance(node, dict):
+        raise ValueError(f"font switch path is not an object: {'.'.join(path)}")
+    node[path[-1]] = value
+
+
+def _mixinfr_font_scan(
+    mod_dir: Path,
+) -> tuple[list[str], list[dict[str, object]]]:
+    """扫描 MixinFR 的显式字体配置；jar 内的开关只报告，不改写。"""
+    checked: list[str] = []
+    switches: list[dict[str, object]] = []
+
+    candidates: list[Path] = []
+    for name in MIXINFR_FONT_CONFIG_NAMES:
+        candidates.append(mod_dir / name)
+        candidates.append(mod_dir / "config" / name)
+    for path in candidates:
+        if not path.is_file():
+            continue
+        checked.append(str(path))
+        payload = _read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        for key_path in _font_switch_paths(payload):
+            switches.append({
+                "path": str(path),
+                "key": ".".join(key_path),
+                "key_path": list(key_path),
+                "enabled": bool(_dict_value(payload, key_path)),
+                "editable": True,
+                "payload": payload,
+            })
+
+    jar_paths = (sorted(mod_dir.glob("*.jar"))
+                 + sorted((mod_dir / "jars").glob("*.jar")))
+    for jar in jar_paths:
+        try:
+            with zipfile.ZipFile(jar) as archive:
+                for name in archive.namelist():
+                    lowered = name.lower()
+                    if not lowered.endswith(".json"):
+                        continue
+                    if "font" not in lowered and "mixinfr" not in lowered:
+                        continue
+                    checked.append(f"{jar.name}!{name}")
+                    try:
+                        payload = json.loads(archive.read(name).decode(
+                            "utf-8-sig", errors="replace"))
+                    except Exception:  # noqa: BLE001 - 非法配置不阻断扫描
+                        continue
+                    for key_path in _font_switch_paths(payload):
+                        switches.append({
+                            "path": f"{jar.name}!{name}",
+                            "key": ".".join(key_path),
+                            "key_path": list(key_path),
+                            "enabled": bool(_dict_value(payload, key_path)),
+                            "editable": False,
+                            "payload": None,
+                        })
+        except (OSError, zipfile.BadZipFile):
+            continue
+    return checked, switches
+
+
+def _font_switch_writes(
+    switches: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    grouped: dict[str, dict[str, object]] = {}
+    for item in switches:
+        if not item.get("editable") or item.get("enabled") is not True:
+            continue
+        path = str(item["path"])
+        group = grouped.setdefault(path, {"payload": item["payload"],
+                                          "keys": []})
+        keys = group["keys"]
+        assert isinstance(keys, list)
+        keys.append(tuple(item["key_path"]))  # type: ignore[arg-type]
+    writes: list[dict[str, object]] = []
+    for path, group in sorted(grouped.items()):
+        payload = group["payload"]
+        keys = group["keys"]
+        assert isinstance(keys, list)
+        for key_path in keys:
+            _set_dict_bool(payload, key_path, False)
+        writes.append({
+            "path": path,
+            "kind": "file",
+            "content": json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            "keys": [".".join(key_path) for key_path in keys],
+        })
+    return writes
+
+
+def plan_disable_mixinfr_fonts(root: str | Path) -> dict[str, object]:
+    """规划关闭 MixinFR 的 FrFontHd 字体开关（只适用于路线 A）。
+
+    1.2.5 没有包内字体配置文件时只报告“已含修复 / 需换 1.2.5”，
+    绝不伪造开关，也不改写 vendor jar。
+    """
+    base = Path(root)
+    if not base.is_dir():
+        raise FileNotFoundError(f"install root not found: {base}")
+    mod_dir = base / "mods" / MIXINFR_MOD_FOLDER
+    applicable = mod_dir.is_dir()
+    version = _mixinfr_version(mod_dir) if applicable else None
+    checked, switches = (_mixinfr_font_scan(mod_dir) if applicable
+                         else ([], []))
+    writes = _font_switch_writes(switches)
+    switch_available = bool(switches)
+    editable = any(bool(item.get("editable")) for item in switches)
+
+    if not applicable:
+        recommendation = (
+            "MixinFR 未安装：disable-mixinfr-fonts 只适用于路线 A"
+            "（mods/MixinFR）。")
+    elif writes:
+        recommendation = "找到显式 FrFontHd 字体开关；用 --apply 关闭。"
+    elif switch_available:
+        recommendation = (
+            "显式 FrFontHd 字体开关已关闭或位于 jar 内不可安全改写；"
+            "未生成写入。")
+    elif version == "1.2.5":
+        recommendation = (
+            "MixinFR 1.2.5 已包含高清字体重定向修复；包内没有独立的 "
+            "FrFontHd 字体开关，无需关闭（若当前不是 1.2.5，需换 1.2.5；"
+            "若字体异常请收集 starsector-core/mixinfr-fonthd.log）。")
+    else:
+        recommendation = (
+            f"当前 MixinFR {version or '版本未知'} 没有可用的 FrFontHd "
+            "字体开关；需换 1.2.5。")
+
+    warnings: list[str] = []
+    if not applicable:
+        warnings.append(f"MixinFR mod folder not found: {mod_dir}")
+    if switch_available and not editable:
+        warnings.append(
+            "font switch is inside a jar; M7 will not rewrite vendor jars")
+    if not switch_available and version not in (None, "1.2.5"):
+        warnings.append(
+            f"MixinFR {version} has no explicit font switch; upgrade to 1.2.5")
+
+    label = "m7-disable-fonts-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    snapshot = {
+        "dest": str(_default_backups(base)),
+        "label": label,
+        "paths": [str(item["path"]) for item in writes],
+    }
+    return {
+        "route": "a",
+        "root": str(base),
+        "apply": False,
+        "applicable": applicable,
+        "mixinfr_dir": str(mod_dir),
+        "version": version,
+        "required_version": "1.2.5",
+        "switch_available": switch_available,
+        "editable": editable,
+        "switches": [
+            {key: value for key, value in item.items() if key != "payload"}
+            for item in switches
+        ],
+        "checked": checked,
+        "writes": writes,
+        "recommendation": recommendation,
+        "snapshot": snapshot,
+        "warnings": warnings,
+    }
+
+
+def apply_disable_mixinfr_fonts(
+    plan: dict[str, object],
+) -> dict[str, object]:
+    """执行字体开关关闭；无显式开关时只返回报告，不写盘。"""
+    if not plan.get("apply"):
+        return {"applied": False, "root": plan.get("root")}
+    raw_writes = plan.get("writes")
+    writes = ([item for item in raw_writes if isinstance(item, dict)]
+              if isinstance(raw_writes, list) else [])
+    if not writes:
+        return {
+            "applied": False,
+            "ok": True,
+            "changed": False,
+            "root": plan.get("root"),
+            "switch_available": bool(plan.get("switch_available")),
+            "recommendation": plan.get("recommendation"),
+            "written": [],
+            "snapshot": None,
+            "rollback": None,
+        }
+
+    base = Path(str(plan["root"])).resolve()
+    if not base.is_dir():
+        raise FileNotFoundError(f"install root not found: {base}")
+    raw_snapshot = plan.get("snapshot")
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    label = str(snapshot.get("label")
+                or "m7-disable-fonts-" + datetime.now().strftime(
+                    "%Y%m%d-%H%M%S-%f"))
+    dest = Path(str(snapshot.get("dest")
+                    or _default_backups(base))).resolve()
+    paths = [str(item["path"]) for item in writes]
+
+    snapshot_meta = m6_env_snapshot.snapshot(base, str(dest), label)
+    rollback_meta = snapshot_route(
+        base, label, paths=paths, dest=dest, route="a")
+
+    written: list[str] = []
+    try:
+        for item in writes:
+            target = Path(str(item["path"]))
+            _snapshot_paths(base, [target])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_name(target.name + ".tmp")
+            tmp.write_text(str(item.get("content", "")), encoding="utf-8")
+            os.replace(tmp, target)
+            written.append(str(target))
+    except BaseException as exc:
+        try:
+            rollback_route(base, label, dest=dest, apply=True)
+        except Exception as rollback_exc:  # noqa: BLE001 - 保留原始异常
+            add_note = getattr(exc, "add_note", None)
+            if callable(add_note):
+                add_note(f"automatic rollback failed: {rollback_exc}")
+        raise
+
+    return {
+        "applied": True,
+        "ok": True,
+        "changed": True,
+        "root": str(base),
+        "switch_available": bool(plan.get("switch_available")),
+        "recommendation": "已关闭显式 FrFontHd 字体开关。",
+        "written": written,
+        "snapshot": snapshot_meta,
+        "rollback": {
+            "dest": str(dest),
+            "label": label,
+            "manifest": str(dest / label / ROUTE_ROLLBACK_MANIFEST),
+            "entries": len(rollback_meta.get("entries", [])),
+        },
+    }
+
+
+def collect_logs(root: str | Path, out: str | Path) -> dict[str, object]:
+    """把存在的启动日志复制到 evidence；只复制，不删除任何源文件。"""
+    base = Path(root)
+    if not base.is_dir():
+        raise FileNotFoundError(f"install root not found: {base}")
+    out_dir = Path(out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    copied: list[str] = []
+    missing: list[str] = []
+    sources: dict[str, str] = {}
+    for name in LOG_NAMES:
+        found: Path | None = None
+        for rel in LOG_SEARCH_DIRS:
+            candidate = (base / rel / name) if rel else (base / name)
+            if candidate.is_file():
+                found = candidate
+                break
+        if found is None:
+            missing.append(name)
+            continue
+        dst = out_dir / name
+        if dst.resolve() != found.resolve():
+            shutil.copy2(found, dst)
+        copied.append(name)
+        sources[name] = str(found)
+    return {
+        "root": str(base),
+        "out": str(out_dir),
+        "copied": copied,
+        "missing": missing,
+        "sources": sources,
+    }
+
+
+def _format_disable_ime_text(data: dict[str, object]) -> str:
+    def flag(value: object) -> str:
+        return "true" if value else "false"
+
+    def joined(value: object) -> str:
+        items = value if isinstance(value, list) else []
+        return ",".join(str(item) for item in items) or "-"
+
+    if "applied" in data:
+        raw_rollback = data.get("rollback")
+        rollback = raw_rollback if isinstance(raw_rollback, dict) else {}
+        raw_enabled = data.get("enabled_mods")
+        enabled = raw_enabled if isinstance(raw_enabled, dict) else {}
+        raw_renamed = data.get("renamed")
+        return "\n".join([
+            f"applied={flag(data.get('applied'))}",
+            f"ok={flag(data.get('ok'))}",
+            f"changed={flag(data.get('changed'))}",
+            f"root={data.get('root')}",
+            f"renamed={len(raw_renamed) if isinstance(raw_renamed, list) else 0}",
+            f"copied_cif={flag(data.get('copied_cif'))}",
+            f"enabled_mods.add={joined(enabled.get('added'))}",
+            f"rollback.label={rollback.get('label')}",
+            f"rollback.manifest={rollback.get('manifest')}",
+        ])
+
+    raw_cif = data.get("cif")
+    cif = raw_cif if isinstance(raw_cif, dict) else {}
+    raw_enabled = data.get("enabled_mods")
+    enabled = raw_enabled if isinstance(raw_enabled, dict) else {}
+    raw_rename = data.get("rename")
+    rename = ",".join(f"{item[0]}->{item[1]}"
+                      for item in raw_rename
+                      if isinstance(item, (list, tuple)) and len(item) == 2
+                      ) if isinstance(raw_rename, list) else ""
+    raw_warnings = data.get("warnings")
+    return "\n".join([
+        "route=ime",
+        f"root={data.get('root')}",
+        f"apply={flag(data.get('apply'))}",
+        f"dll_present={flag(data.get('dll_present'))}",
+        f"already_disabled={flag(data.get('already_disabled'))}",
+        f"conflict={flag(data.get('conflict'))}",
+        f"rename={rename or '-'}",
+        f"cif.verified={flag(cif.get('verified'))}",
+        f"cif.need_copy={flag(cif.get('need_copy'))}",
+        f"enabled_mods.state={enabled.get('state')}",
+        f"enabled_mods.add={joined(enabled.get('add'))}",
+        f"warnings={len(raw_warnings) if isinstance(raw_warnings, list) else 0}",
+    ])
+
+
+def _format_fonts_text(data: dict[str, object]) -> str:
+    def flag(value: object) -> str:
+        return "true" if value else "false"
+
+    if "applied" in data:
+        raw_written = data.get("written")
+        return "\n".join([
+            f"applied={flag(data.get('applied'))}",
+            f"ok={flag(data.get('ok'))}",
+            f"changed={flag(data.get('changed'))}",
+            f"switch_available={flag(data.get('switch_available'))}",
+            f"written={len(raw_written) if isinstance(raw_written, list) else 0}",
+            f"recommendation={data.get('recommendation')}",
+        ])
+
+    raw_writes = data.get("writes")
+    raw_checked = data.get("checked")
+    raw_warnings = data.get("warnings")
+    return "\n".join([
+        f"route=a",
+        f"root={data.get('root')}",
+        f"apply={flag(data.get('apply'))}",
+        f"applicable={flag(data.get('applicable'))}",
+        f"version={data.get('version')}",
+        f"switch_available={flag(data.get('switch_available'))}",
+        f"editable={flag(data.get('editable'))}",
+        f"writes={len(raw_writes) if isinstance(raw_writes, list) else 0}",
+        f"checked={len(raw_checked) if isinstance(raw_checked, list) else 0}",
+        f"recommendation={data.get('recommendation')}",
+        f"warnings={len(raw_warnings) if isinstance(raw_warnings, list) else 0}",
+    ])
+
+
+def _format_rollback_text(data: dict[str, object]) -> str:
+    def flag(value: object) -> str:
+        return "true" if value else "false"
+
+    raw_actions = data.get("actions")
+    lines = [
+        f"applied={flag(data.get('applied'))}",
+        f"label={data.get('label')}",
+        f"snapshot={data.get('snapshot')}",
+        f"restored={data.get('restored', 0)}",
+        f"deleted={data.get('deleted', 0)}",
+        f"actions={len(raw_actions) if isinstance(raw_actions, list) else 0}",
+    ]
+    if "ok" in data:
+        lines.append(f"ok={flag(data.get('ok'))}")
+    return "\n".join(lines)
+
+
+def _format_collect_logs_text(data: dict[str, object]) -> str:
+    def joined(value: object) -> str:
+        items = value if isinstance(value, list) else []
+        return ",".join(str(item) for item in items) or "-"
+
+    return "\n".join([
+        f"root={data.get('root')}",
+        f"out={data.get('out')}",
+        f"copied={joined(data.get('copied'))}",
+        f"missing={joined(data.get('missing'))}",
+    ])
+
+
 def _format_text(data: dict[str, object]) -> str:
     loc = data["localization"]
     vmp = data["vmparams"]
@@ -2264,6 +3043,41 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="把 JSON 结果写入该文件（evidence）")
     route_b.add_argument("--apply", action="store_true",
                          help="真正写盘（默认只规划）")
+    disable_ime = sub.add_parser(
+        "disable-ime",
+        help="短路 IME：改名 ssime.dll 并启用 ChineseInputFix（默认 dry-run）")
+    disable_ime.add_argument("--root", required=True, type=Path)
+    disable_ime.add_argument("--cif-source", type=Path,
+                             help="ChineseInputFix 源目录（默认 "
+                                  "Starsector-098-260mods/mods/ChineseInputFix）")
+    disable_ime.add_argument("--apply", action="store_true",
+                             help="真正写盘（默认只规划）")
+    disable_ime.add_argument("--text", action="store_true",
+                             help="以 key=value 输出摘要")
+    disable_fonts = sub.add_parser(
+        "disable-mixinfr-fonts",
+        help="关闭 MixinFR FrFontHd 字体开关（仅路线 A，默认 dry-run）")
+    disable_fonts.add_argument("--root", required=True, type=Path)
+    disable_fonts.add_argument("--apply", action="store_true",
+                               help="真正写盘（默认只规划）")
+    disable_fonts.add_argument("--text", action="store_true",
+                               help="以 key=value 输出摘要")
+    rollback = sub.add_parser(
+        "rollback", help="按 M7 route-rollback.json 恢复（默认 dry-run）")
+    rollback.add_argument("--root", required=True, type=Path)
+    rollback.add_argument("--label", required=True)
+    rollback.add_argument("--backups", type=Path,
+                          help="快照根目录（默认为 <audit>/backups）")
+    rollback.add_argument("--apply", action="store_true",
+                          help="真正恢复（默认只展示动作）")
+    rollback.add_argument("--text", action="store_true",
+                          help="以 key=value 输出摘要")
+    collect = sub.add_parser(
+        "collect-logs", help="把启动日志复制到 evidence")
+    collect.add_argument("--root", required=True, type=Path)
+    collect.add_argument("--out", required=True, type=Path)
+    collect.add_argument("--text", action="store_true",
+                         help="以 key=value 输出摘要")
     return parser
 
 
@@ -2359,6 +3173,45 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
+            return 0
+        if args.command == "disable-ime":
+            plan = plan_disable_ime(args.root, cif_source=args.cif_source)
+            if args.apply:
+                plan["apply"] = True
+                data = apply_disable_ime(plan)
+            else:
+                data = plan
+            if args.text:
+                print(_format_disable_ime_text(data))
+            else:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "disable-mixinfr-fonts":
+            plan = plan_disable_mixinfr_fonts(args.root)
+            if args.apply:
+                plan["apply"] = True
+                data = apply_disable_mixinfr_fonts(plan)
+            else:
+                data = plan
+            if args.text:
+                print(_format_fonts_text(data))
+            else:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "rollback":
+            data = rollback_route(
+                args.root, args.label, dest=args.backups, apply=args.apply)
+            if args.text:
+                print(_format_rollback_text(data))
+            else:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "collect-logs":
+            data = collect_logs(args.root, args.out)
+            if args.text:
+                print(_format_collect_logs_text(data))
+            else:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
             return 0
         data = inspect_root(args.root)
     except Exception as exc:  # noqa: BLE001 - 失败返回非零
