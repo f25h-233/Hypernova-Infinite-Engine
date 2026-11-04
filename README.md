@@ -2,11 +2,14 @@
 
 Starsector 0.98a 的运行时纹理预取与兜底 mod，附带一个可选的启动期 Java agent。
 
-> **版本：1.0.0（首个公开发行，2026-11-04）**
+> **版本：1.9.3（2026-11-04）**
 >
-> 主 mod 的运行期路径默认开启；会改变加载/显存行为的实验路径默认关闭。
-> 用户实机 gate（战役 / 战斗 / 读档 / 中文输入 / 字体视觉）仍 **pending**；
-> “到主菜单”不等于整套通过。不宣称 Hypernova 的显存/启动收益。
+> `1.0.0` 是“功能完善可用”的锚点（M2.8，2026-11-02：主 mod + agent +
+> manifest + lazy/DDS/LRU 全部落地）；之后 M4/M4.1/M6 的诊断、兼容性
+> 工具与修复累计为 `1.9.3`。主 mod 的运行期路径默认开启；会改变加载/显存
+> 行为的实验路径默认关闭。用户实机 gate（战役 / 战斗 / 读档 / 中文输入 /
+> 字体视觉）仍 **pending**；“到主菜单”不等于整套通过。不宣称 Hypernova
+> 的显存/启动收益。
 
 ## 这是什么
 
@@ -16,6 +19,22 @@ Starsector 0.98a 的运行时纹理预取与兜底 mod，附带一个可选的�
 - **可选 agent（Form B）**：通过 `-javaagent` 在类加载期做启动期的事——FR 文件索引、Janino 脚本预编译缓存、法线图缓存补丁；另含实验性的纹理懒加载/淘汰和 frame-time probe。
 
 主 mod 不依赖 agent；agent 缺失时自动退回纯 mod 行为。
+
+## 版本地图
+
+| 版本 | 里程碑 | 含义 |
+|---|---|---|
+| `0.x`（pre-release） | M0 … M2.7 | 内部开发；未公开发行 |
+| **`1.0.0`** | M2.8（`9f4946e`，2026-11-02） | 功能完善可用：主 mod + agent + manifest + lazy/DDS/LRU |
+| `1.1.0`–`1.2.9` | M4 | frame-time probe / 会话报告 |
+| `1.3.0`–`1.4.2` | M4.1 | agent-side frame probe |
+| `1.5.0`–`1.9.3` | M6 | 汉化 / 中文输入 / 字体 / UI 兼容性审计与工具 |
+| **`1.9.3`** | M6 终审 fix（`e43e7b0`，2026-11-03） | 当前版本 |
+
+`1.9.3` 不是“第 19 个正式版”，而是 `1.0.0` 之后按 `feat`/`fix` 累计出来的
+post-1.0 历史：9 个 minor（诊断、兼容性工具），最后一个 minor 线到
+`1.9.1`–`1.9.3` 三个 patch。里程碑本身仍用 `m0`…`m6` tag 记录，不映射到
+公开版本号。
 
 ## 当前默认值
 
@@ -80,7 +99,7 @@ python tools/install_agent.py --game <游戏目录> --env <profile>
 bash tools/java/build-mod.sh
 ```
 
-产物：`build/java/hypernova-1.0.0.zip`（含主 jar、agent jar、manifest、lazy-skip、README-install）。发行包固定使用 `Starsector-098-Base` 的 manifest；其它 mod 集在目标游戏目录就地生成。
+产物：`build/java/hypernova-1.9.3.zip`（含主 jar、agent jar、manifest、lazy-skip、README-install）。发行包固定使用 `Starsector-098-Base` 的 manifest；其它 mod 集在目标游戏目录就地生成。
 
 ## 回滚
 
@@ -114,11 +133,11 @@ bash tools/java/build-mod.sh
 
 ## 版本策略
 
-- `1.0.0`：首个公开发行。
-- `1.0.x`：修复、兼容性、文档；不改默认行为。
-- `1.x.0`：新的用户可见能力或默认值变更（例如 M5 default-on canary）。
+- `1.0.0`：功能完善可用（M2.8；主 mod + agent + manifest + lazy/DDS/LRU）。
+- `1.x.0`：`1.0.0` 之后的新功能 / 诊断 / 兼容性工具。
+- `1.x.y`：修复、兼容性、文档；不改默认行为。
 - `2.0.0`：破坏性变更（配置 schema、存档兼容、默认行为翻转导致结果不同）。
-- 内部里程碑继续用 `m0`…`m6` tag 记录，不映射到公开版本号。
+- 内部里程碑用 `m0`…`m6` tag 记录，不映射到公开版本号。
 
 ## 文档
 
