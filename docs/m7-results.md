@@ -11,9 +11,14 @@
 | 路线 | 安装结果 | 主菜单 | 结论 |
 |---|---|---|---|
 | A（MixinFR 1.2.5 + JRE 17 + StarsectorParallel） | fix loop `route-a --apply` 为 `applied=true ok=true`，manifest 就地生成成功 | **未到达** | 临时禁用 3 个声明 jar 缺失的 mod 后，MixinFR/Parallel/Hypernova 全部加载，无 Fatal/OOM；但在 600 s 上限 + 两次延长（总计约 1200 s）内仍停留在规则/脚本加载阶段，按协议记为 **timeout-not-menu**。 |
-| B（FR 0.9.7rc2 + Java 28 + Hypernova） | fix loop `route-b --apply` 为 `applied=true ok=true`，manifest 就地生成成功 | **已到达（105.8 s）** | `--xms 8G --xmx 10G`；Java 28、FR 0.9.7rc2、Hypernova agent/lazy/file index/scripts cache 全部加载；VOpt Loaded；五类纹理错误 0；最终 lazy probe `misses=0 failed=0`。需要禁用 `jc_sf`（幽灵部队自检失败）并应用 AoTD 要求的 `starfarer.api.jar` 替换；两者均记录为环境/模组前提。 |
+| B（FR 0.9.7rc2 + Java 28 + Hypernova） | fix loop `route-b --apply` 为 `applied=true ok=true`，manifest 就地生成成功 | **已到达（105.8 s）** | `--xms 8G --xmx 10G`；Java 28、FR 0.9.7rc2、Hypernova agent/lazy/file index/scripts cache 全部加载；VOpt Loaded；五类纹理错误 0；最终 lazy probe `misses=0 failed=0`。需要禁用 `jc_sf`（幽灵部队自检失败）并应用 AoTD 要求的 `starfarer.api.jar` 替换；两者均记录为环境/模组前提。**最终参数裁决见 §10：完整 Mikihime 47 项 + 8G/10G。** |
 | **A+（组件补齐）** | `route-a --apply` `ok=true`；MixinFR 1.2.5 + Parallel 0.1.0 + VOpt 1.0.45 + Hypernova + MixinFRImeFix + Mikihime JRE17 子集 | **未到达** | 600 s 内未到菜单；617 s 仍在 rules/scripts，无 Fatal/OOM，纹理错误 0。Parallel/`CombatAiHotspotMixin` 为 `NOT-INJECTED`（FR 重写 `CombatEngine`）。 |
-| **B+（组件补齐）** | `route-b --apply` `ok=true`；FR 0.9.7rc2 + VOpt + Hypernova + 完整 Mikihime JDK28 参数 + CIF + Prepatcher 0.18.4 | **已到达（355.3 s）** | Java 28；Prepatcher `16 classes / 21 patches / 4 skipped`；CIF v2.2 加载并子类化窗口；Hypernova lazy `misses=0 failed=0`；纹理错误 0。 |
+| **B+（组件补齐）** | `route-b --apply` `ok=true`；FR 0.9.7rc2 + VOpt + Hypernova + 完整 Mikihime JDK28 参数 + CIF + Prepatcher 0.18.4 | **已到达（355.3 s）** | Java 28；Prepatcher `16 classes / 21 patches / 4 skipped`；CIF v2.2 加载并子类化窗口；Hypernova lazy `misses=0 failed=0`；纹理错误 0。**355.3 s 是冷法线缓存首次启动，不是参数慢；见 §10。** |
+
+> **2026-11-04 补充裁决**：B 的最终推荐参数改为**完整 Mikihime JDK28 47 项 +
+> 8G/10G**，仍保留 FR/VOpt/Hypernova/CIF/Prepatcher。历史 105.8 s 是
+> **精简参数 + 热缓存**；B+ 355.3 s 是**完整参数 + 冷法线缓存**。热缓存
+> 复测时间与依据见 §10；详细对照见 `docs/m7-b-debug.md`。
 
 关键事实：
 
@@ -649,3 +654,22 @@ A+ **未到主菜单**；B+ **到主菜单**但只有日志级证据。战役、
 中文输入、字体视觉、分辨率、稳定性仍全部 **pending**。B+ 的 CIF/Prepatcher
 加载状态是组件级证据，不等于 IME 候选框/字体视觉/Prepatcher 行为已由用户
 验收；不宣称性能或显存收益。
+
+## 10. B 最终参数裁决（2026-11-04 补充）
+
+- **最终 B 配置**：完整 Mikihime JDK28 47 项（源
+  `Starsector-098-260mods/Miko_Lite.txt`；其中 `-Xms8192m/-Xmx10240m`
+  统一表达为 `-Xms8G -Xmx10G`）+ FR 0.9.7rc2 + VOpt 1.0.45 + Hypernova +
+  CIF（启用）+ Prepatcher 0.18.4；enabled 258（`jc_sf` 禁用）。
+- **热缓存复测**（`optimized-b-debug`，同一根、同一组件集合，连续 3 次）：
+  **68.2 / 57.1 / 59.2 s**，中位 **59.2 s**。
+- **组件加载**：`Java version: 28-beta`、`Fast Rendering: v0.9.7rc2`、
+  `VOpt Loaded`、CIF v2.2 窗口子类化、Prepatcher 0.18.4
+  `transformer-installed`、Hypernova lazy `misses=0 failed=0`；
+  `m6_log_audit total=0 ok=true complete=true`；五类纹理错误 0。
+- **依据**：同缓存下完整 47 项控制组为 67.7 s，说明参数不是慢因；
+  B+ 的 355.3 s 由 30,043 张冷法线生成造成；历史 B 105.8 s 是精简参数 +
+  热缓存，不能作为“精简优于完整”的证据。冷启动参考约 465 s（同组件、
+  精简参数冷跑；完整 Mikihime 未单独重复冷跑）；105.8 s 与 57–68 s
+  都是热缓存数字。
+- 详细逐组对照、缓存 key 结论与现场恢复见 `docs/m7-b-debug.md`。

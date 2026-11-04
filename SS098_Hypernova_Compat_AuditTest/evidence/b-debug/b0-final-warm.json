@@ -1,0 +1,68 @@
+{
+  "label": "b0-final-warm",
+  "root": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug",
+  "argfile": "../route-b.vmparams",
+  "smoke": {
+    "ok": true,
+    "menu_s": 110.3,
+    "wall_s": 140.5,
+    "stop": "forced",
+    "read_bytes_menu": 3179668991,
+    "read_bytes_exit": 3191719810,
+    "ws_menu_mb": 11880.7,
+    "ws_exit_mb": 11954.5,
+    "private_menu_mb": 13349.4,
+    "private_exit_mb": 13571.8,
+    "gpu_menu_mb": 3819.0,
+    "gpu_process_dedicated_mb": 1550.1,
+    "gpu_process_shared_mb": 33.6,
+    "gpu_process_dedicated_exit_mb": 1550.1,
+    "gpu_process_shared_exit_mb": 33.6,
+    "free_mb_menu": 4681.6,
+    "free_mb_exit": 4572.2,
+    "agent": {
+      "key_breakdown": "2026-11-04T01:30:27.357023300Z INFO cache key breakdown: files=12313, scan=397 ms, load=104 ms, refresh=21 ms, canonical=25 ms, save=82 ms, total=637 ms, rehash=false",
+      "key_ready": "2026-11-04T01:30:27.360041300Z INFO cache key ready (background): ed4e838ce0bff7fbd598e353e6800eea, took 641 ms",
+      "file_index": [
+        "2026-11-04T01:30:36.807185Z INFO file index: save scheduled entries=234432",
+        "2026-11-04T01:31:13.842923100Z INFO file index: written entries=222319, dirs=17365, ms=37031"
+      ],
+      "preload_cold": "2026-11-04T01:30:36.845340100Z INFO scripts cache cold: key=ed4e838ce0bff7fbd598e353e6800eea, preloaded=0, in 1 ms",
+      "textures_patched": "2026-11-04T01:30:45.022331800Z INFO textures: patched org/dark/shaders/util/TextureData (shaderLib 1.12.1 lazy normal cache)",
+      "breakdown": "2026-11-04T01:32:26.751392200Z INFO miss breakdown: total=12793, sourceless=1, sourced=12792",
+      "writes": [
+        "2026-11-04T01:31:45.466923300Z INFO scripts cache written: key=ed4e838ce0bff7fbd598e353e6800eea, entries=2113, bytes=8685245, in 26 ms"
+      ]
+    }
+  },
+  "stage": {
+    "log": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\starsector.log",
+    "log_bytes": 51525075,
+    "log_lines": 285198,
+    "menu_anchor": "109737 [Thread-18] INFO  sound.H  - Playing music with id [miscallenous_main_menu.ogg]",
+    "menu_log_ms": 109737,
+    "fr_banner": "0    [main] INFO  com.genir.renderer.agent.Agent  - Fast Rendering: v0.9.7rc2",
+    "java_version": "430  [main] INFO  com.fs.starfarer.StarfarerLauncher  - Java version: 28-beta (64-bit)",
+    "file_cache": "10012 [Thread-4-FR-Main-Loader] INFO  com.genir.renderer.overrides.loading.FileLoaderFast  - Cached 234432 files in 8082ms",
+    "vopt": "88034 [Thread-4-FR-Main-Loader] INFO  DeCell.VOpt.VOpt  - VOpt Loaded",
+    "cif": "88079 [Thread-4-FR-Main-Loader] INFO  ChineseInputFix  - [CIF] 中文输入修复 v2.2 已加载",
+    "prepatcher": "83531 [Thread-4-FR-Main-Loader] INFO  com.starsector.prepatcher.bootstrap.PrepatcherBootstrapPlugin  - StarsectorPrepatcher 0.18.4: status=transformer-installed, patchedClassesSoFar=16, appliedPatchesSoFar=21, skippedPatchesSoFar=4",
+    "prepatcher_patches": "83531 [Thread-4-FR-Main-Loader] INFO  com.starsector.prepatcher.bootstrap.PrepatcherBootstrapPlugin  - StarsectorPrepatcher 0.18.4: status=transformer-installed, patchedClassesSoFar=16, appliedPatchesSoFar=21, skippedPatchesSoFar=4",
+    "normal_map_count": 0,
+    "normal_map_first": null,
+    "normal_map_last": null,
+    "csv_last": "109519 [main] INFO  com.fs.starfarer.loading.LoadingUtils  - Loading CSV data from [DIRECTORY: D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\..\\mods\\RetroLib]",
+    "errors": []
+  },
+  "agent": {
+    "log": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\saves\\hypernova\\scripts-agent.log",
+    "lazy_probe_last": "2026-11-04T01:32:36.838277100Z INFO lazy probe: summary queue=52022 wouldSkip=45225 lookups=95640 demand=21128 index=72847 types={TEXTURE_ALPHA_ADDER=1,TEXTURE=52021} queuedSkip=45225 demandQueued=7093 hits=7093 misses=0 degraded=0 skipped=45224 proxies=45224 materialized=81 deferred=0 pending=0 drained=45224 reregistered=1 failed=0 disabled=0 main=main loading=Thread-4-FR-Main-Loader lateRegistered=0 lateLoaded=0 dimMismatch=0 dds=1 ddsHit=0 ddsFallback=16 ddsFbMeta=16 ddsFbBridge=0 ddsFbPath=0 ddsFbGet=0 ddsFbCheck=0 ddsFbCommit=0 ddsFbHandler=0 ddsFbNull=0 ddsFbShape=0 ddsFbCopy=0 ddsDisabled=0 ddsDimMismatch=0 eviction=1 evicted=0 evictedBytes=0 rematerialized=0 evictPasses=0 liveBytes=13969952 startupBytes=5560848 foreignBytes=8388608 evictableBytes=20496 budgetBytes=268435456 emptyEvictPasses=0 evictPassMsTotal=0 evictPassMsMax=0 placeholder=0 oldIdDeleted=0 evictSkipped=0 deferredDeletes=0 selftest=0 failedParked=0 sceneUnload=0 scenePasses=0 sceneEvictions=0 sceneEvictMsTotal=0 sceneEvictMsMax=0 scenePending=0",
+    "premain": "2026-11-04T01:30:26.672547100Z INFO hypernova agent premain; config=ScriptCacheConfig[scriptsEnabled=true, cacheMaxBytes=2147483648, cacheGenerations=2, preloadMaxMillis=3000, verbose=false], cacheRoot=D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\saves\\hypernova\\scripts-cache",
+    "file_index": "2026-11-04T01:30:26.642346700Z INFO file index transformer registered",
+    "lazy": "2026-11-04T01:30:26.683347700Z INFO lazy: transformers registered",
+    "scripts_cache": "2026-11-04T01:30:26.716985400Z INFO scripts cache transformer registered",
+    "preload_hit": null,
+    "preload_cold": "2026-11-04T01:30:36.845340100Z INFO scripts cache cold: key=ed4e838ce0bff7fbd598e353e6800eea, preloaded=0, in 1 ms"
+  },
+  "finished_at": "2026-11-04T09:32:48+0800"
+}

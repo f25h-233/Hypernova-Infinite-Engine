@@ -1,0 +1,40 @@
+{
+  "label": "b0-no-prepatcher-warm",
+  "root": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug",
+  "argfile": "../ctl-no-prepatcher.vmparams",
+  "smoke": {
+    "ok": false,
+    "reason": "menu-timeout",
+    "elapsed": 302.1074092388153
+  },
+  "stage": {
+    "log": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\starsector.log",
+    "log_bytes": 683511,
+    "log_lines": 4469,
+    "menu_anchor": null,
+    "menu_log_ms": null,
+    "fr_banner": null,
+    "java_version": null,
+    "file_cache": null,
+    "vopt": null,
+    "cif": null,
+    "prepatcher": null,
+    "prepatcher_patches": null,
+    "normal_map_count": 1562,
+    "normal_map_first": "265336 [Thread-4-FR-Main-Loader] INFO  org.dark.shaders.util.TextureData  - Auto-generated normal map for \"graphics/ships/sikr_shion.png\" at \"cache/sikr_shion___SHIP_normal.png\"",
+    "normal_map_last": "299905 [Thread-4-FR-Main-Loader] INFO  org.dark.shaders.util.TextureData  - Auto-generated normal map for \"graphics/ships/phase/ECE_diana.png\" at \"cache/ECE_diana___SHIP_normal.png\"",
+    "csv_last": null,
+    "errors": []
+  },
+  "agent": {
+    "log": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\saves\\hypernova\\scripts-agent.log",
+    "lazy_probe_last": "2026-11-04T01:23:55.750330900Z INFO lazy probe: summary queue=52022 wouldSkip=45225 lookups=36901 demand=10924 index=72847 types={TEXTURE_ALPHA_ADDER=1,TEXTURE=52021} queuedSkip=45225 demandQueued=7606 hits=7606 misses=0 degraded=0 skipped=45224 proxies=45224 materialized=6896 deferred=0 pending=0 drained=45224 reregistered=0 failed=0 disabled=0 main=none loading=Thread-4-FR-Main-Loader lateRegistered=0 lateLoaded=0 dimMismatch=0 dds=1 ddsHit=0 ddsFallback=6848 ddsFbMeta=6848 ddsFbBridge=0 ddsFbPath=0 ddsFbGet=0 ddsFbCheck=0 ddsFbCommit=0 ddsFbHandler=0 ddsFbNull=0 ddsFbShape=0 ddsFbCopy=0 ddsDisabled=0 ddsDimMismatch=0 eviction=1 evicted=0 evictedBytes=0 rematerialized=0 evictPasses=0 liveBytes=1981498872 startupBytes=1981498872 foreignBytes=0 evictableBytes=0 budgetBytes=268435456 emptyEvictPasses=0 evictPassMsTotal=0 evictPassMsMax=0 placeholder=0 oldIdDeleted=0 evictSkipped=0 deferredDeletes=0 selftest=0 failedParked=0 sceneUnload=0 scenePasses=0 sceneEvictions=0 sceneEvictMsTotal=0 sceneEvictMsMax=0 scenePending=0",
+    "premain": "2026-11-04T01:19:05.687706600Z INFO hypernova agent premain; config=ScriptCacheConfig[scriptsEnabled=true, cacheMaxBytes=2147483648, cacheGenerations=2, preloadMaxMillis=3000, verbose=false], cacheRoot=D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\saves\\hypernova\\scripts-cache",
+    "file_index": "2026-11-04T01:19:05.658516300Z INFO file index transformer registered",
+    "lazy": "2026-11-04T01:19:05.698026400Z INFO lazy: transformers registered",
+    "scripts_cache": "2026-11-04T01:19:05.731847200Z INFO scripts cache transformer registered",
+    "preload_hit": null,
+    "preload_cold": "2026-11-04T01:19:16.082749500Z INFO scripts cache cold: key=d62f2bb8c817840045956ad95b9eab47, preloaded=0, in 0 ms"
+  },
+  "finished_at": "2026-11-04T09:24:07+0800"
+}

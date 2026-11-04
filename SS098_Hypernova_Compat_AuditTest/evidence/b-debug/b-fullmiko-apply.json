@@ -1,0 +1,214 @@
+{
+  "applied": true,
+  "ok": true,
+  "root": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug",
+  "snapshot": {
+    "label": "m7-route-b-20261104-095420-314944",
+    "created": "2026-11-04T09:54:20+08:00",
+    "game_root": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug",
+    "files": [
+      {
+        "path": "mods/enabled_mods.json",
+        "sha256": "a420722cced9204abe587081667eb809ca3f2f6f6191bfca467dd511ec8da068",
+        "size": 5584
+      },
+      {
+        "path": "mods/hypernova_infinite_engine/data/config/hypernova/hypernova.json",
+        "sha256": "1f7dfc95653948e1ec10a52e2d7dbcae3f10868fface07b31d8d670a80ba336b",
+        "size": 402
+      },
+      {
+        "path": "starsector-core/data/config/settings.json",
+        "sha256": "96f3f6aa457e85ab6480bf302e35d3e8df390339321711b982d45fbe71c4dfa9",
+        "size": 103146
+      }
+    ],
+    "missing": [
+      "Miko_Lite.txt"
+    ]
+  },
+  "rollback": {
+    "dest": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\backups",
+    "label": "m7-route-b-20261104-095420-314944",
+    "manifest": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\backups\\m7-route-b-20261104-095420-314944\\route-rollback.json",
+    "entries": 24
+  },
+  "generated": [
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\route-b.vmparams",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\scripts\\launch-route-b.bat"
+  ],
+  "created_dirs": [],
+  "vmparams": "-Djava.library.path=native\\\\windows -Djava.util.Arrays.useLegacyMergeSort=true --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.nio.Buffer.UNSAFE=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.locks=ALL-UNNAMED --add-opens=java.base/jdk.internal.ref=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.lang.ref=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.desktop/java.awt.font=ALL-UNNAMED --add-opens=java.desktop/java.awt.Rectangle=ALL-UNNAMED --add-opens=java.desktop/java.awt=ALL-UNNAMED --add-exports=java.base/jdk.internal.ref=ALL-UNNAMED --add-exports=java.base/jdk.internal.misc=ALL-UNNAMED --add-exports=java.base/sun.nio.ch=ALL-UNNAMED -Dcom.fs.starfarer.settings.paths.saves=..\\\\saves -Dcom.fs.starfarer.settings.paths.screenshots=..\\\\screenshots -Dcom.fs.starfarer.settings.paths.mods=..\\\\mods -Dcom.fs.starfarer.settings.paths.logs=. -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -Xlog:async -Xlog:gc*:file=gc-miko.log:time,uptime,level,tags:filecount=3,filesize=20M -XX:+TieredCompilation -XX:TieredStopAtLevel=4 -XX:+UseCompactObjectHeaders -XX:+UseCompressedOops -XX:+HotCodeHeap -XX:+UseG1GC -XX:+UseStringDeduplication -XX:+AlwaysPreTouchStacks -XX:ReservedCodeCacheSize=512m -XX:-BytecodeVerificationLocal -XX:-BytecodeVerificationRemote -Dlog4j1.compatibility=true -DLog4jContextSelector=org.apache.logging.log4j.core.async.AsyncLoggerContextSelector -Dlog4j2.enableThreadlocals=true -Dlog4j2.enableDirectEncoders=true -Dlog4j2.garbagefreeThreadContextMap=true -Djava.util.Arrays.useLegacyMergeSort=true -Dsun.java2d.renderer.useRef=weak --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.locks=ALL-UNNAMED --add-opens=java.base/jdk.internal.ref=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.lang.ref=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.management/javax.management=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.desktop/java.awt.font=ALL-UNNAMED --add-opens=java.desktop/java.awt=ALL-UNNAMED --enable-native-access=ALL-UNNAMED --enable-final-field-mutation=ALL-UNNAMED -XX:+ShowCodeDetailsInExceptionMessages -XX:+ExtensiveErrorReports -XX:+ErrorLogSecondaryErrorDetails -XX:+PrintCommandLineFlags -Xlog:gc+init -Dsun.java2d.renderer.useLogger=true -Xss4m -Xms8G -Xmx10G -Dhypernova.textures.lazy=true -Dhypernova.textures.lazy.dds=true -Dhypernova.textures.lazy.eviction=true -Dhypernova.textures.lazy.eviction.sceneUnload=false -javaagent:../mods/hypernova_infinite_engine/jars/hypernova.agent.jar -javaagent:fr.agent.jar -javaagent:..\\mods\\StarsectorPrepatcher\\agent\\StarsectorPrepatcherAgent.jar -classpath fr.jar;janino.jar;commons-compiler.jar;commons-compiler-jdk.jar;starfarer.api.jar;starfarer_obf.jar;jogg-0.0.7.jar;jorbis-0.0.15.jar;json.jar;lwjgl.jar;jinput.jar;log4j-1.2.9.jar;lwjgl_util.jar;fs.sound_obf.jar;fs.common_obf.jar;xstream-1.4.10.jar;txw2-3.0.2.jar;jaxb-api-2.4.0-b180830.0359.jar;webp-imageio-0.1.6.jar;..\\mods\\ChineseInputFix\\lib\\jna-5.14.0.jar com.fs.starfarer.StarfarerLauncher",
+  "memory": {
+    "xms": "8G",
+    "xmx": "10G",
+    "overridden": true,
+    "source": "override"
+  },
+  "ddscache": {
+    "path": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\mods\\DDSCache",
+    "present": true,
+    "will_create": false,
+    "blocked": false
+  },
+  "lunalib_settings": {
+    "path": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\saves\\common\\LunaSettings",
+    "present": true,
+    "file_count": 259,
+    "unique_hashes": 74,
+    "suspicious": false,
+    "sample": []
+  },
+  "mikohime": {
+    "path": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\Miko_Lite.txt",
+    "profile": "full",
+    "adopted": [
+      "-XX:+UnlockDiagnosticVMOptions",
+      "-XX:+UnlockExperimentalVMOptions",
+      "-Xlog:async",
+      "-Xlog:gc*:file=gc-miko.log:time,uptime,level,tags:filecount=3,filesize=20M",
+      "-XX:+TieredCompilation",
+      "-XX:TieredStopAtLevel=4",
+      "-XX:+UseCompactObjectHeaders",
+      "-XX:+UseCompressedOops",
+      "-XX:+HotCodeHeap",
+      "-XX:+UseG1GC",
+      "-XX:+UseStringDeduplication",
+      "-XX:+AlwaysPreTouchStacks",
+      "-XX:ReservedCodeCacheSize=512m",
+      "-XX:-BytecodeVerificationLocal",
+      "-XX:-BytecodeVerificationRemote",
+      "-Dlog4j1.compatibility=true",
+      "-DLog4jContextSelector=org.apache.logging.log4j.core.async.AsyncLoggerContextSelector",
+      "-Dlog4j2.enableThreadlocals=true",
+      "-Dlog4j2.enableDirectEncoders=true",
+      "-Dlog4j2.garbagefreeThreadContextMap=true",
+      "-Djava.util.Arrays.useLegacyMergeSort=true",
+      "-Dsun.java2d.renderer.useRef=weak",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent.locks=ALL-UNNAMED",
+      "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.management/javax.management=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+      "--add-opens=java.base/java.text=ALL-UNNAMED",
+      "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED",
+      "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
+      "--enable-native-access=ALL-UNNAMED",
+      "--enable-final-field-mutation=ALL-UNNAMED",
+      "-XX:+ShowCodeDetailsInExceptionMessages",
+      "-XX:+ExtensiveErrorReports",
+      "-XX:+ErrorLogSecondaryErrorDetails",
+      "-XX:+PrintCommandLineFlags",
+      "-Xlog:gc+init",
+      "-Dsun.java2d.renderer.useLogger=true",
+      "-Xss4m",
+      "-Xms8192m",
+      "-Xmx10240m"
+    ],
+    "excluded_profile": [
+      "-XX:CompilerDirectivesFile=..\\\\mikohime/.rouge_owo",
+      "-Djava.library.path=\"..\\\\mikohime/windows\"",
+      "-Dlog4j.configuration=..\\\\mikohime/mikohime.properties",
+      "-Djava.xml.config.file=..\\\\mikohime/miko_jxp.properties",
+      "-Dcom.fs.starfarer.launcher_bg=..\\\\mikohime/launcher_bg.jpg"
+    ],
+    "excluded_java": [],
+    "filter_error": null,
+    "java_exe": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\jdk-28+13\\bin\\java.exe"
+  },
+  "cif": {
+    "expected_id": "ChineseInputFix",
+    "target": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\mods\\ChineseInputFix",
+    "target_present": true,
+    "source": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\mods\\ChineseInputFix",
+    "source_present": true,
+    "target_id": "ChineseInputFix",
+    "source_id": null,
+    "verified": true,
+    "need_copy": false,
+    "error": null
+  },
+  "root_vmparams_modified": false,
+  "copied": [
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\fr.agent.jar",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\fr.bat",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\fr.jar",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\fr.noterminal.bat",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\fr.readme.txt",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\fr.version.txt",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\fr.vmparams",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\FR_SS.ico",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\jdk-28+13",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\mods\\hypernova_infinite_engine\\mod_info.json",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\mods\\hypernova_infinite_engine\\jars\\hypernova.jar",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\mods\\hypernova_infinite_engine\\jars\\hypernova.agent.jar",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\mods\\hypernova_infinite_engine\\data",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\mods\\hypernova_infinite_engine\\graphics",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\graphics\\hypernova\\blank.png",
+    "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\mods\\StarsectorPrepatcher"
+  ],
+  "enabled_mods": {
+    "path": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\mods\\enabled_mods.json",
+    "added": [],
+    "count": 258
+  },
+  "manifest": {
+    "ok": true,
+    "out": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\mods\\hypernova_infinite_engine\\data\\config\\hypernova\\manifest-v1.json",
+    "critical": [],
+    "l1_count": 6518,
+    "l2_count": 18323,
+    "l3_count": 55102,
+    "skip_count": 72847
+  },
+  "agent": {
+    "returncode": 0,
+    "stdout": "installed: D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\mods\\hypernova_infinite_engine\\jars\\hypernova.agent.jar\ninstall: D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core\\fr.vmparams",
+    "stderr": "",
+    "cmd": [
+      "D:\\software\\python314\\python.exe",
+      "-I",
+      "D:\\github\\Hypernova-Infinite-Engine\\tools\\install_agent.py",
+      "--game",
+      "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug",
+      "--env",
+      "base",
+      "--jar",
+      "D:\\github\\Hypernova-Infinite-Engine\\build\\agent\\hypernova.agent.jar"
+    ]
+  },
+  "launcher": {
+    "kind": "explicit-java",
+    "java": "..\\jdk-28+13\\bin\\java.exe",
+    "java_target": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\jdk-28+13\\bin\\java.exe",
+    "bat": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\scripts\\launch-route-b.bat",
+    "bat_content": "@echo off\r\nsetlocal\r\nrem M7 Route B: explicit Java 28 launcher.\r\nrem starsector.exe always starts ..\\jre\\bin\\java.exe (JRE 17);\r\nrem this script is the only route B entry point.\r\ncd /d \"%~dp0..\\install\\optimized-b-debug\\starsector-core\"\r\n\"..\\jdk-28+13\\bin\\java.exe\" @..\\route-b.vmparams\r\n",
+    "cwd": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\starsector-core",
+    "argfile": "..\\route-b.vmparams",
+    "argfile_path": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\route-b.vmparams",
+    "command": "..\\jdk-28+13\\bin\\java.exe @..\\route-b.vmparams",
+    "note": "starsector.exe/fr.bat hardcode ..\\jre\\bin\\java.exe (JRE 17); this explicit launcher is the only Java 28 entry point"
+  },
+  "intended_java": {
+    "release": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\jdk-28+13\\release",
+    "java_exe": "D:\\github\\Hypernova-Infinite-Engine\\Starsector-098-260mods\\jdk-28+13\\bin\\java.exe",
+    "java_exe_present": true,
+    "java_version": "28",
+    "java_runtime_version": "28-beta+13-ea",
+    "implementor_version": "Temurin-28+13-202608271655",
+    "launcher_java": "..\\jdk-28+13\\bin\\java.exe",
+    "target": "D:\\github\\Hypernova-Infinite-Engine\\SS098_Hypernova_Compat_AuditTest\\install\\optimized-b-debug\\jdk-28+13\\bin\\java.exe"
+  },
+  "effective_java": {
+    "verified": false,
+    "java_version": null,
+    "evidence": null,
+    "note": "runtime JVM version is not proven; collect java -version or -Xlog evidence in smoke before claiming Java 28"
+  }
+}
