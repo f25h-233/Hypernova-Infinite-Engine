@@ -2,8 +2,7 @@
 
 > 审计日期：2026-11-03
 > 范围：汉化测试版 / ChineseInputFix / 字体 / UI / 纹理 mod 的兼容性与 manifest 正确性。
-> **M6 只验收单环境（Starsector-098-260mods，agent-only）。** MixinFR + JRE 17
-> 与 FR 0.9.7 + Java 28 的两套组合路线属于 M7，不在本文结论内。
+> **M6 只验收单环境（Starsector-098-260mods，agent-only）。**
 
 ## 1. 结论
 
@@ -218,11 +217,6 @@ manifest 审计读数：
 - A→B / stutter 用户验收仍未执行（继承 M4/M4.1 的 open 项），本文不作结论。
 - 本文的帧时间、内存、GPU 读数只是单次菜单观测，**不宣称显存收益、启动收益
   或性能改善**。
-- **M6 未验证组合路线**：MixinFR + JRE 17（路线 A）与 FR 0.9.7rc2 + Java 28
-  （路线 B）属于 M7；M7 计划已存在
-  （`docs/superpowers/plans/2026-11-03-m7-unified-stack.md`）。MixinFR 1.2.5
-  与 StarsectorParallel 0.1.0 已于 2026-11-03 17:07 收到
-  （`SS098_Hypernova_Compat_AuditTest/vendor/`），**M7 待启动**，尚未执行/收口。
 - 下一步：用户按 `docs/m6-manual-acceptance.md` 完成 A–E 组并回填本文件 §4；
   全部 pass（或失败项完成 no-Hypernova 对照并归因），且 M4/M4.1 的
-  A→B/stutter gate 与 M7 收口后，才进入 M5 的默认开启 canary 与发行决策。
+  A→B/stutter gate 完成后，才进入 M5 的默认开启 canary 与发行决策。

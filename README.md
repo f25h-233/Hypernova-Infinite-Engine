@@ -2,9 +2,11 @@
 
 Starsector 0.98a 的运行时纹理预取与兜底 mod，附带一个可选的启动期 Java agent。
 
-> **状态：pre-release（0.1.0）**
+> **版本：1.0.0（首个公开发行，2026-11-04）**
+>
 > 主 mod 的运行期路径默认开启；会改变加载/显存行为的实验路径默认关闭。
-> 公开发行按 M6 → M5 的路线推进，当前优先目标是“装了不会坏”。
+> 用户实机 gate（战役 / 战斗 / 读档 / 中文输入 / 字体视觉）仍 **pending**；
+> “到主菜单”不等于整套通过。不宣称 Hypernova 的显存/启动收益。
 
 ## 这是什么
 
@@ -36,13 +38,13 @@ Starsector 0.98a 的运行时纹理预取与兜底 mod，附带一个可选的�
 | 项 | 版本 / 说明 |
 |---|---|
 | Starsector | 0.98a-RC8 |
-| Java | 17+（游戏自带 JRE 17 可运行；JDK 28 为测试环境） |
-| Fast Rendering | 0.9.7rc2（软依赖；0.9.5 为回滚档） |
+| Java | 17+（游戏自带 JRE 17 可运行；JDK 28 已验证） |
+| Fast Rendering | 0.9.7rc2（软依赖；agent 的 file index / lazy 只支持 0.9.7 / 0.9.7rc2） |
 | VramOptimizer | 1.0.45（测试环境） |
 | GraphicsLib | 1.12.1（测试环境） |
 
-- 主 mod 不需要 FR；agent 的 file index / lazy textures 只在 **FR 0.9.7 / 0.9.7rc2** 上启用，其它版本 fail-open（不跳过、不代理），不会崩溃。
-- 汉化测试版 / ChineseInputFix / 字体 UI 的兼容性审计入口是 [`docs/m6-results.md`](docs/m6-results.md)；lazy / eviction / probe 默认仍为 off，用户实机 gate 见该文档 §4。
+- 主 mod 不需要 FR；其它 FR 版本下 agent 的 file index / lazy textures 会 fail-open（不跳过、不代理），不会崩溃。
+- 汉化测试版 / ChineseInputFix / 字体 UI 的兼容性审计见 [`docs/m6-results.md`](docs/m6-results.md)。
 - 本仓库**不包含** Starsector 游戏文件、汉化包或第三方 mod 文件。
 
 ## 安装
@@ -72,6 +74,14 @@ python tools/install_agent.py --game <游戏目录> --env <profile>
 
 > `-D` 参数必须写在 `com.fs.starfarer.StarfarerLauncher` **之前**；argfile 里主类之后的 token 是应用参数，不是 JVM 选项。
 
+## 构建与发行
+
+```bash
+bash tools/java/build-mod.sh
+```
+
+产物：`build/java/hypernova-1.0.0.zip`（含主 jar、agent jar、manifest、lazy-skip、README-install）。发行包固定使用 `Starsector-098-Base` 的 manifest；其它 mod 集在目标游戏目录就地生成。
+
 ## 回滚
 
 - 主 mod：`hypernova.json` 里把 `enabled` 设为 `false`，或从 Mod 管理里禁用。
@@ -81,7 +91,7 @@ python tools/install_agent.py --game <游戏目录> --env <profile>
 
 ## 工程状态
 
-按里程碑推进，每个里程碑有独立的结果文档。
+按里程碑推进，每个里程碑有独立的结果文档；内部 tag 为 `m0`…`m6`。
 
 | 里程碑 | 主题 |
 |---|---|
@@ -96,26 +106,31 @@ python tools/install_agent.py --game <游戏目录> --env <profile>
 | M2 | manifest 驱动（80,286 烘焙覆盖） |
 | M2.5–M2.8 | 懒加载 / DDS / LRU / 场景卸载（默认 off） |
 | M4 / M4.1 | 验收与发布硬化 / agent-side frame probe |
+| M6 | 汉化 / 中文输入 / 字体 / UI 兼容审计（260mods 单环境） |
 
 > 表里的数字是各里程碑在当时环境下的门禁结果，不代表所有 mod 集/硬件都能复现。
 
-最近一次全量验证（2026-11-03）：main 115/115、agent 211/210/1（1 个已知 Windows symlink 用例跳过）；测试与兼容审计结果见 [`docs/m6-results.md`](docs/m6-results.md)。
+最近一次全量验证（2026-11-04）：main 115/115、agent 211/210/1（1 个已知 Windows symlink 用例跳过）、pytest 492。
+
+## 版本策略
+
+- `1.0.0`：首个公开发行。
+- `1.0.x`：修复、兼容性、文档；不改默认行为。
+- `1.x.0`：新的用户可见能力或默认值变更（例如 M5 default-on canary）。
+- `2.0.0`：破坏性变更（配置 schema、存档兼容、默认行为翻转导致结果不同）。
+- 内部里程碑继续用 `m0`…`m6` tag 记录，不映射到公开版本号。
 
 ## 文档
 
-- [M6 兼容性审计结果](docs/m6-results.md)
+- [M6 兼容性审计](docs/m6-results.md)
 - [M6 手动验收](docs/m6-manual-acceptance.md)
-- [M7 统一部署包结果](docs/m7-results.md)
-- [M7 单变量对照](docs/m7-isolation.md)
-- [M7 玩家教程](docs/m7-player-guide.md)
-- [M7 兼容矩阵](docs/m7-stack-matrix.md)
 
 ## 第三方
 
-本仓库不重新分发任何 mod ，汉化包，游戏本体。详见 [`NOTICE`](NOTICE)。
+本仓库不重新分发任何 mod、汉化包、游戏本体。详见 [`NOTICE`](NOTICE)。
 
 ## License
 
 - 代码（Java / Python / 脚本）：**Apache-2.0**，见 [`LICENSE`](LICENSE)。
-- 公开文档（`docs/m6-*`、`docs/m7-*`）：**CC BY 4.0**（署名即可转载/引用）。
+- 公开文档（`docs/m6-*`）：**CC BY 4.0**（署名即可转载/引用）。
 - 第三方组件：各自原许可证，见 [`NOTICE`](NOTICE)。

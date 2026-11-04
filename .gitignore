@@ -60,14 +60,9 @@ SS098_Hypernova_Compat_AuditTest/**/logs/
 SS098_Hypernova_Compat_AuditTest/**/*.csv
 SS098_Hypernova_Compat_AuditTest/**/*.dump
 
-# ---- M7 统一部署包：实验安装与第三方工件永不入库 ----
+# ---- 本地审计工作区的大件产物（不入库）----
 SS098_Hypernova_Compat_AuditTest/install/
 SS098_Hypernova_Compat_AuditTest/vendor/
-# route-* --apply 生成的启动器，不是仓库预置文件
-SS098_Hypernova_Compat_AuditTest/scripts/launch-route-a.bat
-SS098_Hypernova_Compat_AuditTest/scripts/launch-route-b.bat
-
-# M7 运行证据：大日志/备份/测试生成物不入库（本地保留）
 SS098_Hypernova_Compat_AuditTest/evidence/**/*.log.*
 SS098_Hypernova_Compat_AuditTest/evidence/**/core-jar-backup/
 SS098_Hypernova_Compat_AuditTest/evidence/**/manifest-test*/

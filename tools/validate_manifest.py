@@ -26,8 +26,8 @@ class Finding:
 def _inside_root(path: Path, root: Path) -> bool:
     """Lexical containment check.
 
-    Do not use ``Path.resolve()`` here: M7 migrates mods with Windows
-    junctions, and ``resolve()`` follows a junction to its real target under
+    Do not use ``Path.resolve()`` here: Windows junction-based installs are
+    supported, and ``resolve()`` follows a junction to its real target under
     ``Starsector-098-260mods``.  That made every junction-backed asset look
     like it escaped the experimental game root.  The manifest records the
     lexical in-root path; containment must be decided the same way.

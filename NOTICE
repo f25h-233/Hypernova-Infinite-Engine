@@ -17,12 +17,6 @@ Third-party components referenced at runtime or in documentation:
   Hypernova's normal-map cache interacts with GraphicsLib 1.12.1's
   org.dark.shaders.util.TextureData; GraphicsLib is not bundled here.
 
-- MixinLib / MixinFR — Alphard Paarthurnax / GerBeria — GPL-3.0
-  Runtime coexistence only; MixinFR/MixinLib binaries are not redistributed.
-
-- StarsectorParallel — GerBeria — MIT
-  Runtime coexistence only; not redistributed.
-
 - VramOptimizer — DeCEll-1 — see upstream release for license terms
   Runtime coexistence only; not redistributed.
 

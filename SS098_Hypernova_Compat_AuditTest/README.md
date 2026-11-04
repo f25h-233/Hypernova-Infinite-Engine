@@ -14,7 +14,7 @@
 | `mods/` | 测试 mod 副本/链接 | 否 |
 | `vmparams/` | 审计专用启动档副本 | 否 |
 | `backups/` | `m6_env_snapshot.py` 生成的快照 | 否 |
-| `install/`、`vendor/` | M7 实验安装与第三方工件 | 否 |
+| `install/`、`vendor/` | 本地实验安装与第三方工件 | 否 |
 
 口径：`m6_session.py` 的会话产物在 `<audit-root>/<label>/`，不是
 `evidence/<label>/`；`evidence/` 只放自动审计摘要。

@@ -11,16 +11,26 @@ ROOT_W="$(winpath "$ROOT")"
 # 任意失败（含参数校验、agent 构建/新鲜度失败与显式 exit 1）都清掉 zip，
 # 避免发布路径上残留上一次成功构建的包；INT/TERM 转成非零退出以触发清理。
 OUT="$ROOT_W/build/java"
+VERSION="$(python -I - "$ROOT_W/mod_info.json" <<'PY'
+import json, sys
+v = json.load(open(sys.argv[1], encoding="utf-8"))["version"]
+if isinstance(v, dict):
+    print(f"{v['major']}.{v['minor']}.{v['patch']}")
+else:
+    print(v)
+PY
+)"
+ZIP="$OUT/hypernova-$VERSION.zip"
 cleanup_failed_zip() {
   status=$?
   if [ "$status" -ne 0 ]; then
-    rm -f "$OUT/hypernova-0.1.0.zip"
+    rm -f "$ZIP"
   fi
 }
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap cleanup_failed_zip EXIT
-rm -f "$OUT/hypernova-0.1.0.zip"
+rm -f "$ZIP"
 # 发行包固定使用 Base manifest；旧的 --env 参数已失去意义，显式拒绝以免误以为能打 260mods 包。
 if [ "$#" -gt 0 ]; then
   echo "FATAL: build-mod.sh 不再接受参数（发行包固定使用 Starsector-098-Base 的 M2 manifest）" >&2
@@ -82,32 +92,32 @@ if [ ! -s "$MODDIR/data/config/hypernova/manifest-v1.json" ]; then
   echo "FATAL: 打包目录缺少 data/config/hypernova/manifest-v1.json" >&2
   exit 1
 fi
-rm -f "$OUT/hypernova-0.1.0.zip"
-(cd "$OUT" && jar --create --file hypernova-0.1.0.zip -C hypernova-mod .)
-if ! (cd "$OUT" && jar --list --file hypernova-0.1.0.zip) \
+rm -f "$OUT/hypernova-$VERSION.zip"
+(cd "$OUT" && jar --create --file hypernova-$VERSION.zip -C hypernova-mod .)
+if ! (cd "$OUT" && jar --list --file hypernova-$VERSION.zip) \
     | grep -qx 'data/config/hypernova/manifest-v1.json'; then
-  echo "FATAL: hypernova-0.1.0.zip 内缺少 data/config/hypernova/manifest-v1.json" >&2
+  echo "FATAL: hypernova-$VERSION.zip 内缺少 data/config/hypernova/manifest-v1.json" >&2
   exit 1
 fi
-if ! (cd "$OUT" && jar --list --file hypernova-0.1.0.zip) \
+if ! (cd "$OUT" && jar --list --file hypernova-$VERSION.zip) \
     | grep -qx 'data/config/hypernova/lazy-skip-v1.txt'; then
   echo "FATAL: zip 缺少 data/config/hypernova/lazy-skip-v1.txt" >&2
   exit 1
 fi
-if ! (cd "$OUT" && jar --list --file hypernova-0.1.0.zip) \
+if ! (cd "$OUT" && jar --list --file hypernova-$VERSION.zip) \
     | grep -qx 'graphics/hypernova/blank.png'; then
   echo "FATAL: zip 缺少 graphics/hypernova/blank.png" >&2
   exit 1
 fi
 if [ -f "$MODDIR/jars/hypernova.agent.jar" ]; then
-  (cd "$OUT" && jar --list --file hypernova-0.1.0.zip) \
+  (cd "$OUT" && jar --list --file hypernova-$VERSION.zip) \
     | grep -qx 'jars/hypernova.agent.jar' \
     || { echo "FATAL: zip 缺少 jars/hypernova.agent.jar" >&2; exit 1; }
 fi
 # M2.7 W5/W6：发行包门禁（README/manifest/skip generation/宿主 v2 路径/agent 一致性/新鲜度）。
-python -I "$ROOT_W/tools/release_check.py" --zip "$OUT/hypernova-0.1.0.zip" \
+python -I "$ROOT_W/tools/release_check.py" --zip "$OUT/hypernova-$VERSION.zip" \
   --agent-jar "$AGENT_JAR" --main-jar "$OUT/hypernova.jar" \
   --sources "$ROOT_W/src/agent/java"
 echo "OK: $MANIFEST_DIST (dist artifact, not tracked)"
 echo "OK: $ROOT/build/java/hypernova-mod"
-echo "OK: $ROOT/build/java/hypernova-0.1.0.zip"
+echo "OK: $ROOT/build/java/hypernova-$VERSION.zip"

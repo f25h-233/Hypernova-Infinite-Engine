@@ -449,7 +449,7 @@ def test_duplicate_mod_summary_is_case_insensitive(mini_game):
 
 @pytest.mark.skipif(os.name != "nt", reason="junctions are Windows-only")
 def test_junction_inside_root_is_not_outside(mini_game, tmp_path):
-    """M7 --link uses junctions; lexical in-root paths must not be Critical.
+    """``--link`` uses junctions; lexical in-root paths must not be Critical.
 
     ``Path.resolve()`` follows a junction to its real target under the source
     install, which made every junction-backed asset look outside the game root.

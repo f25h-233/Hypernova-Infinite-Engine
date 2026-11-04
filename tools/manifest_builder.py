@@ -43,9 +43,10 @@ def _folder_path(game_root: Path, folder: str) -> Path:
 def _lexical_abs(path: Path | str) -> Path:
     """Absolute path without following junctions/symlinks.
 
-    M7 migrates mods with junctions. ``Path.resolve()`` would follow a
-    junction into the source install and put a path outside the experimental
-    game root into ``absolutePath``, which then fails manifest validation.
+    Windows junction-based installs (e.g. ``--link``) are supported.
+    ``Path.resolve()`` would follow a junction into the source install and put
+    a path outside the experimental game root into ``absolutePath``, which then
+    fails manifest validation.
     """
     return Path(os.path.abspath(os.fspath(path)))
 
