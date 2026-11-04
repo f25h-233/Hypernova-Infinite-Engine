@@ -112,11 +112,10 @@ python tools/install_agent.py --game <游戏目录> --env <profile>
 
 ## 第三方
 
-本仓库不重新分发 Fast Rendering、MixinFR/MixinLib、StarsectorParallel、VramOptimizer、GraphicsLib、Prepatcher 或汉化包。兼容性验证使用其各自发布方的版本；请从原发布方获取并遵守各自许可证。详见 [`NOTICE`](NOTICE)。
+本仓库不重新分发任何 mod ，汉化包，游戏本体。详见 [`NOTICE`](NOTICE)。
 
 ## License
 
 - 代码（Java / Python / 脚本）：**Apache-2.0**，见 [`LICENSE`](LICENSE)。
 - 公开文档（`docs/m6-*`、`docs/m7-*`）：**CC BY 4.0**（署名即可转载/引用）。
 - 第三方组件：各自原许可证，见 [`NOTICE`](NOTICE)。
-- 内部研究笔记、反编译资料、混淆映射与补丁二进制不随本仓库公开。
