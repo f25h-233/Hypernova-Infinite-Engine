@@ -73,3 +73,7 @@ SS098_Hypernova_Compat_AuditTest/evidence/**/core-jar-backup/
 SS098_Hypernova_Compat_AuditTest/evidence/**/manifest-test*/
 SS098_Hypernova_Compat_AuditTest/evidence/**/lazy-skip-*.txt
 SS098_Hypernova_Compat_AuditTest/evidence/**/manifest-v1.json
+
+# 审计运行证据整体不入库（已跟踪的历史证据保留）
+SS098_Hypernova_Compat_AuditTest/evidence/
+SS098_Hypernova_Compat_AuditTest/menu-smoke/

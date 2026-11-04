@@ -101,16 +101,22 @@ python tools/install_agent.py --game <游戏目录> --env <profile>
 
 最近一次全量验证（2026-11-03）：main 115/115、agent 211/210/1（1 个已知 Windows symlink 用例跳过）；测试与兼容审计结果见 [`docs/m6-results.md`](docs/m6-results.md)。
 
-完整实测记录在 `docs/`；规格与裁决在 [`技术笔记-纹理按需加载.md`](技术笔记-纹理按需加载.md)。
-
 ## 文档
 
-- [技术笔记 / 规格](技术笔记-纹理按需加载.md)
-- [M4 结果](docs/m4-results.md)
-- [M4 手动验收](docs/m4-manual-acceptance.md)
-- [M2.7 结果](docs/m27-results.md)
-- [M2.8 结果](docs/m28-results.md)
+- [M6 兼容性审计结果](docs/m6-results.md)
+- [M6 手动验收](docs/m6-manual-acceptance.md)
+- [M7 统一部署包结果](docs/m7-results.md)
+- [M7 单变量对照](docs/m7-isolation.md)
+- [M7 玩家教程](docs/m7-player-guide.md)
+- [M7 兼容矩阵](docs/m7-stack-matrix.md)
 
 ## 第三方
 
-本仓库不重新分发 Fast Rendering、VramOptimizer、GraphicsLib 或汉化包。兼容性验证使用其各自发布方的版本；请从原发布方获取并遵守各自许可证。
+本仓库不重新分发 Fast Rendering、MixinFR/MixinLib、StarsectorParallel、VramOptimizer、GraphicsLib、Prepatcher 或汉化包。兼容性验证使用其各自发布方的版本；请从原发布方获取并遵守各自许可证。详见 [`NOTICE`](NOTICE)。
+
+## License
+
+- 代码（Java / Python / 脚本）：**Apache-2.0**，见 [`LICENSE`](LICENSE)。
+- 公开文档（`docs/m6-*`、`docs/m7-*`）：**CC BY 4.0**（署名即可转载/引用）。
+- 第三方组件：各自原许可证，见 [`NOTICE`](NOTICE)。
+- 内部研究笔记、反编译资料、混淆映射与补丁二进制不随本仓库公开。

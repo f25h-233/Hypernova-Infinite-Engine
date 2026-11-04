@@ -1,0 +1,35 @@
+Hypernova Infinite Engine
+Copyright 2026 f25h-233
+
+This product includes or interoperates with software developed by third
+parties. The Hypernova source code is licensed under Apache-2.0 (see LICENSE);
+the third-party components below remain under their own licenses. No
+third-party source code, binary, or game asset is redistributed in this
+repository unless explicitly noted.
+
+Third-party components referenced at runtime or in documentation:
+
+- Fast Rendering (FR) — genir — The Unlicense / public domain
+  https://github.com/Halke1986/starsector-render
+
+- GraphicsLib — Dark.Revenant — CC BY 4.0
+  https://fractalsoftworks.com/forum/ (GraphicsLib thread)
+  Hypernova's normal-map cache interacts with GraphicsLib 1.12.1's
+  org.dark.shaders.util.TextureData; GraphicsLib is not bundled here.
+
+- MixinLib / MixinFR — Alphard Paarthurnax / GerBeria — GPL-3.0
+  Runtime coexistence only; MixinFR/MixinLib binaries are not redistributed.
+
+- StarsectorParallel — GerBeria — MIT
+  Runtime coexistence only; not redistributed.
+
+- VramOptimizer — DeCEll-1 — see upstream release for license terms
+  Runtime coexistence only; not redistributed.
+
+- Starsector and its assets are property of Fractal Softworks.
+  This repository does not redistribute game code, decompiled code,
+  game data, or game assets.
+
+If you redistribute a build that bundles any of the above third-party
+components, you are responsible for complying with that component's license
+and for including its notices.
