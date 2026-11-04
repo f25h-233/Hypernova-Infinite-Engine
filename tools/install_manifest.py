@@ -11,8 +11,11 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import sys
-from dataclasses import dataclass
+import threading
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # `python -I` 不会把脚本目录加入 sys.path；工具内部自行补上。
@@ -28,6 +31,86 @@ DEFAULT_REL = Path(
 )
 
 
+class _Swimmer:
+    """生成期间在终端最后一行游来游去的鱼。
+
+    只在 stdout 是终端时启用：进度输出经常被 `| tail`、构建脚本或测试捕获，
+    那里塞 \r 会污染日志。全部用 ASCII 字符，避免玩家控制台代码页不是 UTF-8
+    时编码炸掉。
+    """
+
+    FISH_RIGHT = "><(((o>"
+    FISH_LEFT = "<o)))><"
+    WATER = "~"
+    TICK = 0.12
+
+    def __init__(self, width: int = 54, stream=None, enabled: bool | None = None):
+        self.stream = stream if stream is not None else sys.stdout
+        self.enabled = self.stream.isatty() if enabled is None else enabled
+        if self.enabled:
+            # 窗口太窄时鱼会折行，把水面缩到窗口宽度以内。
+            try:
+                columns = shutil.get_terminal_size().columns
+                width = max(12, min(width, columns - 1))
+            except OSError:
+                pass
+        self.width = width
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._pos = 0
+        self._dir = 1
+        self._drawn = False
+        self._span = max(1, width - len(self.FISH_RIGHT))
+
+    def start(self) -> None:
+        if not self.enabled:
+            return
+        self._thread = threading.Thread(target=self._run, name="hn-fish", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        if not self.enabled:
+            return
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        with self._lock:
+            self._erase()
+
+    def message(self, text: str) -> None:
+        """打印一行真正的输出；先把鱼擦掉，免得两行糊在一起。"""
+        with self._lock:
+            self._erase()
+            self.stream.write(text + "\n")
+            self.stream.flush()
+
+    def _erase(self) -> None:
+        if not self._drawn:
+            return
+        self.stream.write("\r" + " " * (self.width + 2) + "\r")
+        self.stream.flush()
+        self._drawn = False
+
+    def _frame(self) -> str:
+        fish = self.FISH_RIGHT if self._dir > 0 else self.FISH_LEFT
+        return self.WATER * self._pos + fish + self.WATER * (self._span - self._pos)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.TICK):
+            with self._lock:
+                self.stream.write("\r" + self._frame())
+                self.stream.flush()
+                self._drawn = True
+            self._pos += self._dir
+            if self._pos >= self._span:
+                self._pos = self._span
+                self._dir = -1
+            elif self._pos <= 0:
+                self._pos = 0
+                self._dir = 1
+
+
 @dataclass(frozen=True)
 class InstallResult:
     full: dict
@@ -38,6 +121,7 @@ class InstallResult:
     skip_count: int = 0
     skip_v2_file: Path | None = None
     skip_v2_count: int = 0
+    warnings: list[str] = field(default_factory=list)
 
 
 def install(
@@ -49,7 +133,12 @@ def install(
     include_core: bool = True,
     include_l2: bool = True,
     max_l1: int = 8000,
+    progress=None,
 ) -> InstallResult:
+    def note(msg: str) -> None:
+        if progress is not None:
+            progress(msg)
+
     root = Path(game_root).resolve()
     target = Path(out) if out is not None else root / DEFAULT_REL
     built = build_manifest(
@@ -58,7 +147,9 @@ def install(
         include_core=include_core,
         include_l2=include_l2,
         tier_overrides=tiers or {},
+        progress=progress,
     )
+    note("校验清单")
     findings = validate(built.manifest, root, max_l1=max_l1)
     critical = any(f.severity == "Critical" for f in findings)
     runtime: dict = {}
@@ -67,6 +158,7 @@ def install(
     skip_v2_file: Path | None = None
     skip_v2_count = 0
     if not critical:
+        note("裁剪清单并写盘")
         runtime = trim(built.manifest)
         target.parent.mkdir(parents=True, exist_ok=True)
         skip_target = target.parent / "lazy-skip-v1.txt"
@@ -111,6 +203,7 @@ def install(
         skip_count=skip_count,
         skip_v2_file=skip_v2_file,
         skip_v2_count=skip_v2_count,
+        warnings=list(built.warnings),
     )
 
 
@@ -127,15 +220,43 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-l1", type=int, default=8000)
     args = parser.parse_args(argv)
     tiers = load_tier_overrides(args.tiers) if args.tiers else {}
-    result = install(
-        args.game_root,
-        out=args.out,
-        tiers=tiers,
-        scope=args.scope,
-        include_core=not args.no_core,
-        include_l2=not args.no_l2,
-        max_l1=args.max_l1,
-    )
+    started = time.monotonic()
+    state = {"msg": "准备"}
+    fish = _Swimmer()
+
+    def progress(msg: str) -> None:
+        # 所有输出都走 fish.message：它持锁并先擦掉鱼，免得两行糊在一起。
+        state["msg"] = msg
+        fish.message(f"  [{time.monotonic() - started:5.1f}s] {msg}")
+
+    # 心跳：某一个阶段（比如解析几万张贴图）可能要跑几十秒，期间没有回调，
+    # 窗口看起来像卡死。每 10 秒补一行"还在干活"，让人知道不是死了。
+    stop_beat = threading.Event()
+
+    def heartbeat() -> None:
+        while not stop_beat.wait(10.0):
+            fish.message(
+                f"  [{time.monotonic() - started:5.1f}s] 仍在处理：{state['msg']}"
+            )
+
+    beat = threading.Thread(target=heartbeat, daemon=True)
+    fish.start()
+    beat.start()
+
+    try:
+        result = install(
+            args.game_root,
+            out=args.out,
+            tiers=tiers,
+            scope=args.scope,
+            include_core=not args.no_core,
+            include_l2=not args.no_l2,
+            max_l1=args.max_l1,
+            progress=progress,
+        )
+    finally:
+        stop_beat.set()
+        fish.stop()
     stats = result.full["stats"]
     print(
         "full: L1={l1} L2={l2} L3={l3} baked={baked}/{expected} "
@@ -148,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
             unresolved=stats["unresolved_baked_count"],
         )
     )
+    for warning in result.warnings:
+        print(f"[注意] {warning}")
     for finding in result.findings:
         print(f"[{finding.severity}] {finding.code}: {finding.message}")
     if any(f.severity == "Critical" for f in result.findings):
@@ -156,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"installed: {result.out}")
     print(f"skip={result.skip_count} skip_file={result.skip_file}")
     print(f"skip_v2={result.skip_v2_count} skip_v2_file={result.skip_v2_file}")
+    print(f"耗时: {time.monotonic() - started:.1f} 秒")
     return 0
 
 

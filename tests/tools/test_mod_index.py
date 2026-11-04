@@ -235,3 +235,37 @@ def test_metadata_resolve_core_normalizes_real_modid_input(mini_game):
     assert hit is not None
     assert hit.mod_folder == "old_core"
     assert hit.mod_id == "core"
+
+
+def _seed_mod(root, mid):
+    d = root / "mods" / mid
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "mod_info.json").write_text('{"id": "%s"}' % mid, encoding="utf-8")
+    return d
+
+
+def test_missing_enabled_list_returns_none(tmp_path):
+    root = tmp_path / "game"
+    _seed_mod(root, "mod_a")
+    assert load_enabled_ids(root) is None
+
+
+def test_missing_enabled_list_scans_every_mod(tmp_path):
+    root = tmp_path / "game"
+    _seed_mod(root, "mod_b")
+    _seed_mod(root, "mod_a")
+    scan = scan_mods(root, None, include_core=False)
+    assert [m.mod_id for m in scan.mods] == ["mod_a", "mod_b"]
+    assert scan.enabled_list_missing is True
+
+
+def test_enabled_list_falls_back_to_starsector_core_config(tmp_path):
+    root = tmp_path / "game"
+    _seed_mod(root, "mod_a")
+    cfg = root / "starsector-core" / "data" / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "enabled_mods.json").write_text(
+        '{"enabledMods": ["mod_a"]}', encoding="utf-8")
+    assert load_enabled_ids(root) == ["mod_a"]
+    scan = scan_mods(root, load_enabled_ids(root), include_core=False)
+    assert scan.enabled_list_missing is False

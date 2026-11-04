@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import json as _json
 import re
 from pathlib import Path
 
@@ -208,8 +209,23 @@ class _Parser:
         return token
 
 
+def _reject_constant(name: str):
+    # 标准库默认接受 NaN/Infinity，方言解析器不接受。拒绝掉，交给回退路径，
+    # 保证两条路径对同一份文本给出同样的结果。
+    raise ValueError(f"non-standard constant: {name}")
+
+
 def loads(text: str):
-    return _Parser(text).parse()
+    """先走标准库的快路径（C 实现），失败再回退到方言解析器。
+
+    260mods 实测（48k 个 JSON）里方言解析器占了 73 s/95 s，而绝大多数文件其实是
+    标准 JSON；标准库解析同样的文本快一个数量级。方言（注释、尾逗号、单引号、
+    十六进制、裸标识符）会让快路径抛 ValueError，此时回退，行为与以前一致。
+    """
+    try:
+        return _json.loads(text, parse_constant=_reject_constant)
+    except (ValueError, RecursionError):
+        return _Parser(text).parse()
 
 
 def load(path: str | Path):

@@ -44,6 +44,8 @@ class ModScan:
     missing_ids: list[str] = field(default_factory=list)
     duplicate_ids: dict[str, list[str]] = field(default_factory=dict)
     parse_errors: dict[str, str] = field(default_factory=dict)
+    # 没有 enabled_mods.json 时的降级标记：上层要如实告诉用户「这次是按全部 mod 算的」。
+    enabled_list_missing: bool = False
 
 
 @dataclass
@@ -123,15 +125,30 @@ def _norm_rel(rel: str) -> str:
     return out
 
 
-def load_enabled_ids(game_root: Path) -> list[str]:
-    data = load(game_root / "mods" / "enabled_mods.json")
-    ids = data.get("enabledMods") if isinstance(data, dict) else None
-    if not isinstance(ids, list):
-        raise ValueError("enabled_mods.json has no enabledMods list")
-    return [str(x) for x in ids]
+def load_enabled_ids(game_root: Path) -> list[str] | None:
+    """读启用列表；找不到返回 None，由调用方按「目录里所有 mod 都算启用」降级。
+
+    0.98 正常写在 mods/enabled_mods.json。但玩家的安装不一定有：用第三方 mod
+    管理器、自定义启动脚本，或者在官方启动器里从没保存过选择，都可能没有这个
+    文件。以前这里直接 open() 崩掉，线上已经有玩家撞上了。
+    """
+    for rel in (
+        Path("mods") / "enabled_mods.json",
+        Path("starsector-core") / "data" / "config" / "enabled_mods.json",
+    ):
+        path = game_root / rel
+        if not path.is_file():
+            continue
+        data = load(path)
+        ids = data.get("enabledMods") if isinstance(data, dict) else None
+        if not isinstance(ids, list):
+            raise ValueError(f"{path} 里没有 enabledMods 列表")
+        return [str(x) for x in ids]
+    return None
 
 
-def scan_mods(game_root: Path, enabled_ids: list[str], include_core: bool = True) -> ModScan:
+def scan_mods(game_root: Path, enabled_ids: list[str] | None,
+              include_core: bool = True) -> ModScan:
     mods_dir = game_root / "mods"
     by_id: dict[str, list[Path]] = {}
     parse_errors: dict[str, str] = {}
@@ -155,16 +172,25 @@ def scan_mods(game_root: Path, enabled_ids: list[str], include_core: bool = True
         mid: sorted(p.name for p in paths) for mid, paths in by_id.items() if len(paths) > 1
     }
     scan = ModScan(duplicate_ids=duplicate_ids, parse_errors=parse_errors)
-    for order, mid in enumerate(enabled_ids):
-        folders = by_id.get(mid)
-        if not folders:
-            scan.missing_ids.append(mid)
-            continue
-        scan.mods.append(ModRef(mid, sorted(folders)[0], order))
+    if enabled_ids is None:
+        # 没有启用列表：把目录里能找到的 mod 全算上。多算几个只会让清单偏大，
+        # 不会影响游戏；漏算才会让主 mod 白装。
+        scan.enabled_list_missing = True
+        ordered = sorted(by_id)
+        for order, mid in enumerate(ordered):
+            scan.mods.append(ModRef(mid, sorted(by_id[mid])[0], order))
+    else:
+        for order, mid in enumerate(enabled_ids):
+            folders = by_id.get(mid)
+            if not folders:
+                scan.missing_ids.append(mid)
+                continue
+            scan.mods.append(ModRef(mid, sorted(folders)[0], order))
     if include_core:
         core = game_root / CORE_FOLDER
         if core.is_dir():
-            scan.mods.append(ModRef("core", core, len(enabled_ids), True))
+            core_order = len(enabled_ids) if enabled_ids is not None else len(scan.mods)
+            scan.mods.append(ModRef("core", core, core_order, True))
     return scan
 
 

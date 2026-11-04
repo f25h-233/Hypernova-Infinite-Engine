@@ -246,10 +246,23 @@ def build_manifest(
     include_l2: bool = True,
     variant_limit: int = 0,
     tier_overrides: dict[str, str] | None = None,
+    progress=None,
 ) -> BuildResult:
+    """progress: 可选回调，签名 (str) -> None，用于给玩家侧显示进度。"""
+
+    def note(msg: str) -> None:
+        if progress is not None:
+            progress(msg)
+
     root = Path(game_root).resolve()
+    note("扫描 mod 目录")
     enabled = load_enabled_ids(root)
     scan = scan_mods(root, enabled, include_core=include_core)
+    if enabled is None:
+        # 没有启用列表：按扫到的全部 mod 往下走，别在这里崩。
+        enabled = [m.mod_id for m in scan.mods if not m.is_core]
+        note("没找到启用列表，按 mods 目录里全部 mod 生成")
+    note(f"读取舰船/武器定义（{len(scan.mods)} 个 mod）")
     lookup = build_lookup(scan.mods)
     title = read_title_variants(scan.mods)
     metadata = read_dds_metadata(root)
@@ -356,7 +369,12 @@ def build_manifest(
         (me.mod_id.casefold(), me.rel.casefold())
         for me in scope_meta + core_meta
     }
-    for asset in scope_images + core_images:
+    all_images = scope_images + core_images
+    probe_total = len(all_images)
+    note(f"解析贴图头（{probe_total} 张）")
+    for probe_index, asset in enumerate(all_images):
+        if progress is not None and probe_index and probe_index % 2000 == 0:
+            progress(f"解析贴图头 {probe_index}/{probe_total}")
         key = (asset.mod_id.casefold(), asset.rel.casefold())
         if key in meta_keys or asset.rel.casefold() in seen_paths:
             continue
@@ -540,6 +558,11 @@ def build_manifest(
         },
     }
     warnings = []
+    if scan.enabled_list_missing:
+        warnings.append(
+            "没有找到 enabled_mods.json，已按 mods 目录下全部 mod 生成"
+            "（清单会偏大；如果你只想算启用的那些，先在启动器里保存一次 mod 选择）"
+        )
     if scan.missing_ids:
         warnings.append(f"missing mods: {scan.missing_ids}")
     if scan.duplicate_ids:

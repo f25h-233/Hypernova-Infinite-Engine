@@ -195,3 +195,19 @@ def test_critical_install_does_not_write_skip_file(mini_game):
     assert result.skip_count == 0
     assert result.skip_v2_file is None
     assert result.skip_v2_count == 0
+
+
+def test_install_without_enabled_list_falls_back_and_warns(tmp_path):
+    """玩家没有 mods/enabled_mods.json 时不能崩：按全目录生成并给出提示。"""
+    from test_manifest_builder import _png
+
+    game = tmp_path / "game"
+    _seed_core(game)
+    mod = game / "mods" / "mod_a"
+    (mod / "graphics").mkdir(parents=True)
+    (mod / "mod_info.json").write_text('{"id": "mod_a"}', encoding="utf-8")
+    (mod / "graphics" / "ship.png").write_bytes(_png(2, 2))
+
+    result = install(game)
+    assert result.out.is_file()
+    assert any("enabled_mods.json" in w for w in result.warnings)

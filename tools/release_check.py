@@ -9,6 +9,9 @@ import sys
 import zipfile
 from pathlib import Path
 
+MOD_FOLDER = "hypernova_infinite_engine"
+PREFIX = MOD_FOLDER + "/"
+
 REQUIRED = (
     "mod_info.json",
     "README-install.txt",
@@ -19,6 +22,30 @@ REQUIRED = (
     "jars/hypernova.jar",
 )
 FORBIDDEN = ("data/config/hypernova/lazy-skip-v2.txt",)
+# 发行包内的 manifest 只覆盖 Base 纹理集，装了其它 mod 的玩家必须就地重新生成，
+# 所以生成脚本是发行包的一部分，缺了就等于主 mod 对目标用户无效。
+TOOL_FILES = (
+    "hypernova-tools/generate-manifest.bat",
+    "hypernova-tools/generate-manifest.sh",
+    "hypernova-tools/install-agent.bat",
+    "hypernova-tools/rollback-agent.bat",
+    "hypernova-tools/manage_agent.py",
+    "hypernova-tools/run_manifest.py",
+    "hypernova-tools/run_agent.py",
+    "hypernova-tools/README-tools.txt",
+    "hypernova-tools/install_manifest.py",
+    "hypernova-tools/manifest_builder.py",
+    "hypernova-tools/gen_lazy_skip.py",
+    "hypernova-tools/trim_manifest.py",
+    "hypernova-tools/validate_manifest.py",
+    "hypernova-tools/image_probe.py",
+    "hypernova-tools/l1_core.py",
+    "hypernova-tools/mod_index.py",
+    "hypernova-tools/sprite_closure.py",
+    "hypernova-tools/hn_json.py",
+    "hypernova-tools/python/python.exe",
+    "hypernova-tools/python/python312.zip",
+)
 AGENT_MARKERS = (
     "hypernova/agent/HypernovaAgent.class",
     "hypernova/agent/textures/LazyTextures.class",
@@ -55,30 +82,46 @@ def check_zip(zip_path: Path, agent_jar: Path | None = None,
     except zipfile.BadZipFile as exc:
         return [f"bad zip {zip_path}: {exc}"]
     with zf:
-        names = set(zf.namelist())
+        raw = set(zf.namelist())
+        roots = {n.split("/")[0] for n in raw}
+        if roots != {MOD_FOLDER}:
+            failures.append(
+                f"zip root must be exactly {MOD_FOLDER}/, got {sorted(roots)[:5]}")
+        # 内部检查一律用相对 mod 文件夹的路径，读文件时再拼回前缀。
+        names = {n[len(PREFIX):] for n in raw if n.startswith(PREFIX)}
+
+        def full(name: str) -> str:
+            return PREFIX + name
+
         for req in REQUIRED:
             if req not in names:
-                failures.append(f"missing {req}")
-            elif zf.getinfo(req).file_size == 0:
-                failures.append(f"empty {req}")
+                failures.append(f"missing {PREFIX}{req}")
+            elif zf.getinfo(full(req)).file_size == 0:
+                failures.append(f"empty {PREFIX}{req}")
         for bad in FORBIDDEN:
             if bad in names:
-                failures.append(f"forbidden host artifact: {bad}")
+                failures.append(f"forbidden host artifact: {PREFIX}{bad}")
+        for tool in TOOL_FILES:
+            info = zf.getinfo(full(tool)) if tool in names else None
+            if info is None:
+                failures.append(f"missing {PREFIX}{tool}")
+            elif info.file_size <= 0:
+                failures.append(f"empty {PREFIX}{tool}")
         manifest_name = "data/config/hypernova/manifest-v1.json"
         if manifest_name in names:
-            manifest = zf.read(manifest_name)
+            manifest = zf.read(full(manifest_name))
             expected = hashlib.sha256(manifest).hexdigest()
             for skip in ("data/config/hypernova/lazy-skip-v1.txt",
                          "data/config/hypernova/lazy-skip-v2.txt"):
                 if skip not in names:
                     continue
-                got = generation_header(zf.read(skip))
+                got = generation_header(zf.read(full(skip)))
                 if got != expected:
                     failures.append(
                         f"{skip} generation {got or '<none>'} != manifest {expected}")
         main_name = "jars/hypernova.jar"
         if main_name in names:
-            entries = jar_entries(zf.read(main_name))
+            entries = jar_entries(zf.read(full(main_name)))
             for marker in MAIN_MARKERS:
                 info = entries.get(marker)
                 if info is None or info[1] <= 0:
@@ -99,7 +142,7 @@ def check_zip(zip_path: Path, agent_jar: Path | None = None,
         if agent_jar is not None:
             if "jars/hypernova.agent.jar" in names:
                 if agent_jar.is_file():
-                    packaged = zf.read("jars/hypernova.agent.jar")
+                    packaged = zf.read(full("jars/hypernova.agent.jar"))
                     entries = jar_entries(packaged)
                     built = jar_entries(agent_jar.read_bytes())
                     for marker in AGENT_MARKERS:

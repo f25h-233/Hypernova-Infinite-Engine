@@ -73,13 +73,53 @@ cp "$MANIFEST_INSTALLED" "$MANIFEST_DIST"
 cp "$MANIFEST_INSTALLED" "$OUT/hypernova-manifest-v1.json"
 
 # ---- 打包成品 mod 目录与 zip ----
-MODDIR="$OUT/hypernova-mod"
-rm -rf "$MODDIR"; mkdir -p "$MODDIR/jars" "$MODDIR/data/config/hypernova"
+# 发行包根目录只放一层 <mod 文件夹>/。玩家把 zip 解压到 mods/ 之后得到的直接就是
+# mods/hypernova_infinite_engine/。以前的包把 mod_info.json、data/、jars/ 摊在 zip
+# 根目录：用"解压到当前文件夹"会把这些东西散进 mods/ 根，游戏扫不到（它只认
+# mods/<文件夹>/mod_info.json），还会污染别的 mod 的目录。
+MODNAME="hypernova_infinite_engine"
+PKG="$OUT/pkg"
+MODDIR="$PKG/$MODNAME"
+rm -rf "$PKG"; mkdir -p "$MODDIR/jars" "$MODDIR/data/config/hypernova"
 cp "$OUT/hypernova.jar" "$MODDIR/jars/hypernova.jar"
 cp "$ROOT_W/mod_info.json" "$MODDIR/mod_info.json"
 # M2.7 W6：agent jar 已在上方强制构建，无条件打包；README 说明目标机安装步骤（W5）。
 cp "$AGENT_JAR" "$MODDIR/jars/hypernova.agent.jar"
 cp "$ROOT_W/tools/java/README-install.txt" "$MODDIR/README-install.txt"
+# 面向玩家的 manifest 生成工具。发行包里的 manifest 只能覆盖 Base 纹理集，
+# 装了其它 mod 的玩家必须就地重新生成，否则主 mod 的预取对目标用户基本无效。
+DIST_TOOLS="$MODDIR/hypernova-tools"
+mkdir -p "$DIST_TOOLS"
+for f in install_manifest.py manifest_builder.py gen_lazy_skip.py trim_manifest.py \
+         validate_manifest.py image_probe.py l1_core.py mod_index.py sprite_closure.py \
+         hn_json.py; do
+  if [ ! -s "$ROOT_W/tools/$f" ]; then
+    echo "FATAL: tools/$f 缺失或为空，manifest 生成工具不全" >&2
+    exit 1
+  fi
+  cp "$ROOT_W/tools/$f" "$DIST_TOOLS/$f"
+done
+# 三支 .bat 保持纯 ASCII（中文文案在 run_*.py 里）：cmd.exe 逐字节解析批处理，
+# UTF-8 中文在非 65001 代码页下会被撕成命令。这里只统一成 CRLF，对已是 CRLF 的
+# checkout 幂等。
+for bat in generate-manifest.bat install-agent.bat rollback-agent.bat; do
+  sed -e 's/\r$//' -e 's/$/\r/' "$ROOT_W/tools/player-tools/$bat" > "$DIST_TOOLS/$bat"
+done
+cp "$ROOT_W/tools/player-tools/generate-manifest.sh" "$DIST_TOOLS/generate-manifest.sh"
+cp "$ROOT_W/tools/player-tools/manage_agent.py" "$DIST_TOOLS/manage_agent.py"
+cp "$ROOT_W/tools/player-tools/run_manifest.py" "$DIST_TOOLS/run_manifest.py"
+cp "$ROOT_W/tools/player-tools/run_agent.py" "$DIST_TOOLS/run_agent.py"
+cp "$ROOT_W/tools/player-tools/README-tools.txt" "$DIST_TOOLS/README-tools.txt"
+# 玩家机器不一定有 Python。内置 python.org 官方 embeddable 运行时（压缩后约 11MB），
+# 双击批处理零安装即可运行。版本与 SHA256 固定在 tools/player-tools/fetch_python_embed.py。
+python -I "$ROOT_W/tools/player-tools/fetch_python_embed.py" >/dev/null
+PY_RUNTIME="$ROOT/.cache/python-embed/runtime"
+if [ ! -f "$PY_RUNTIME/python.exe" ]; then
+  echo "FATAL: embeddable Python 运行时缺失（$PY_RUNTIME）" >&2
+  exit 1
+fi
+mkdir -p "$DIST_TOOLS/python"
+cp -r "$PY_RUNTIME/." "$DIST_TOOLS/python/"
 # 注意 `cp -r data/. <dst>` 而不是 `cp -r data <dst>`：后者在 dst 存在时会嵌套成 data/data/。
 mkdir -p "$MODDIR/data"
 cp -r "$ROOT_W/data/." "$MODDIR/data/"
@@ -92,32 +132,64 @@ if [ ! -s "$MODDIR/data/config/hypernova/manifest-v1.json" ]; then
   echo "FATAL: 打包目录缺少 data/config/hypernova/manifest-v1.json" >&2
   exit 1
 fi
+# 用 Python 的 zipfile 打包而不是 `jar --create`：jar 会往根目录塞 META-INF/，
+# 而且没法保证根目录只有 mod 文件夹这一层。
 rm -f "$OUT/hypernova-$VERSION.zip"
-(cd "$OUT" && jar --create --file hypernova-$VERSION.zip -C hypernova-mod .)
-if ! (cd "$OUT" && jar --list --file hypernova-$VERSION.zip) \
-    | grep -qx 'data/config/hypernova/manifest-v1.json'; then
-  echo "FATAL: hypernova-$VERSION.zip 内缺少 data/config/hypernova/manifest-v1.json" >&2
-  exit 1
-fi
-if ! (cd "$OUT" && jar --list --file hypernova-$VERSION.zip) \
-    | grep -qx 'data/config/hypernova/lazy-skip-v1.txt'; then
-  echo "FATAL: zip 缺少 data/config/hypernova/lazy-skip-v1.txt" >&2
-  exit 1
-fi
-if ! (cd "$OUT" && jar --list --file hypernova-$VERSION.zip) \
-    | grep -qx 'graphics/hypernova/blank.png'; then
-  echo "FATAL: zip 缺少 graphics/hypernova/blank.png" >&2
-  exit 1
-fi
-if [ -f "$MODDIR/jars/hypernova.agent.jar" ]; then
-  (cd "$OUT" && jar --list --file hypernova-$VERSION.zip) \
-    | grep -qx 'jars/hypernova.agent.jar' \
-    || { echo "FATAL: zip 缺少 jars/hypernova.agent.jar" >&2; exit 1; }
-fi
+python -I - "$MODDIR" "$OUT/hypernova-$VERSION.zip" <<'PY'
+import os, sys, zipfile
+from pathlib import Path
+
+moddir = Path(sys.argv[1]).resolve()
+zip_path = Path(sys.argv[2])
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    for root, dirs, files in os.walk(moddir):
+        dirs.sort()
+        rel_root = Path(root).relative_to(moddir.parent)
+        if not files:
+            zf.writestr(str(rel_root).replace(os.sep, "/") + "/", "")
+        for name in sorted(files):
+            src = Path(root) / name
+            arc = str(rel_root / name).replace(os.sep, "/")
+            zf.write(src, arc)
+print(f"OK: zip {zip_path.name} ({zip_path.stat().st_size} bytes)")
+PY
+# 发行包结构门禁：根目录只能有 <mod 文件夹>/，且关键文件一个都不能少。
+python -I - "$OUT/hypernova-$VERSION.zip" "$MODNAME" <<'PY'
+import sys, zipfile
+
+zip_path, mod = sys.argv[1], sys.argv[2]
+names = set(zipfile.ZipFile(zip_path).namelist())
+need = [
+    "mod_info.json",
+    "README-install.txt",
+    "data/config/hypernova/manifest-v1.json",
+    "data/config/hypernova/lazy-skip-v1.txt",
+    "graphics/hypernova/blank.png",
+    "jars/hypernova.jar",
+    "jars/hypernova.agent.jar",
+    "hypernova-tools/generate-manifest.bat",
+    "hypernova-tools/generate-manifest.sh",
+    "hypernova-tools/install-agent.bat",
+    "hypernova-tools/rollback-agent.bat",
+    "hypernova-tools/manage_agent.py",
+    "hypernova-tools/run_manifest.py",
+    "hypernova-tools/run_agent.py",
+    "hypernova-tools/install_manifest.py",
+    "hypernova-tools/python/python.exe",
+]
+bad = [f"{mod}/{n}" for n in need if f"{mod}/{n}" not in names]
+roots = {n.split("/")[0] for n in names}
+if roots != {mod}:
+    bad.append(f"zip 根目录应当只有 {mod}/，实际是 {sorted(roots)[:5]}")
+if bad:
+    print("FATAL: " + "; ".join(bad), file=sys.stderr)
+    sys.exit(1)
+print(f"OK: zip 根目录 = {mod}/")
+PY
 # M2.7 W5/W6：发行包门禁（README/manifest/skip generation/宿主 v2 路径/agent 一致性/新鲜度）。
 python -I "$ROOT_W/tools/release_check.py" --zip "$OUT/hypernova-$VERSION.zip" \
   --agent-jar "$AGENT_JAR" --main-jar "$OUT/hypernova.jar" \
   --sources "$ROOT_W/src/agent/java"
 echo "OK: $MANIFEST_DIST (dist artifact, not tracked)"
-echo "OK: $ROOT/build/java/hypernova-mod"
+echo "OK: $ROOT/build/java/pkg/$MODNAME"
 echo "OK: $ROOT/build/java/hypernova-$VERSION.zip"

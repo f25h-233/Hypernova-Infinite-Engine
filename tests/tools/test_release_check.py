@@ -51,13 +51,17 @@ def _release_zip(tmp_path, drop=(), overrides=None):
         "jars/hypernova.jar": main.read_bytes(),
         "graphics/hypernova/blank.png": b"png",
     }
+    # 发行包必须带玩家侧工具（含内置 Python）；夹具直接跟随 TOOL_FILES，
+    # 免得以后加文件时测试与门禁脱节。
+    files.update({name: b"x" for name in rc.TOOL_FILES})
     files.update(overrides or {})
     for name in drop:
         files.pop(name, None)
     zip_path = tmp_path / "mod.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
+        # 发行包根目录必须套一层 <mod 文件夹>/，夹具跟着真实结构走。
         for name, data in files.items():
-            zf.writestr(name, data)
+            zf.writestr(rc.PREFIX + name, data)
     return zip_path, jar
 
 
@@ -69,7 +73,21 @@ def test_valid_release_passes(tmp_path):
 def test_missing_manifest_fails(tmp_path):
     zip_path, jar = _release_zip(
         tmp_path, drop=("data/config/hypernova/manifest-v1.json",))
-    assert any("missing data/config/hypernova/manifest-v1.json" in f
+    assert any("data/config/hypernova/manifest-v1.json" in f
+               for f in rc.check_zip(zip_path, jar))
+
+
+def test_missing_player_tool_fails(tmp_path):
+    zip_path, jar = _release_zip(
+        tmp_path, drop=("hypernova-tools/manage_agent.py",))
+    assert any("hypernova-tools/manage_agent.py" in f
+               for f in rc.check_zip(zip_path, jar))
+
+
+def test_missing_bundled_python_fails(tmp_path):
+    zip_path, jar = _release_zip(
+        tmp_path, drop=("hypernova-tools/python/python.exe",))
+    assert any("hypernova-tools/python/python.exe" in f
                for f in rc.check_zip(zip_path, jar))
 
 
@@ -119,7 +137,7 @@ def test_agent_freshness(tmp_path):
 
 def test_missing_main_jar_fails(tmp_path):
     zip_path, _ = _release_zip(tmp_path, drop=("jars/hypernova.jar",))
-    assert any("missing jars/hypernova.jar" in f
+    assert any("jars/hypernova.jar" in f
                for f in rc.check_zip(zip_path))
 
 
@@ -150,7 +168,7 @@ def test_identical_main_jar_passes(tmp_path):
 def test_empty_main_jar_fails(tmp_path):
     zip_path, _ = _release_zip(
         tmp_path, overrides={"jars/hypernova.jar": b""})
-    assert any("empty jars/hypernova.jar" in f
+    assert any("jars/hypernova.jar" in f and "empty" in f
                for f in rc.check_zip(zip_path))
 
 
@@ -179,3 +197,14 @@ def test_zero_size_main_marker_fails(tmp_path):
         tmp_path, overrides={"jars/hypernova.jar": bad.read_bytes()})
     assert any("packaged main jar missing" in f
                for f in rc.check_zip(zip_path))
+
+
+def test_zip_without_mod_folder_is_rejected(tmp_path):
+    """根目录直接摊 mod_info.json 的包必须被拒：玩家解压到 mods/ 会散架。"""
+    jar = _agent_jar(tmp_path / "agent.jar")
+    zip_path = tmp_path / "flat.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("mod_info.json", b"{}")
+        zf.writestr("jars/hypernova.agent.jar", jar.read_bytes())
+    failures = rc.check_zip(zip_path, jar)
+    assert any("zip root must be exactly" in f for f in failures), failures
