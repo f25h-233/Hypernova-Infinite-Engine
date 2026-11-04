@@ -2,23 +2,25 @@
 
 > 日期：2026-11-04。实验根：
 > `SS098_Hypernova_Compat_AuditTest/install/optimized-2026.10.15`。
-> 本文记录**真实启动到主菜单为止**的自动化证据。路线 B 已到达主菜单；
-> 路线 A 在延长观察窗口内仍未到达。战役 / 战斗 / 读档 / 中文输入 / 字体视觉
-> 仍是用户 gate，全部 **pending**。**不宣称任何性能或显存收益。**
+> 本文记录**真实启动到主菜单为止**的自动化证据。**最终判定：B 是 256 全量
+> 主推路线（热 59.2 s / 冷 465 s）；A 的 256 全量因 MixinFR 不可用（1400 s
+> 未到菜单）。** 战役 / 战斗 / 读档 / 中文输入 / 字体视觉仍是用户 gate，全部
+> **pending**。**不宣称任何性能或显存收益。**
 
 ## 1. 结论
 
 | 路线 | 安装结果 | 主菜单 | 结论 |
 |---|---|---|---|
-| A（MixinFR 1.2.5 + JRE 17 + StarsectorParallel） | fix loop `route-a --apply` 为 `applied=true ok=true`，manifest 就地生成成功 | **未到达** | 临时禁用 3 个声明 jar 缺失的 mod 后，MixinFR/Parallel/Hypernova 全部加载，无 Fatal/OOM；但在 600 s 上限 + 两次延长（总计约 1200 s）内仍停留在规则/脚本加载阶段，按协议记为 **timeout-not-menu**。 |
-| B（FR 0.9.7rc2 + Java 28 + Hypernova） | fix loop `route-b --apply` 为 `applied=true ok=true`，manifest 就地生成成功 | **已到达（105.8 s）** | `--xms 8G --xmx 10G`；Java 28、FR 0.9.7rc2、Hypernova agent/lazy/file index/scripts cache 全部加载；VOpt Loaded；五类纹理错误 0；最终 lazy probe `misses=0 failed=0`。需要禁用 `jc_sf`（幽灵部队自检失败）并应用 AoTD 要求的 `starfarer.api.jar` 替换；两者均记录为环境/模组前提。**最终参数裁决见 §10：完整 Mikihime 47 项 + 8G/10G。** |
-| **A+（组件补齐）** | `route-a --apply` `ok=true`；MixinFR 1.2.5 + Parallel 0.1.0 + VOpt 1.0.45 + Hypernova + MixinFRImeFix + Mikihime JRE17 子集 | **未到达** | 600 s 内未到菜单；617 s 仍在 rules/scripts，无 Fatal/OOM，纹理错误 0。Parallel/`CombatAiHotspotMixin` 为 `NOT-INJECTED`（FR 重写 `CombatEngine`）。 |
-| **B+（组件补齐）** | `route-b --apply` `ok=true`；FR 0.9.7rc2 + VOpt + Hypernova + 完整 Mikihime JDK28 参数 + CIF + Prepatcher 0.18.4 | **已到达（355.3 s）** | Java 28；Prepatcher `16 classes / 21 patches / 4 skipped`；CIF v2.2 加载并子类化窗口；Hypernova lazy `misses=0 failed=0`；纹理错误 0。**355.3 s 是冷法线缓存首次启动，不是参数慢；见 §10。** |
+| A（MixinFR 1.2.5 + JRE 17 + StarsectorParallel） | fix loop `route-a --apply` 为 `applied=true ok=true`，manifest 就地生成成功 | **未到达** | 临时禁用 3 个声明 jar 缺失的 mod 后，MixinFR/Parallel/Hypernova 全部加载，无 Fatal/OOM；但在 600 s 上限 + 两次延长（总计约 1200 s）内仍停留在规则/脚本加载阶段，按协议记为 **timeout-not-menu**。**单变量归因（§11）：MixinFR 是 256 全量慢的原因；A 只适合小/中 mod 集，256 全量不可用。** |
+| B（FR 0.9.7rc2 + Java 28 + Hypernova） | fix loop `route-b --apply` 为 `applied=true ok=true`，manifest 就地生成成功 | **已到达（最终配置热 59.2 s；历史 105.8 s）** | `--xms 8G --xmx 10G`；Java 28、FR 0.9.7rc2、Hypernova agent/lazy/file index/scripts cache 全部加载；VOpt Loaded；五类纹理错误 0；最终 lazy probe `misses=0 failed=0`。需要禁用 `jc_sf`（幽灵部队自检失败）并应用 AoTD 要求的 `starfarer.api.jar` 替换；两者均记录为环境/模组前提。**最终配置见 §10：完整 Mikihime JDK28 47 项 + 8G/10G + CIF + Prepatcher；热跑 68.2/57.1/59.2 s（中位 59.2 s），冷跑 465 s（冷法线缓存）。** 105.8 s 是历史精简参数 + 热缓存数字，不是最终配置。 |
+| **A+（组件补齐）** | `route-a --apply` `ok=true`；MixinFR 1.2.5 + Parallel 0.1.0 + VOpt 1.0.45 + Hypernova + MixinFRImeFix + Mikihime JRE17 子集 | **未到达** | 600 s 内未到菜单；617 s 仍在 rules/scripts，无 Fatal/OOM，纹理错误 0。Parallel/`CombatAiHotspotMixin` 为 `NOT-INJECTED`（FR 重写 `CombatEngine`）。**12-mod 子集 15.6 s；256 全量 1400 s 未到菜单；A+ 只适合小/中 mod 集（§11）。** |
+| **B+（组件补齐）** | `route-b --apply` `ok=true`；FR 0.9.7rc2 + VOpt + Hypernova + 完整 Mikihime JDK28 参数 + CIF + Prepatcher 0.18.4 | **已到达（355.3 s 冷；同配置热 59.2 s）** | Java 28；Prepatcher `16 classes / 21 patches / 4 skipped`；CIF v2.2 加载并子类化窗口；Hypernova lazy `misses=0 failed=0`；纹理错误 0。**355.3 s 是冷法线缓存首次启动，不是参数慢；同配置热跑 68.2/57.1/59.2 s（中位 59.2 s）；见 §10/§11。B+ 即最终 B 配置。** |
 
-> **2026-11-04 补充裁决**：B 的最终推荐参数改为**完整 Mikihime JDK28 47 项 +
+> **2026-11-04 补充裁决**：B 的最终推荐参数为**完整 Mikihime JDK28 47 项 +
 > 8G/10G**，仍保留 FR/VOpt/Hypernova/CIF/Prepatcher。历史 105.8 s 是
-> **精简参数 + 热缓存**；B+ 355.3 s 是**完整参数 + 冷法线缓存**。热缓存
-> 复测时间与依据见 §10；详细对照见 `docs/m7-b-debug.md`。
+> **精简参数 + 热缓存**；B+ 355.3 s 是**完整参数 + 冷法线缓存**。最终配置
+> 热跑 **68.2 / 57.1 / 59.2 s（中位 59.2 s）**，冷跑 **465 s**；详细对照见
+> `docs/m7-b-debug.md`，单变量归因见 §11。
 
 关键事实：
 
@@ -346,10 +348,13 @@ A 的菜单未到达，不能用任何自动化指标替代用户 gate。
   no-Hypernova 对照得到同一失败，排除 Hypernova。
 - **fix loop**：禁用这 3 个 mod 后，apply `ok=true`，MixinFR/Parallel/
   Hypernova 全部加载；2 GB 运行出现直接缓冲 OOM，提高到 8G/10G 后 OOM
-  消失，但 600 s + 延长到约 1200 s 仍停留在规则/脚本加载，未到菜单。
-  这是**启动时间**问题，不是崩溃；无 Fatal、纹理错误 0。
-- MixinFR 的 FR 0.9.5 使 Hypernova `lazy`/file-index 关闭（预期限制），
-  且脚本缓存只有 18 条，完整脚本编译/规则加载很慢。
+  消失，但 600 s + 延长到约 1200 s 仍停留在规则/脚本加载，未到菜单；
+  后续 1400 s 复测仍未到（§11）。这是**启动时间**问题，不是崩溃；
+  无 Fatal、纹理错误 0。
+- MixinFR 的 FR 0.9.5 使 Hypernova `lazy`/file-index 关闭（预期限制）。
+  单变量对照（§11）把慢因定位到 MixinFR：Java 17、FR 0.9.5、Parallel、
+  Prepatcher 均已排除；`Compiling script` 是队列日志，真实编译日志
+  `JavaSourceIClassLoader`/`Janino` 为 0。
 - 证据：`evidence/fixloop1/route-a-run4-timeout/`、
   `route-a-run3-oom/`、`missing_declared_jars.json`。
 
@@ -434,8 +439,13 @@ A 的菜单未到达，不能用任何自动化指标替代用户 gate。
 
 ## 8. 限制
 
-- **A 未到菜单**：600 s 上限 + 延长到约 1200 s 仍停在规则/脚本加载；
-  只证明 apply/manifest/内存修复有效，不能证明 A 可玩。
+- **A 的 256 全量不可用**：1400 s 预算内仍未到主菜单（已进入纹理加载）；
+  单变量对照把慢因定位到 MixinFR（§11）。A 只适合小/中 mod 集
+  （12-mod 子集 15.6 s）。只证明 apply/manifest/内存修复有效，不能证明
+  A 的 256 全量可玩。
+- **A 的 MixinFR 慢因不列入本项目里程碑**：结论已移交上游作者
+  （GerBeria）；本项目不承担 MixinFR 侧修复，也不提供“等我们修 / 后续
+  适配 MixinFR”的路线。256 全量由 B 承担。
 - **B 菜单到达但有前提**：`jc_sf` 禁用、AoTD 核心 jar 替换、LunaLib 设置
   恢复、DDSCache 创建；这些是环境/模组前提，不是 M7 默认行为。
 - **B 不是单变量收益证明**：8G/10G、缓存、LunaLib、jc_sf、AoTD jar 同时
@@ -449,7 +459,8 @@ A 的菜单未到达，不能用任何自动化指标替代用户 gate。
   260mods 既有 `save_123`，实验根 `saves/` 为空；没有 agent 点击，时序像
   自动 continue，但具体触发器未证明。它不证明视觉/输入/字体/稳定性，也不把
   场景 #3/#4 标通过。
-- **A+ 未到菜单**：600 s 内仍在 rules/scripts；MixinFRImeFix 只确认 jar
+- **A+ 未到菜单**：600 s 内仍在 rules/scripts；256 全量 1400 s 仍未到
+  （§11）；12-mod 子集 15.6 s。MixinFRImeFix 只确认 jar
   被发现，未产生可判定的 `REMAP-OK`/IME bridge；Parallel 热点 mixin
   `NOT-INJECTED`，不能把“组件已装”写成“Parallel 已生效”。
 - **B+ 菜单但有前提**：Prepatcher 0.18.4 在 Java 28 未声明（4 个 patch
@@ -673,3 +684,55 @@ A+ **未到主菜单**；B+ **到主菜单**但只有日志级证据。战役、
   精简参数冷跑；完整 Mikihime 未单独重复冷跑）；105.8 s 与 57–68 s
   都是热缓存数字。
 - 详细逐组对照、缓存 key 结论与现场恢复见 `docs/m7-b-debug.md`。
+
+## 11. 对照实验与最终归因（2026-11-04）
+
+### 11.1 单变量对照
+
+为判断 A 全量慢的原因，做了 FR 0.9.5 单 JVM 对照（无 MixinFR/Parallel）
+与 A−Parallel 对照。所有运行串行、按 PID 结束、使用同一主菜单锚点；
+A 的 1400 s 预算终止时已进入纹理加载。完整方法、冷/热定义、`jc_sf`/
+AoTD/LunaSettings 环境前提与现场恢复见 `docs/m7-isolation.md`。
+
+| 组 | 配置 | 到主菜单 | ms/miss（中位） | 判定 |
+|---|---|---|---|---|
+| C1 | FR 0.9.5 + Hypernova + VOpt，**Java 28**，无 MixinFR/Parallel | 108.2 s（三次 108.213 / 108.210 / 102.188） | **5.23** | 正常 |
+| C2 | 同 C1，**JRE 17** | 102.2 s（114.219 / 102.190 / 102.165） | **5.73** | 正常 |
+| A−Parallel | MixinFR 1.2.5 + JRE 17，**无 Parallel/Prepatcher** + Hypernova + VOpt | 900 s 预算内未到（stage=scripts） | **108.77** | 慢 |
+| A | MixinFR 1.2.5 + FR 0.9.5 + JRE 17 + Parallel + Hypernova + VOpt | 1400 s 预算内未到（进入 textures） | **99.84** | 慢 |
+| A+ 12-mod 子集 | MixinFR 1.2.5 + Parallel + VOpt + Hypernova，缩小到 12 个 mod | **15.6 s**（+Hypernova 17.9 s；+Parallel 15.6 s） | — | 小/中集可用 |
+
+要点：
+
+- C1 与 C2 只差 Java 版本和 5 个 JDK28-only 参数，二者都正常，直接排除
+  “Java 17 慢”。
+- C2 与 A 共用 JRE 17 + FR 0.9.5，C2 正常，排除“FR 0.9.5 在 JRE17 下慢”。
+- A−Parallel 去掉 Parallel/Prepatcher 后仍约 109 ms/miss，排除
+  “Parallel/Prepatcher 慢”。
+- A 与 A−Parallel 同量级（99.84 / 108.77 ms/miss），约为 C1/C2 的
+  17–21 倍；**MixinFR 是唯一剩下的主变量**。
+
+### 11.2 脚本日志口径
+
+- `Compiling script [X]` 是 FR `ScriptStore.loadScript` 在 `loadClass` 前的
+  **队列日志**；类在 mod jar 中命中也会打印，不是编译计数。
+- 真实编译日志 `JavaSourceIClassLoader` / `Janino` 在 C1/C2/A/A−Parallel
+  均为 **0**（Janino 的 3 行是 MagicLib 成就告警栈，不是编译）。
+- A 路径的 `Loading rule` 行为 **19,681**（A−Parallel 900 s 快照；A 含
+  Parallel 的旧日志为 25,992，任务给定口径 23,528）；C1/C2 为 **0**。
+  慢在 MixinFR 的规则/查找路径，不是“脚本全部源码编译”。
+
+### 11.3 最终判定
+
+- **MixinFR 是 A 全量慢的原因**；Java 17、FR 0.9.5、StarsectorParallel、
+  Prepatcher 均已排除。
+- **A（MixinFR 路线）256 全量不可用**：1400 s 未到主菜单，只适合小/中
+  mod 集（12-mod 子集 15.6 s）。**慢因结论已移交上游作者（GerBeria）；
+  不列入本项目里程碑，本项目不承担 MixinFR 侧修复。** 这不是 Java 17 或
+  FR 0.9.5 的问题。
+- **B 是 256 全量主推路线**：完整 Mikihime JDK28 47 项 + 8G/10G +
+  FR 0.9.7rc2 + VOpt + Hypernova + CIF + Prepatcher；热跑
+  **68.2 / 57.1 / 59.2 s，中位 59.2 s**；冷跑 **465 s**（冷法线缓存）。
+  详见 §10 与 `docs/m7-b-debug.md`。
+- 以上均为启动到主菜单的时间观察；**不宣称任何性能/显存收益**。用户实机
+  gate（战役/战斗/读档/中文输入/字体视觉/稳定性）仍全部 **pending**。
