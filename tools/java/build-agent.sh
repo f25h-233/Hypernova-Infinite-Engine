@@ -51,8 +51,12 @@ if ! printf '%s\n' "$jar_listing" | grep -q 'org/objectweb/asm/ClassReader.class
   echo "FATAL: agent jar 不含 ASM (org/objectweb/asm/ClassReader.class)" >&2
   exit 1
 fi
-if ! printf '%s\n' "$jar_listing" | grep -q 'hypernova/agent/textures/TextureData.class.bin'; then
-  echo "FATAL: agent jar 不含 textures patch resource" >&2
+if ! printf '%s\n' "$jar_listing" | grep -q 'hypernova/agent/textures/variants.properties'; then
+  echo "FATAL: agent jar 不含 textures 变体索引" >&2
+  exit 1
+fi
+if [ "$(printf '%s\n' "$jar_listing" | grep -c '^hypernova/agent/textures/v/.*\.class\.bin$')" -lt 1 ]; then
+  echo "FATAL: agent jar 不含任何 textures 补丁变体" >&2
   exit 1
 fi
 if ! printf '%s\n' "$jar_listing" | grep -q 'hypernova/agent/textures/LazyProxyObject.class'; then

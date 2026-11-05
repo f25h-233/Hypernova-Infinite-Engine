@@ -12,9 +12,13 @@ class TexturesWiringTest {
     @Test
     void agentJarCarriesPatchResourceButNotTheClass() throws Exception {
         try (JarFile jar = new JarFile("build/agent/hypernova.agent.jar")) {
-            assertNotNull(jar.getEntry("hypernova/agent/textures/TextureData.class.bin"),
-                    "补丁字节必须以非 class 资源打包");
-            assertNotNull(jar.getEntry("hypernova/agent/textures/patch.properties"));
+            assertNotNull(jar.getEntry("hypernova/agent/textures/variants.properties"),
+                    "变体索引必须打包");
+            long variants = jar.stream()
+                    .filter(e -> e.getName().startsWith("hypernova/agent/textures/v/")
+                            && e.getName().endsWith(".class.bin"))
+                    .count();
+            assertTrue(variants >= 2, "至少要有 1.12.1 与 1.12.2 两个补丁变体，实际 " + variants);
             assertNull(jar.getEntry("org/dark/shaders/util/TextureData.class"),
                     "补丁类不能出现在 agent classpath 根，否则父加载器会先加载它");
         }

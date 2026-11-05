@@ -1,0 +1,7 @@
+# Pinned TextureData.java fingerprints, one per supported GraphicsLib version.
+# The build refuses to patch a source file that does not match its pin.
+#   1.12.1  from GraphicsLib 1.12.1's own jar (org/dark/shaders/util/TextureData.java)
+#   1.12.2  upstream source (jar no longer ships .java), verified to compile
+#           byte-for-byte to the shipped TextureData.class with JDK 17
+1.12.1 db95f036a87276685ee3c7ae5b57671866d6c68542cdf3f9c3adf8cae4bacaa4
+1.12.2 dc7b2a4fdae2633275eaed37a0c9a694961a4676f771eaf9682425429d93d2a1

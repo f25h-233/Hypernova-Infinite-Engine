@@ -10,56 +10,111 @@ import java.security.CodeSource;
 import java.security.MessageDigest;
 import java.security.ProtectionDomain;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 把 GraphicsLib 1.12.1 的 TextureData 替换成「缓存法线图只登记、不加载」的补丁类。
+ * 把 GraphicsLib 的 TextureData 替换成「缓存法线图只登记、不加载」的补丁类。
  *
- * <p>只对 SHA-256 精确匹配的原类生效；其它版本一律 no-op，绝不猜测。
+ * <p>每个受支持的 GraphicsLib 版本各有一份预编译补丁类，索引在
+ * {@code variants.properties}；运行时按加载到的原类 SHA-256 精确匹配。
+ * 匹配不到任何变体就 no-op（fail-closed），只记一条可诊断日志，绝不猜测。
  */
 public final class TextureCacheTransformer implements ClassFileTransformer {
     public static final String TARGET = "org/dark/shaders/util/TextureData";
 
-    private static final String RES =
-            "/hypernova/agent/textures/TextureData.class.bin";
-    private static final String PROPS =
-            "/hypernova/agent/textures/patch.properties";
+    private static final String INDEX = "/hypernova/agent/textures/variants.properties";
 
-    private final byte[] patched;
-    private final String expectedSha;
-    private final AtomicBoolean applied = new AtomicBoolean();
-    private final AtomicBoolean mismatch = new AtomicBoolean();
+    /** 一个受支持版本的补丁：原类 SHA-256 → 已编译的替换类。 */
+    static final class Variant {
+        final String version;
+        final String sourceSha;
+        final String patchedSha;
+        final byte[] bytes;
 
-    TextureCacheTransformer(byte[] patched, String expectedSha) {
-        this.patched = patched;
-        this.expectedSha = expectedSha;
+        Variant(String version, String sourceSha, String patchedSha, byte[] bytes) {
+            this.version = version;
+            this.sourceSha = sourceSha;
+            this.patchedSha = patchedSha;
+            this.bytes = bytes;
+        }
     }
 
-    /** 读取打包资源；缺失/损坏返回 null，agent 继续启动。 */
+    private final Map<String, Variant> bySourceSha;
+    private final AtomicBoolean applied = new AtomicBoolean();
+    private final AtomicBoolean unsupportedLogged = new AtomicBoolean();
+
+    TextureCacheTransformer(Map<String, Variant> bySourceSha) {
+        this.bySourceSha = bySourceSha;
+    }
+
+    /** 读取打包的变体索引；缺失/损坏返回 null，agent 继续启动。 */
     public static TextureCacheTransformer create() {
-        try {
-            byte[] bytes = readAll(TextureCacheTransformer.class.getResourceAsStream(RES));
-            Properties props = new Properties();
-            try (InputStream in = TextureCacheTransformer.class.getResourceAsStream(PROPS)) {
-                if (in == null) {
-                    AgentLog.info("textures: patch.properties missing; texture patch disabled");
-                    return null;
-                }
-                props.load(in);
-            }
-            String sha = props.getProperty("sourceSha256", "");
-            if (bytes == null || bytes.length == 0 || sha.isEmpty()) {
-                AgentLog.info("textures: patch resource incomplete; texture patch disabled");
+        try (InputStream in = TextureCacheTransformer.class.getResourceAsStream(INDEX)) {
+            if (in == null) {
+                AgentLog.info("textures: variants.properties missing; texture patch disabled");
                 return null;
             }
-            AgentLog.info("textures: patch resource loaded, sourceSha256=" + sha
-                    + ", bytes=" + bytes.length);
-            return new TextureCacheTransformer(bytes, sha);
+            Map<String, Variant> variants = loadIndex(in);
+            if (variants.isEmpty()) {
+                AgentLog.info("textures: no usable variants; texture patch disabled");
+                return null;
+            }
+            StringBuilder supported = new StringBuilder();
+            for (Variant v : variants.values()) {
+                if (supported.length() > 0) supported.append(", ");
+                supported.append(v.version).append(" (").append(v.sourceSha, 0, 12).append(')');
+            }
+            AgentLog.info("textures: patch resources loaded, variants=" + variants.size()
+                    + " [" + supported + "]");
+            return new TextureCacheTransformer(variants);
         } catch (Throwable t) {
-            AgentLog.fail("textures: cannot load patch resource", t);
+            AgentLog.fail("textures: cannot load patch resources", t);
             return null;
         }
+    }
+
+    /** 解析索引并读取每个变体的补丁类；单个变体坏掉不影响其它变体。 */
+    static Map<String, Variant> loadIndex(InputStream in) throws Exception {
+        Properties props = new Properties();
+        props.load(in);
+        int count;
+        try {
+            count = Integer.parseInt(props.getProperty("count", "0").trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("bad variant count", e);
+        }
+        Map<String, Variant> out = new LinkedHashMap<>();
+        for (int i = 0; i < count; i++) {
+            String prefix = "variant." + i + ".";
+            String version = props.getProperty(prefix + "graphicsLibVersion", "").trim();
+            String sourceSha = props.getProperty(prefix + "sourceSha256", "").trim();
+            String patchedSha = props.getProperty(prefix + "patchedSha256", "").trim();
+            String resource = props.getProperty(prefix + "resource", "").trim();
+            if (version.isEmpty() || sourceSha.isEmpty() || patchedSha.isEmpty() || resource.isEmpty()) {
+                AgentLog.info("textures: variant " + i + " incomplete; skipped");
+                continue;
+            }
+            try {
+                byte[] bytes = readAll(TextureCacheTransformer.class.getResourceAsStream(resource));
+                if (bytes == null || bytes.length == 0) {
+                    AgentLog.info("textures: variant " + version + " resource missing; skipped");
+                    continue;
+                }
+                String actual = sha256(bytes);
+                if (!patchedSha.equals(actual)) {
+                    AgentLog.info("textures: variant " + version + " resource corrupt (expected="
+                            + patchedSha + ", actual=" + actual + "); skipped");
+                    continue;
+                }
+                out.put(sourceSha, new Variant(version, sourceSha, patchedSha, bytes));
+            } catch (Throwable t) {
+                AgentLog.fail("textures: variant " + version + " load failed; skipped", t);
+            }
+        }
+        return out;
     }
 
     @Override
@@ -68,23 +123,34 @@ public final class TextureCacheTransformer implements ClassFileTransformer {
         if (!TARGET.equals(className) || bytes == null || redefined != null) return null;
         try {
             String actual = sha256(bytes);
-            if (!expectedSha.equals(actual)) {
-                if (mismatch.compareAndSet(false, true)) {
-                    AgentLog.info("textures: TextureData sha mismatch, not patching (expected="
-                            + expectedSha + ", actual=" + actual + ")");
+            Variant variant = bySourceSha.get(actual);
+            if (variant == null) {
+                if (unsupportedLogged.compareAndSet(false, true)) {
+                    AgentLog.info("textures: unsupported GraphicsLib TextureData (sha256=" + actual
+                            + "); supported=" + supportedVersions()
+                            + "; lazy normal cache disabled for this version");
                 }
                 return null;
             }
             if (applied.compareAndSet(false, true)) {
                 initCacheProbe(protectionDomain);
                 AgentLog.info("textures: patched " + className
-                        + " (shaderLib 1.12.1 lazy normal cache)");
+                        + " (GraphicsLib " + variant.version + " lazy normal cache)");
             }
-            return patched.clone();
+            return variant.bytes.clone();
         } catch (Throwable t) {
             AgentLog.fail("textures: transform failed", t);
             return null;
         }
+    }
+
+    private String supportedVersions() {
+        StringBuilder sb = new StringBuilder();
+        for (Variant v : bySourceSha.values()) {
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(v.version);
+        }
+        return sb.length() == 0 ? "none" : sb.toString();
     }
 
     /**

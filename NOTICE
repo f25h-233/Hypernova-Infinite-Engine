@@ -14,7 +14,7 @@ Third-party components referenced at runtime or in documentation:
 
 - GraphicsLib — Dark.Revenant — CC BY 4.0
   https://fractalsoftworks.com/forum/ (GraphicsLib thread)
-  Hypernova's normal-map cache interacts with GraphicsLib 1.12.1's
+  Hypernova's normal-map cache interacts with GraphicsLib 1.12.1 and 1.12.2's
   org.dark.shaders.util.TextureData; GraphicsLib is not bundled here.
 
 - VramOptimizer — DeCEll-1 — see upstream release for license terms

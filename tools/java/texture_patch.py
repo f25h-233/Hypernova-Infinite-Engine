@@ -190,6 +190,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--expect-source-sha", default=EXPECTED_SOURCE_SHA,
+                    help="pinned SHA-256 of the pristine TextureData.java")
     args = ap.parse_args()
 
     raw = Path(args.source).read_bytes()
@@ -199,8 +201,9 @@ def main() -> int:
         print("already patched", file=sys.stderr)
         return 2
     sha = hashlib.sha256(raw).hexdigest()
-    if sha != EXPECTED_SOURCE_SHA:
-        print(f"sha256 mismatch: {sha} != {EXPECTED_SOURCE_SHA}", file=sys.stderr)
+    expected = args.expect_source_sha.strip().lower()
+    if sha != expected:
+        print(f"sha256 mismatch: {sha} != {expected}", file=sys.stderr)
         return 2
     text = raw.decode("utf-8")
     out = patch_text(text)
