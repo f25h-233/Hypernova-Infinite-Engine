@@ -2,7 +2,7 @@
 
 Starsector 0.98a 的运行时纹理预取与兜底 mod，附带一个可选的启动期 Java agent。
 
-> **版本：1.9.3（2026-11-04）**
+> **版本：1.9.5（2026-11-05）**
 >
 > `1.0.0` 是“功能完善可用”的锚点（M2.8，2026-11-02：主 mod + agent +
 > manifest + lazy/DDS/LRU 全部落地）；之后 M4/M4.1/M6 的诊断、兼容性
@@ -29,7 +29,9 @@ Starsector 0.98a 的运行时纹理预取与兜底 mod，附带一个可选的�
 | `1.1.0`–`1.2.9` | M4 | frame-time probe / 会话报告 |
 | `1.3.0`–`1.4.2` | M4.1 | agent-side frame probe |
 | `1.5.0`–`1.9.3` | M6 | 汉化 / 中文输入 / 字体 / UI 兼容性审计与工具 |
-| **`1.9.3`** | M6 终审 fix（`e43e7b0`，2026-11-03） | 当前版本 |
+| **`1.9.5`** | 健壮性修复（2026-11-05） | 玩家侧 manifest 生成容忍失效 DDSCache 记录与重复 ModID |
+| **`1.9.4`** | 兼容修复（2026-11-05） | 纹理补丁支持 GraphicsLib 1.12.2（多版本 SHA 变体） |
+| `1.9.3` | M6 终审 fix（`e43e7b0`，2026-11-03） | 上一个公开版本 |
 
 `1.9.3` 不是“第 19 个正式版”，而是 `1.0.0` 之后按 `feat`/`fix` 累计出来的
 post-1.0 历史：9 个 minor（诊断、兼容性工具），最后一个 minor 线到
@@ -60,7 +62,7 @@ post-1.0 历史：9 个 minor（诊断、兼容性工具），最后一个 minor
 | Java | 17+（游戏自带 JRE 17 可运行；JDK 28 已验证） |
 | Fast Rendering | 0.9.7rc2（软依赖；agent 的 file index / lazy 只支持 0.9.7 / 0.9.7rc2） |
 | VramOptimizer | 1.0.45（测试环境） |
-| GraphicsLib | 1.12.1（测试环境） |
+| GraphicsLib | 1.12.1 / 1.12.2（agent 纹理补丁按原类 SHA-256 分别支持；其它版本降级为不修改，不崩溃） |
 
 - 主 mod 不需要 FR；其它 FR 版本下 agent 的 file index / lazy textures 会 fail-open（不跳过、不代理），不会崩溃。
 - 汉化测试版 / ChineseInputFix / 字体 UI 的兼容性审计见 [`docs/m6-results.md`](docs/m6-results.md)。
@@ -99,7 +101,7 @@ python tools/install_agent.py --game <游戏目录> --env <profile>
 bash tools/java/build-mod.sh
 ```
 
-产物：`build/java/hypernova-1.9.3.zip`（含主 jar、agent jar、manifest、lazy-skip、README-install）。发行包固定使用 `Starsector-098-Base` 的 manifest；其它 mod 集在目标游戏目录就地生成。
+产物：`build/java/hypernova-1.9.5.zip`（含主 jar、agent jar、manifest、lazy-skip、README-install）。发行包固定使用 `Starsector-098-Base` 的 manifest；其它 mod 集在目标游戏目录就地生成。
 
 ## 回滚
 

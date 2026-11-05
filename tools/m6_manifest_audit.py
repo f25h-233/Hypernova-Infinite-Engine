@@ -315,6 +315,9 @@ def _scenario_summary(result, out: Path) -> dict:
         "metadata_parse_errors": stats.get("metadata_parse_errors") or {},
         "source_mode": stats.get("source_mode"),
         "metadata_fallback_hits": stats.get("metadata_fallback_hits", 0),
+        "stale_metadata_count": stats.get("stale_metadata_count", 0),
+        "dds_missing_count": stats.get("dds_missing_count", 0),
+        "unresolved_refs_count": stats.get("unresolved_refs_count", 0),
         "scanned_mod_ids": scanned,
         "good_mod_baked": (
             bool(good_entries[0].get("baked")) if good_entries else None
@@ -418,10 +421,15 @@ def audit_fail_open(
         and bool(bad.get("metadata_parse_errors"))
     )
     missing = scenarios["missing_dds"]
+    # 2026-11-05：DDSCache 里的 DDS 文件丢失时，manifest 不再拒绝写盘，而是把
+    # 该条目降级为未烘焙（原图仍在，游戏照常能加载）。这比让玩家拿不到整份
+    # 清单更稳；这里锁住"降级并写盘、无 Critical"的新语义。
     missing["ok"] = bool(
         missing.get("exception") is None
-        and missing.get("manifest_written") is False
-        and "Critical:missing_dds" in (missing.get("findings") or [])
+        and missing.get("manifest_written") is True
+        and missing.get("dds_missing_count", 0) >= 1
+        and missing.get("good_mod_baked") is False
+        and not _has_critical(missing)
     )
     return {
         "workdir": str(base),

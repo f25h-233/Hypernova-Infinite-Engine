@@ -187,6 +187,33 @@ def test_install_skip_v2_write_failure_keeps_old_pair(mini_game, monkeypatch):
     assert not first.skip_v2_file.with_name(first.skip_v2_file.name + ".tmp").exists()
 
 
+def test_install_writes_with_stale_cache_entry(mini_game):
+    """线上复现：一条失效 DDSCache 记录不能让玩家拿不到整份清单。"""
+    import json as _json
+    _seed_core(mini_game)
+    cache = mini_game / "mods" / "DDSCache" / "stale_cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "dds_metadata.json").write_text(
+        _json.dumps([{
+            "ModID": "mod_a",
+            "ModFolderName": "mod_a",
+            "RelativeImagePath": "graphics\\missing.png",
+            "DDSFilePath": "\\mods\\DDSCache\\mod_a\\graphics\\missing.dds",
+            "Width": 1,
+            "Height": 1,
+        }]),
+        encoding="utf-8",
+    )
+    out = mini_game / "runtime.json"
+    result = install(mini_game, out=out)
+    assert out.is_file(), "stale DDSCache entry must not block manifest writing"
+    assert not any(f.severity == "Critical" for f in result.findings)
+    assert result.full["stats"]["stale_metadata_count"] >= 1
+    assert any("stale" in w.lower() for w in result.warnings)
+    skip = result.skip_v2_file.read_text(encoding="utf-8")
+    assert "graphics/missing.png" not in skip
+
+
 def test_critical_install_does_not_write_skip_file(mini_game):
     _seed_core(mini_game)
     result = install(mini_game, max_l1=1)

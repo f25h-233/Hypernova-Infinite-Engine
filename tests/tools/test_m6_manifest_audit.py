@@ -238,8 +238,10 @@ def test_audit_fail_open_covers_dds_and_skip_scenarios(tmp_path):
     assert bad["metadata_parse_errors"]
     missing = scenarios["missing_dds"]
     assert missing["ok"] is True
-    assert missing["manifest_written"] is False
-    assert "Critical:missing_dds" in missing["findings"]
+    assert missing["manifest_written"] is True
+    assert missing["dds_missing_count"] == 1
+    assert "Critical:missing_dds" not in missing["findings"]
+    assert missing["good_mod_baked"] is False
     rerun = scenarios["missing_skip_rerun"]
     assert rerun["ok"] is True
     assert rerun["skip_removed_before_rerun"] is True

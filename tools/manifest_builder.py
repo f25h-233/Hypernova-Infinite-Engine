@@ -13,6 +13,7 @@ from mod_index import (
     CORE_FOLDER,
     MetadataEntry,
     MetadataIndex,
+    ModScan,
     folder_in_scope,
     in_scope,
     load_enabled_ids,
@@ -49,6 +50,110 @@ def _lexical_abs(path: Path | str) -> Path:
     fails manifest validation.
     """
     return Path(os.path.abspath(os.fspath(path)))
+
+
+@dataclass(frozen=True)
+class _ResolvedMetadata:
+    mod_id: str
+    rel: str
+    absolute: Path
+    dds: Path | None
+
+
+def _safe_rel(value: str) -> str | None:
+    """Normalize a cache-record path; reject anything that can escape the root."""
+    rel = str(value or "").replace("\\", "/").strip()
+    if not rel or rel.startswith("/") or (len(rel) >= 2 and rel[1] == ":"):
+        return None
+    parts = [part for part in rel.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        return None
+    return "/".join(parts)
+
+
+class _MetadataResolver:
+    """把 DDSCache 记录落到磁盘上真实存在的文件。
+
+    DDSCache 是持久缓存，会跨 mod 更新/改名保留下来：``ModFolderName`` 可能
+    指向已经不存在的旧目录，而同一个 ModID 现在在另一个目录里（玩家装了两份
+    同 id 的汉化/原版时尤其常见）。这里只把缓存记录当线索，最终以磁盘为准；
+    找不到原图的记录由调用方按失效缓存跳过，而不是让整份清单失败。
+    """
+
+    def __init__(
+        self,
+        root: Path,
+        scan: ModScan,
+        enabled_ids: set[str],
+        enabled_folders: set[str],
+        folder_by_modid: dict[str, str],
+        folder_to_id: dict[str, str],
+    ) -> None:
+        self.root = Path(root)
+        self.enabled_ids = enabled_ids
+        self.enabled_folders = enabled_folders
+        self.folder_by_modid = folder_by_modid
+        self.folder_to_id = folder_to_id
+        self._by_id: dict[str, list[Path]] = {}
+        for mod_id, folders in scan.folders_by_id.items():
+            key = mod_id.casefold()
+            picked = folder_by_modid.get(key)
+            ordered = sorted(
+                folders,
+                key=lambda p: (
+                    p.name.casefold() != (picked or "").casefold(),
+                    p.name.casefold(),
+                ),
+            )
+            self._by_id.setdefault(key, []).extend(ordered)
+
+    def candidates(self, me: MetadataEntry) -> list[tuple[str, Path]]:
+        out: list[tuple[str, Path]] = []
+        seen: set[str] = set()
+
+        def add(mod_id: str, folder: Path) -> None:
+            key = _lexical_abs(folder).as_posix().casefold()
+            if key in seen or not folder.is_dir():
+                return
+            seen.add(key)
+            out.append((mod_id, folder))
+
+        if me.mod_folder.casefold() == CORE_FOLDER:
+            add("core", self.root / CORE_FOLDER)
+            return out
+        # 记录里的目录名本身仍是启用目录时优先（ModID 缺失/写错的缓存容错）。
+        if me.mod_folder.casefold() in self.enabled_folders:
+            mod_id = self.folder_to_id.get(
+                me.mod_folder.casefold(), me.mod_id or me.mod_folder
+            )
+            add(mod_id, _folder_path(self.root, me.mod_folder))
+        # 同一 ModID 的所有当前目录；扫描时选中的目录排最前，其余按名字排序。
+        if me.mod_id.casefold() in self.enabled_ids:
+            for folder in self._by_id.get(me.mod_id.casefold(), []):
+                add(me.mod_id, folder)
+        # ModID 被 normalize 成 core 的缓存记录。
+        if me.mod_id.casefold() == "core":
+            add("core", self.root / CORE_FOLDER)
+        return out
+
+    def resolve(self, me: MetadataEntry) -> _ResolvedMetadata | None:
+        rel = _safe_rel(me.rel)
+        if rel is None:
+            return None
+        for mod_id, folder in self.candidates(me):
+            absolute = folder / rel
+            if absolute.is_file():
+                return _ResolvedMetadata(
+                    mod_id, rel, _lexical_abs(absolute), self._dds(me)
+                )
+        return None
+
+    def _dds(self, me: MetadataEntry) -> Path | None:
+        rel = _safe_rel(me.dds_rel)
+        if rel is None:
+            return None
+        path = _lexical_abs(self.root / rel)
+        return path if path.is_file() else None
 
 
 def load_tier_overrides(path: Path) -> dict[str, str]:
@@ -160,82 +265,89 @@ def _sprite_entry(
     rel: str,
     lookup: AssetLookup,
     metadata: MetadataIndex,
-    game_root: Path,
+    resolver: _MetadataResolver,
     include_core: bool = True,
-) -> tuple[dict, tuple[str, str] | None]:
-    root = Path(game_root).resolve()
+) -> tuple[dict | None, set[tuple[str, str]]]:
+    """解析一条 sprite 引用；磁盘上找不到原图时返回 None（调用方跳过并记账）。"""
     owner = pick(lookup.images.get(rel.casefold()) or [])
     meta: MetadataEntry | None = None
+    resolved: _ResolvedMetadata | None = None
     if owner is not None:
         meta = metadata.resolve(
             owner.mod_id, owner.folder.name, rel, exclude_core=not include_core
         )
+        if meta is not None:
+            resolved = resolver.resolve(meta)
     else:
         candidates = [
             me
             for me in (metadata.by_rel.get(rel.casefold()) or [])
-            if include_core or me.mod_folder.casefold() != CORE_FOLDER
+            if include_core
+            or (
+                me.mod_folder.casefold() != CORE_FOLDER
+                and me.mod_id.casefold() != "core"
+            )
         ]
-        if len(candidates) == 1:
-            meta = candidates[0]
+        # 没有索引 owner 时（重复 ModID、目录改名）逐条按磁盘验证，只认真的存在的。
+        for me in candidates:
+            resolved = resolver.resolve(me)
+            if resolved is not None:
+                meta = me
+                break
 
+    keys: set[tuple[str, str]] = set()
     if owner is not None:
-        absolute = _lexical_abs(owner.absolute).as_posix()
+        absolute = _lexical_abs(owner.absolute)
         mod_id = owner.mod_id
-    elif meta is not None:
-        absolute = _lexical_abs(
-            _folder_path(root, meta.mod_folder) / meta.rel).as_posix()
-        mod_id = "core" if meta.mod_folder.casefold() == CORE_FOLDER else meta.mod_folder
-    else:
-        absolute = ""
-        mod_id = "unknown"
-
-    dds = None
-    w = h = 0
-    baked = False
-    src = "spec_scan"
-    if meta is not None:
-        baked = True
-        src = "dds_metadata"
+        if (
+            resolved is not None
+            and meta is not None
+            and meta.width > 0
+            and meta.height > 0
+        ):
+            w, h = meta.width, meta.height
+        else:
+            w, h = probe(absolute)
+        keys.add((owner.mod_id.casefold(), rel.casefold()))
+    elif resolved is not None and meta is not None:
+        absolute = resolved.absolute
+        mod_id = resolved.mod_id
         w, h = meta.width, meta.height
-        if meta.dds_rel:
-            dds = _lexical_abs(root / meta.dds_rel).as_posix()
-    elif owner is not None:
-        w, h = probe(owner.absolute)
-        src = "header_probe" if w and h else "spec_scan"
-
-    owner_key = None
-    if owner is not None:
-        owner_key = (owner.mod_id.casefold(), rel.casefold())
-    elif meta is not None:
-        owner_key = (meta.mod_id.casefold(), meta.rel.casefold())
-    return _entry(mod_id, rel, absolute, dds, w, h, baked, src), owner_key
-
-
-def _metadata_entry(me: MetadataEntry, game_root: Path,
-                    folder_to_id: dict[str, str],
-                    folder_by_modid: dict[str, str],
-                    current_folders: set[str]) -> dict:
-    is_core = me.mod_folder.casefold() == CORE_FOLDER
-    if is_core:
-        folder = CORE_FOLDER
-    elif me.mod_folder.casefold() in current_folders:
-        folder = me.mod_folder
+        if w <= 0 or h <= 0:
+            w, h = probe(absolute)
     else:
-        folder = folder_by_modid.get(me.mod_id.casefold(), me.mod_folder)
-    absolute = _lexical_abs(
-        _folder_path(game_root, folder) / me.rel).as_posix()
-    dds = (
-        _lexical_abs(Path(game_root).resolve() / me.dds_rel).as_posix()
-        if me.dds_rel
-        else None
+        return None, keys
+
+    if meta is not None and resolved is not None:
+        keys.add((resolved.mod_id.casefold(), meta.rel.casefold()))
+    baked = resolved is not None and resolved.dds is not None
+    dds = resolved.dds.as_posix() if baked and resolved is not None else None
+    src = "dds_metadata" if meta is not None else (
+        "header_probe" if w and h else "spec_scan"
     )
-    if is_core:
-        mod_id = "core"
-    else:
-        mod_id = folder_to_id.get(folder.casefold()) or me.mod_id or folder
+    return (
+        _entry(mod_id, rel, absolute.as_posix(), dds, w, h, baked, src),
+        keys,
+    )
+
+
+def _metadata_entry(me: MetadataEntry, resolved: _ResolvedMetadata) -> dict:
+    w, h = me.width, me.height
+    if w <= 0 or h <= 0:
+        w, h = probe(resolved.absolute)
+    baked = resolved.dds is not None
+    src = "dds_metadata" if (me.width > 0 and me.height > 0) else (
+        "header_probe" if w and h else "spec_scan"
+    )
     return _entry(
-        mod_id, me.rel, absolute, dds, me.width, me.height, True, "dds_metadata"
+        resolved.mod_id,
+        resolved.rel,
+        resolved.absolute.as_posix(),
+        resolved.dds.as_posix() if baked and resolved.dds is not None else None,
+        w,
+        h,
+        baked,
+        src,
     )
 
 
@@ -269,7 +381,6 @@ def build_manifest(
 
     enabled_ids = {str(i).casefold() for i in enabled}
     enabled_folders = {m.folder.name.casefold() for m in scan.mods if not m.is_core}
-    current_folders = set(enabled_folders)
     folder_by_modid = {
         m.mod_id.casefold(): m.folder.name for m in scan.mods if not m.is_core
     }
@@ -277,22 +388,28 @@ def build_manifest(
     known_ids = {
         ("core" if m.is_core else m.mod_id).casefold() for m in scan.mods
     }
+    resolver = _MetadataResolver(
+        root, scan, enabled_ids, enabled_folders, folder_by_modid, folder_to_id
+    )
 
     l1: list[dict] = []
     seen_paths: set[str] = set()
     seen_meta: set[tuple[str, str]] = set()
+    unresolved_refs: list[str] = []
 
     def add_sprite(rel: str) -> None:
         key = rel.casefold()
         if key in seen_paths:
             return
         seen_paths.add(key)
-        entry, owner_key = _sprite_entry(
-            rel, lookup, metadata, root, include_core=include_core
+        entry, meta_keys = _sprite_entry(
+            rel, lookup, metadata, resolver, include_core=include_core
         )
+        if entry is None:
+            unresolved_refs.append(rel)
+            return
         l1.append(entry)
-        if owner_key:
-            seen_meta.add(owner_key)
+        seen_meta.update(meta_keys)
 
     core: CoreAssets = core_assets_result(root) if include_core else CoreAssets()
     for rel in core.paths:
@@ -313,12 +430,14 @@ def build_manifest(
             if key in seen_paths:
                 continue
             seen_paths.add(key)
-            entry, owner_key = _sprite_entry(
-                ref.rel, lookup, metadata, root, include_core=include_core
+            entry, meta_keys = _sprite_entry(
+                ref.rel, lookup, metadata, resolver, include_core=include_core
             )
+            if entry is None:
+                unresolved_refs.append(ref.rel)
+                continue
             l2.append(entry)
-            if owner_key:
-                seen_meta.add(owner_key)
+            seen_meta.update(meta_keys)
 
     l3: list[dict] = []
     l3_keys: set[tuple[str, str]] = set()
@@ -345,16 +464,31 @@ def build_manifest(
         for me in metadata.entries
         if me.mod_folder.casefold() == CORE_FOLDER and include_core
     ]
-    for me in scope_meta + core_meta:
-        key = (me.mod_id.casefold(), me.rel.casefold())
+    # 缓存记录先落到磁盘：原图不存在的按失效缓存跳过；DDS 缺失的退化为未烘焙。
+    resolved_scope: list[tuple[MetadataEntry, _ResolvedMetadata]] = []
+    stale_meta: list[str] = []
+    for me in scope_meta:
+        resolved = resolver.resolve(me)
+        if resolved is None:
+            stale_meta.append(f"{me.mod_id}/{me.rel}")
+            continue
+        resolved_scope.append((me, resolved))
+    resolved_core: list[tuple[MetadataEntry, _ResolvedMetadata]] = []
+    for me in core_meta:
+        resolved = resolver.resolve(me)
+        if resolved is None:
+            stale_meta.append(f"{me.mod_id}/{me.rel}")
+            continue
+        resolved_core.append((me, resolved))
+    live_meta = resolved_scope + resolved_core
+    stale_meta.sort()
+
+    for me, resolved in live_meta:
+        key = (resolved.mod_id.casefold(), me.rel.casefold())
         if key in seen_meta:
             continue
         seen_meta.add(key)
-        add_l3(
-            _metadata_entry(
-                me, root, folder_to_id, folder_by_modid, current_folders
-            )
-        )
+        add_l3(_metadata_entry(me, resolved))
 
     scope_images = []
     core_images = []
@@ -366,8 +500,8 @@ def build_manifest(
             elif folder_in_scope(asset.folder.name, scope):
                 scope_images.append(asset)
     meta_keys = {
-        (me.mod_id.casefold(), me.rel.casefold())
-        for me in scope_meta + core_meta
+        (resolved.mod_id.casefold(), me.rel.casefold())
+        for me, resolved in live_meta
     }
     all_images = scope_images + core_images
     probe_total = len(all_images)
@@ -441,16 +575,22 @@ def build_manifest(
             "wings_resolved",
         )
     )
-    meta_total = len(scope_meta)
-    meta_all = len(scope_meta) + len(core_meta)
+    live_scope_meta = [me for me, _ in resolved_scope]
+    meta_total = len(live_scope_meta)
+    meta_all = len(live_meta)
+    layer_paths = {
+        str(entry["path"]).casefold()
+        for entries in (l1, l2, l3)
+        for entry in entries
+    }
+    # 同人口只在「活的」缓存记录里算：失效记录不是漏生成，不该压低覆盖率。
     meta_seen = sum(
-        1
-        for me in scope_meta + core_meta
-        if (me.mod_id.casefold(), me.rel.casefold()) in seen_meta
+        1 for me, _ in live_meta if me.rel.casefold() in layer_paths
     )
     disk_images = len(scope_images)
     scope_meta_keys = {
-        (me.mod_id.casefold(), me.rel.casefold()) for me in scope_meta
+        (resolved.mod_id.casefold(), me.rel.casefold())
+        for me, resolved in resolved_scope
     }
     unbaked = sum(
         1
@@ -458,32 +598,33 @@ def build_manifest(
         if (asset.mod_id.casefold(), asset.rel.casefold()) not in scope_meta_keys
     )
 
-    by_meta_key: dict[tuple[str, str], dict] = {}
-    for entries in (l1, l2, l3):
-        for entry in entries:
-            by_meta_key[
-                (str(entry["modId"]).casefold(), str(entry["path"]).casefold())
-            ] = entry
-    baked_expected = len(scope_meta) + len(core_meta)
+    baked_paths = {
+        str(entry["path"]).casefold()
+        for entries in (l1, l2, l3)
+        for entry in entries
+        if entry.get("baked")
+        and entry.get("ddsPath")
+        and Path(str(entry["ddsPath"])).is_file()
+    }
+    expected = [
+        (me, resolved) for me, resolved in live_meta if resolved.dds is not None
+    ]
+    baked_expected = len(expected)
     baked_resolved = 0
     unresolved: list[str] = []
-    for me in scope_meta + core_meta:
-        entry = by_meta_key.get((me.mod_id.casefold(), me.rel.casefold()))
-        absolute_ok = (
-            entry is not None
-            and bool(entry.get("absolutePath"))
-            and Path(str(entry["absolutePath"])).is_file()
-        )
-        dds_ok = (
-            entry is not None
-            and bool(entry.get("ddsPath"))
-            and Path(str(entry["ddsPath"])).is_file()
-        )
-        if absolute_ok and dds_ok:
+    for me, _resolved in expected:
+        if me.rel.casefold() in baked_paths:
             baked_resolved += 1
         else:
             unresolved.append(f"{me.mod_id}/{me.rel}")
     unresolved.sort()
+    dds_missing = sorted(
+        f"{me.mod_id}/{me.rel}"
+        for me, resolved in live_meta
+        if resolved.dds is None
+    )
+    refs_unique = sorted(set(unresolved_refs))
+    meta_scope_all = len(scope_meta) + len(core_meta)
 
     closure_stats = title_closure.stats
     manifest = {
@@ -505,13 +646,15 @@ def build_manifest(
             "include_core": include_core,
             "metadata_entries": meta_total,
             "metadata_entries_scope": meta_total,
-            "metadata_entries_core": len(core_meta),
+            "metadata_entries_core": len(resolved_core),
             "metadata_entries_all": len(metadata.entries),
-            "metadata_unused": len(metadata.entries) - meta_all,
-            "baked": meta_total,
+            "metadata_unused": len(metadata.entries) - meta_scope_all,
+            "baked": sum(
+                1 for _me, resolved in resolved_scope if resolved.dds is not None
+            ),
             "unbaked": unbaked,
             "disk_images": disk_images,
-            "core_entries": len(core_meta),
+            "core_entries": len(resolved_core),
             "l1_count": len(l1),
             "l2_count": len(l2),
             "l3_count": len(l3),
@@ -536,6 +679,12 @@ def build_manifest(
             },
             "unresolved_baked": unresolved[:100],
             "unresolved_baked_count": len(unresolved),
+            "stale_metadata": stale_meta[:100],
+            "stale_metadata_count": len(stale_meta),
+            "dds_missing": dds_missing[:100],
+            "dds_missing_count": len(dds_missing),
+            "unresolved_refs": refs_unique[:100],
+            "unresolved_refs_count": len(refs_unique),
             "tiers": {
                 key: layer for key, layer in tiers_normalized.items()
                 if key in known_ids
@@ -569,4 +718,19 @@ def build_manifest(
         warnings.append(f"duplicate mod ids: {scan.duplicate_ids}")
     if tiers_unknown:
         warnings.append(f"unknown tier mods: {tiers_unknown}")
+    if stale_meta:
+        warnings.append(
+            f"stale DDSCache entries skipped ({len(stale_meta)}): "
+            + ", ".join(stale_meta[:5])
+        )
+    if dds_missing:
+        warnings.append(
+            f"DDSCache entries without DDS included as unbaked ({len(dds_missing)}): "
+            + ", ".join(dds_missing[:5])
+        )
+    if refs_unique:
+        warnings.append(
+            f"unresolved sprite refs skipped ({len(refs_unique)}): "
+            + ", ".join(refs_unique[:5])
+        )
     return BuildResult(manifest, warnings)

@@ -46,6 +46,10 @@ class ModScan:
     parse_errors: dict[str, str] = field(default_factory=dict)
     # 没有 enabled_mods.json 时的降级标记：上层要如实告诉用户「这次是按全部 mod 算的」。
     enabled_list_missing: bool = False
+    # 每个 ModID 在 mods/ 下实际存在的所有文件夹（含重复 ID 的备选目录）。
+    # DDSCache 的 ModFolderName 可能是改名前的旧目录；manifest 生成按 ModID
+    # 找到全部候选目录，再用「文件是否真的存在」落位。
+    folders_by_id: dict[str, list[Path]] = field(default_factory=dict)
 
 
 @dataclass
@@ -171,7 +175,15 @@ def scan_mods(game_root: Path, enabled_ids: list[str] | None,
     duplicate_ids = {
         mid: sorted(p.name for p in paths) for mid, paths in by_id.items() if len(paths) > 1
     }
-    scan = ModScan(duplicate_ids=duplicate_ids, parse_errors=parse_errors)
+    folders_by_id = {
+        mid: sorted(paths, key=lambda p: p.name.casefold())
+        for mid, paths in by_id.items()
+    }
+    scan = ModScan(
+        duplicate_ids=duplicate_ids,
+        parse_errors=parse_errors,
+        folders_by_id=folders_by_id,
+    )
     if enabled_ids is None:
         # 没有启用列表：把目录里能找到的 mod 全算上。多算几个只会让清单偏大，
         # 不会影响游戏；漏算才会让主 mod 白装。

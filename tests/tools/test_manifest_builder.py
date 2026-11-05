@@ -288,10 +288,14 @@ def test_renamed_mod_folder_resolves_by_mod_id(mini_game):
     assert m["stats"]["unresolved_baked_count"] == 0
 
 
-def test_missing_source_is_unresolved(mini_game):
+def test_missing_source_is_stale_not_unresolved(mini_game):
+    """DDSCache 是持久缓存：mod 更新/改名后，记录可能指向已不存在的原图。
+
+    这类记录不是「启用中的烘焙贴图」，必须跳过而不是让整份清单失败。
+    """
     from conftest import _write
     _write(
-        mini_game / "mods" / "DDSCache" / "mod_a" / "dds_metadata.json",
+        mini_game / "mods" / "DDSCache" / "stale_cache" / "dds_metadata.json",
         json.dumps([{
             "ModID": "mod_a",
             "ModFolderName": "mod_a",
@@ -301,9 +305,126 @@ def test_missing_source_is_unresolved(mini_game):
             "Height": 1,
         }]),
     )
-    m = _build(mini_game, include_l2=False)
-    assert m["stats"]["coverage"]["baked"] < 1.0
-    assert m["stats"]["unresolved_baked_count"] >= 1
+    # 线上案例：原图没了、DDS 还在。缓存记录仍然是失效的——游戏不会再按这个
+    # 路径加载，DDS 单独留着也救不回来。
+    dds = mini_game / "mods" / "DDSCache" / "mod_a" / "graphics" / "missing.dds"
+    dds.parent.mkdir(parents=True, exist_ok=True)
+    dds.write_bytes(b"DDS ")
+    result = build_manifest(mini_game, include_l2=False)
+    m = result.manifest
+    paths = {
+        e["path"] for layer in ("L1", "L2", "L3")
+        for e in m["layers"][layer]
+    }
+    assert "graphics/missing.png" not in paths
+    assert m["stats"]["stale_metadata_count"] >= 1
+    assert m["stats"]["coverage"]["baked"] == 1.0
+    assert m["stats"]["unresolved_baked_count"] == 0
+    assert any("stale" in w.lower() for w in result.warnings)
+
+
+def test_missing_dds_demotes_entry_instead_of_failing(mini_game):
+    """原图在、DDS 没了：这条记录退化成普通未烘焙条目，而不是 Critical。"""
+    from conftest import _write
+    _write(
+        mini_game / "mods" / "DDSCache" / "dds_missing_cache" / "dds_metadata.json",
+        json.dumps([{
+            "ModID": "mod_a",
+            "ModFolderName": "mod_a",
+            "RelativeImagePath": "graphics\\unlisted.png",
+            "DDSFilePath": "\\mods\\DDSCache\\mod_a\\graphics\\unlisted.dds",
+            "Width": 3,
+            "Height": 3,
+        }]),
+    )
+    result = build_manifest(mini_game, include_l2=False)
+    m = result.manifest
+    entry = next(
+        e for e in m["layers"]["L3"] if e["path"] == "graphics/unlisted.png"
+    )
+    assert entry["baked"] is False
+    assert entry["ddsPath"] is None
+    assert (entry["w"], entry["h"]) == (3, 3)
+    assert m["stats"]["dds_missing_count"] >= 1
+    assert m["stats"]["coverage"]["baked"] == 1.0
+    from validate_manifest import validate
+    assert not [f for f in validate(m, mini_game) if f.severity == "Critical"]
+
+
+def test_duplicate_mod_id_binds_to_folder_that_has_file(mini_game):
+    """重复 ModID：DDSCache 的 ModFolderName 是旧目录，源图在另一个同 id 目录。"""
+    from conftest import _png, _write
+    _seed_core(mini_game)
+    _write(
+        mini_game / "mods" / "enabled_mods.json",
+        json.dumps({"enabledMods": ["mod_a", "mod_b", "mod_dup"]}),
+    )
+    _write(mini_game / "mods" / "dup_a" / "mod_info.json", '{"id": "mod_dup"}')
+    _write(mini_game / "mods" / "dup_b" / "mod_info.json", '{"id": "mod_dup"}')
+    p = mini_game / "mods" / "dup_b" / "graphics" / "dup.png"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(_png(5, 5))
+    _write(
+        mini_game / "mods" / "DDSCache" / "dup_a" / "dds_metadata.json",
+        json.dumps([{
+            "ModID": "mod_dup",
+            "ModFolderName": "dup_a",
+            "RelativeImagePath": "graphics\\dup.png",
+            "DDSFilePath": "\\mods\\DDSCache\\dup_a\\graphics\\dup.dds",
+            "Width": 5,
+            "Height": 5,
+        }]),
+    )
+    dds = mini_game / "mods" / "DDSCache" / "dup_a" / "graphics" / "dup.dds"
+    dds.parent.mkdir(parents=True, exist_ok=True)
+    dds.write_bytes(b"DDS ")
+
+    result = build_manifest(mini_game, include_l2=False)
+    m = result.manifest
+    entry = next(
+        e
+        for layer in ("L1", "L2", "L3")
+        for e in m["layers"][layer]
+        if e["path"] == "graphics/dup.png"
+    )
+    assert Path(entry["absolutePath"]) == p.resolve()
+    assert entry["baked"] is True
+    assert m["stats"]["coverage"]["baked"] == 1.0
+    assert m["stats"]["unresolved_baked_count"] == 0
+    from validate_manifest import validate
+    assert not [f for f in validate(m, mini_game) if f.severity == "Critical"]
+
+
+def test_unresolved_title_sprite_is_skipped(mini_game):
+    """标题闭包引用了磁盘上不存在的贴图：跳过该条，而不是让清单失败。"""
+    from conftest import _write
+    _seed_core(mini_game)
+    _write(
+        mini_game / "mods" / "mod_a" / "data" / "config" / "title_screen_variants.csv",
+        "variant id\nva_one\nva_two\nva_missing\n",
+    )
+    _write(
+        mini_game / "mods" / "mod_a" / "data" / "variants" / "va_missing.variant",
+        json.dumps({"variantId": "va_missing", "hullId": "h_missing"}),
+    )
+    _write(
+        mini_game / "mods" / "mod_a" / "data" / "hulls" / "h_missing.ship",
+        json.dumps({
+            "hullId": "h_missing",
+            "hullSize": "FRIGATE",
+            "spriteName": "graphics/ships/h_missing.png",
+        }),
+    )
+    result = build_manifest(mini_game, include_l2=False)
+    m = result.manifest
+    paths = {
+        e["path"] for layer in ("L1", "L2", "L3")
+        for e in m["layers"][layer]
+    }
+    assert "graphics/ships/h_missing.png" not in paths
+    assert m["stats"]["unresolved_refs_count"] >= 1
+    from validate_manifest import validate
+    assert not [f for f in validate(m, mini_game) if f.severity == "Critical"]
 
 
 def test_mods_summary_sums_match_layers(mini_game):

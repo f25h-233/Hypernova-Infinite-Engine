@@ -36,6 +36,7 @@ def test_scan_mods_duplicate_id(mini_game):
     scan = scan_mods(mini_game, ["mod_a"])
     assert scan.duplicate_ids == {"mod_a": ["mod_a", "mod_a_copy"]}
     assert scan.mods[0].folder.name == "mod_a"
+    assert [p.name for p in scan.folders_by_id["mod_a"]] == ["mod_a", "mod_a_copy"]
 
 
 def test_pick_prefers_enabled_order(mini_game):

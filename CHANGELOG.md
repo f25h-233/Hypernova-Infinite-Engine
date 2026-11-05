@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.9.5] - 2026-11-05
+
+### Fixed
+
+- manifest 生成工具对玩家侧脏数据的健壮性（线上反馈：单条失效缓存导致整份
+  清单不写盘）：
+  - DDSCache 是持久缓存，记录可能指向 mod 更新/改名后已不存在的原图。
+    `manifest_builder` 现在以磁盘为准解析记录：原图找不到的按失效缓存跳过，
+    并从 baked 覆盖率分母中剔除；DDS 文件丢失但原图仍在的条目降级为未烘焙，
+    不再触发 `missing_dds` 失败。
+  - 重复 ModID（原版 + 汉化两份同名 id）按「文件实际所在目录」落位，不再
+    只认排序后的第一个文件夹。
+  - 标题闭包里磁盘上不存在的贴图引用跳过并计入 `unresolved_refs`，不再因
+    `missing_file` 拒绝写 manifest。
+  - 新增统计：`stale_metadata_count`、`dds_missing_count`、
+    `unresolved_refs_count`；玩家侧日志会打印对应 `[注意]` 行。
+
+## [1.9.4] - 2026-11-05
+
+### Fixed
+
+- agent 纹理补丁支持 **GraphicsLib 1.12.2**（此前只认 1.12.1 的
+  `TextureData.class` SHA-256，1.12.2 上直接
+  `TextureData sha mismatch, not patching`，懒加载静默失效）。
+  - 构建改为多版本变体：每个受支持版本从它自己的 `Graphics.jar` 取原始
+    class 做 SHA 钉死、编译一份补丁类，运行期按 SHA 选择变体。
+  - 1.12.2 的 jar 不再内嵌 `.java`，补丁源从上游源码取，并已验证
+    用 JDK 17 编译该源码可**逐字节复现**官方 `TextureData.class`
+    （`3b939e21…`）。
+  - 未识别版本仍 fail-closed：只记一条
+    `unsupported GraphicsLib TextureData (sha256=…)`，不猜测、不崩溃。
+  - 构建期新增守卫：补丁编译产生的 `TextureData$*.class`（switch 映射
+    合成类）必须与厂商 jar 语义一致，否则构建失败。
+
 ## [1.9.3] - 2026-11-04
 
 当前版本。`1.0.0`（功能完善可用，M2.8）之后累计 **9 个 minor**
