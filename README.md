@@ -30,9 +30,9 @@ Starsector 0.98a 的运行时纹理预取与兜底 mod，附带一个可选的�
 | `1.3.0`–`1.4.2` | M4.1 | agent-side frame probe |
 | `1.5.0`–`1.9.3` | M6 | 汉化 / 中文输入 / 字体 / UI 兼容性审计与工具 |
 | **`1.9.6`** | FR 0.9.8 适配（2026-11-07） | agent 文件索引支持 0.9.8；lazy/DDS 使用 ResourceLoaderLock；lazy 仍默认关闭 |
-| **`1.9.5`** | 健壮性修复（2026-11-05） | 玩家侧 manifest 生成容忍失效 DDSCache 记录与重复 ModID |
+| **`1.9.5`** | 健壮性修复（2026-11-05） | 玩家侧 manifest 生成容忍失效 DDSCache 记录与重复 ModID；上一个公开版本 |
 | **`1.9.4`** | 兼容修复（2026-11-05） | 纹理补丁支持 GraphicsLib 1.12.2（多版本 SHA 变体） |
-| `1.9.3` | M6 终审 fix（`e43e7b0`，2026-11-03） | 上一个公开版本 |
+| `1.9.3` | M6 终审 fix（`e43e7b0`，2026-11-03） | — |
 
 `1.9.3` 不是“第 19 个正式版”，而是 `1.0.0` 之后按 `feat`/`fix` 累计出来的
 post-1.0 历史：9 个 minor（诊断、兼容性工具），最后一个 minor 线到
@@ -44,7 +44,7 @@ post-1.0 历史：9 个 minor（诊断、兼容性工具），最后一个 minor
 | 模块 | 默认 | 开关 |
 |---|---:|---|
 | 主 mod 运行期预取/兜底 | **开** | `hypernova.json` → `enabled` |
-| agent 文件索引（FR FileLoaderFast） | **开** | `fileIndex.enabled` / `-Dhypernova.fileIndex` |
+| agent 文件索引（FR FileLoaderFast） | **开** | `fileIndex.enabled` / `-Dhypernova.fileIndex`；0.9.8 上可用 `-Dhypernova.fileIndex.fr098=false` 单独关闭 |
 | agent Janino 脚本缓存 | **开** | `scripts.enabled` |
 | agent 法线图缓存补丁 | **开** | `textures.enabled` |
 | 纹理懒加载 | **关** | `textures.lazy.enabled=true` / `-Dhypernova.textures.lazy=true` |
@@ -66,6 +66,7 @@ post-1.0 历史：9 个 minor（诊断、兼容性工具），最后一个 minor
 | GraphicsLib | 1.12.1 / 1.12.2（agent 纹理补丁按原类 SHA-256 分别支持；其它版本降级为不修改，不崩溃） |
 
 - 主 mod 不需要 FR；其它 FR 版本下 agent 的 file index / lazy textures 会 fail-open（不跳过、不代理），不会崩溃。
+- FR 0.9.8 上的 lazy/DDS 仅在菜单路径做过 selftest（真实进程内 materialize→evict→re-materialize）；读档/战役场景未验证。
 - 汉化测试版 / ChineseInputFix / 字体 UI 的兼容性审计见 [`docs/m6-results.md`](docs/m6-results.md)。
 - 本仓库**不包含** Starsector 游戏文件、汉化包或第三方 mod 文件。
 
