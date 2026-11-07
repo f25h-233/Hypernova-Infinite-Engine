@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.9.6] - 2026-11-07
+
+### Added
+
+- agent 支持 **Fast Rendering 0.9.8**：
+  - 文件索引按版本选择 handle 形状：0.9.7 的嵌套
+    `ResourceHandle$FileHandle` 与 0.9.8 的顶层
+    `ResourceHandle(File, ResourceLocation, String)`；0.9.8 replay 传空
+    extension，避免在 `FR-Main-Loader` 上串行预读约 275 MB 文本。
+  - 旧索引按 `frVersion` / `shapeStamp` 自动失效；不需要手动清缓存。
+  - lazy/DDS 在 0.9.8 上使用 `ResourceLoaderLock.executorLock`，避免绕过
+    FR 的纹理提交锁；lazy 仍默认关闭。
+
+### Fixed
+
+- 拆分 file index 与 lazy 的 FR 版本门禁，防止 0.9.8 上误开未适配的 lazy。
+
 ## [1.9.5] - 2026-11-05
 
 ### Fixed
