@@ -59,6 +59,22 @@ class DdsBridgeTest {
                 DdsBridge.newHandler(new StaticLoader(), "graphics/a.png", td, 9));
     }
 
+    @Test
+    void commitLockUsesFrExecutorLockWhenPresent() {
+        Object loader = new Object();
+        Object frLock = DdsBridge.executorLock();
+        assertNotNull(frLock, "fixture ResourceLoaderLock must resolve");
+        assertSame(frLock, DdsBridge.commitLock(loader));
+    }
+
+    @Test
+    void commitLockFallsBackToLoaderMonitor() {
+        Object loader = new Object();
+        assertSame(loader, DdsBridge.commitLock(loader, null));
+        Object frLock = new Object();
+        assertSame(frLock, DdsBridge.commitLock(loader, frLock));
+    }
+
     static final class FakeLoader {
         private String newVanillaTextureHandler(
                 String name, String path, TextureData data, int id) {

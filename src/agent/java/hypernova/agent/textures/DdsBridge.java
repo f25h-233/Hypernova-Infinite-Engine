@@ -20,6 +20,8 @@ public final class DdsBridge {
 
     private static volatile boolean resolved;
     private static volatile boolean available;
+    private static volatile boolean lockResolved;
+    private static volatile Object frExecutorLock;
     private static volatile Method getTexture;
     private static volatile Method commitTexture;
     private static volatile Method isDds;
@@ -36,6 +38,47 @@ public final class DdsBridge {
     public static boolean available() {
         resolve();
         return available;
+    }
+
+    /**
+     * FR 0.9.8 serializes GL executor submissions through
+     * ResourceLoaderLock.executorLock. 0.9.7 has no such class; returning null
+     * lets the caller keep the old TextureLoader-monitor behavior.
+     */
+    public static Object executorLock() {
+        resolveExecutorLock();
+        return frExecutorLock;
+    }
+
+    /** The monitor the caller must hold around DDSIntegration.commitTexture. */
+    public static Object commitLock(Object loader) {
+        return commitLock(loader, executorLock());
+    }
+
+    static Object commitLock(Object loader, Object frLock) {
+        return frLock != null ? frLock : loader;
+    }
+
+    private static void resolveExecutorLock() {
+        if (lockResolved) return;
+        synchronized (DdsBridge.class) {
+            if (lockResolved) return;
+            try {
+                Class<?> cls = Class.forName(
+                        "com.genir.renderer.overrides.loading.ResourceLoaderLock",
+                        false, DdsBridge.class.getClassLoader());
+                Field field = cls.getField("executorLock");
+                Object value = field.get(null);
+                if (value == null) throw new IllegalStateException("executorLock null");
+                frExecutorLock = value;
+                AgentLog.info("lazy: FR ResourceLoaderLock.executorLock resolved");
+            } catch (Throwable t) {
+                frExecutorLock = null;
+                AgentLog.info("lazy: FR ResourceLoaderLock unavailable; using TextureLoader monitor");
+            } finally {
+                lockResolved = true;
+            }
+        }
     }
 
     public static Data get(Path absoluteImagePath) {
