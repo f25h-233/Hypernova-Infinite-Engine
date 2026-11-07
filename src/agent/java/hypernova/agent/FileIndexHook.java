@@ -76,7 +76,8 @@ public final class FileIndexHook {
     /**
      * FR builds this lever's assumptions into the injected {@code F_SAME} frame and
      * into the cached key normalization. The 0.9.7 line is always supported; the
-     * 0.9.8 shape is supported but stays opt-in until the warm A/B ruling.
+     * 0.9.8 shape is supported and on by default after Task 3's warm A/B ruling
+     * ({@code -Dhypernova.fileIndex.fr098=false} opts out).
      */
     static boolean supportedFileIndexVersion() {
         return supportedFileIndexVersion(frVersion());
@@ -89,29 +90,26 @@ public final class FileIndexHook {
     }
 
     /**
-     * Staging switch: 0.9.8 file index stays opt-in until Task 3's warm A/B.
-     * Task 5 flips the default after the ruling.
+     * 0.9.8 file index is on by default after Task 3's warm A/B ruling;
+     * {@code -Dhypernova.fileIndex.fr098=false} opts out.
      */
     static boolean fr098Enabled() {
         String prop = System.getProperty("hypernova.fileIndex.fr098");
-        return prop != null && Boolean.parseBoolean(prop);
+        return prop == null || Boolean.parseBoolean(prop);
     }
 
     static boolean fr098StagedOff() {
         return "0.9.8".equals(normalizeFrVersion(frVersion())) && !fr098Enabled();
     }
 
-    /**
-     * Lazy textures replay 0.9.7 lambda/thread semantics. 0.9.8 joins this set
-     * only after the ResourceLoaderLock bridge lands (Task 5).
-     */
+    /** Lazy textures support the 0.9.7 line and 0.9.8 (executorLock bridge). */
     static boolean supportedLazyFrVersion() {
         return supportedLazyFrVersion(frVersion());
     }
 
     static boolean supportedLazyFrVersion(String version) {
         String v = normalizeFrVersion(version);
-        return "0.9.7rc2".equals(v) || "0.9.7".equals(v);
+        return "0.9.7rc2".equals(v) || "0.9.7".equals(v) || "0.9.8".equals(v);
     }
 
     static String normalizeFrVersion(String version) {

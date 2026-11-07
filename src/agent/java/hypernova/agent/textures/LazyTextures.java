@@ -1100,7 +1100,10 @@ public final class LazyTextures {
         }
         int id;
         Object real;
-        synchronized (loader) {
+        // 0.9.7 locks the TextureLoader instance; 0.9.8 locks
+        // ResourceLoaderLock.executorLock. commitLock() picks the right monitor.
+        Object commitLock = DdsBridge.commitLock(loader);
+        synchronized (commitLock) {
             id = DdsBridge.commit(data.texData());
             if (id <= 0) {
                 noteDdsFallback(DdsFallbackReason.COMMIT, e.path, "id=" + id);

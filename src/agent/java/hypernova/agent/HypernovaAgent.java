@@ -32,7 +32,7 @@ public final class HypernovaAgent {
                     AgentLog.info("file index: disabled for FR version "
                             + FileIndexHook.frVersion()
                             + (FileIndexHook.fr098StagedOff()
-                            ? " (0.9.8 opt-in; -Dhypernova.fileIndex.fr098=true)"
+                            ? " (0.9.8 disabled by -Dhypernova.fileIndex.fr098=false)"
                             : " (unsupported)"));
                 } else {
                     instrumentation.addTransformer(new FileIndexTransformer(), false);
@@ -52,7 +52,7 @@ public final class HypernovaAgent {
                         AgentLog.info("lazy: FR missing; lazy textures disabled");
                     } else if (!FileIndexHook.supportedLazyFrVersion()) {
                         // 注入的 lambda/thread 语义按 0.9.7rc2 复刻；0.9.8 的
-                        // ResourceLoaderLock 桥接完成前不得开启（REQ-R2-04）。
+                        // ResourceLoaderLock 桥接已完成（Task 4），可以开启。
                         AgentLog.info("lazy: unsupported FR version "
                                 + FileIndexHook.frVersion() + "; lazy textures disabled");
                     } else {

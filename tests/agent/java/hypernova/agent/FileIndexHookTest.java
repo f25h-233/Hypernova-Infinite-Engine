@@ -352,11 +352,10 @@ class FileIndexHookTest {
         assertTrue(FileIndexHook.supportedFileIndexVersion("V0.9.7RC2"));
         assertTrue(FileIndexHook.supportedFileIndexVersion("0.9.7"));
         assertTrue(FileIndexHook.supportedFileIndexVersion("v0.9.7"));
-        assertFalse(FileIndexHook.supportedFileIndexVersion("0.9.8"),
-                "0.9.8 file index is opt-in until the warm A/B");
-        System.setProperty("hypernova.fileIndex.fr098", "true");
         assertTrue(FileIndexHook.supportedFileIndexVersion("0.9.8"));
         assertTrue(FileIndexHook.supportedFileIndexVersion("v0.9.8"));
+        System.setProperty("hypernova.fileIndex.fr098", "false");
+        assertFalse(FileIndexHook.supportedFileIndexVersion("0.9.8"));
         System.clearProperty("hypernova.fileIndex.fr098");
         assertTrue(FileIndexHook.supportedFileIndexVersion(" 0.9.7rc2\n"));
         assertFalse(FileIndexHook.supportedFileIndexVersion("0.9.5"));
@@ -364,9 +363,9 @@ class FileIndexHookTest {
         assertFalse(FileIndexHook.supportedFileIndexVersion("unknown"));
         assertFalse(FileIndexHook.supportedFileIndexVersion(""));
         assertFalse(FileIndexHook.supportedFileIndexVersion(null));
-        // Stage 1: lazy stays pinned to 0.9.7 until the executorLock bridge lands.
+        // Stage 2: lazy joins 0.9.8 after the executorLock bridge.
         assertTrue(FileIndexHook.supportedLazyFrVersion("0.9.7rc2"));
-        assertFalse(FileIndexHook.supportedLazyFrVersion("0.9.8"));
+        assertTrue(FileIndexHook.supportedLazyFrVersion("0.9.8"));
     }
 
     @Test
