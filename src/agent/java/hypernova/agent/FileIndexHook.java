@@ -34,8 +34,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * enum-typed, one {@code String}, and one boolean field.
  */
 public final class FileIndexHook {
-    private static final String FH_CLASS =
+    private static final String FH_CLASS_097 =
             "com.genir.renderer.overrides.loading.ResourceHandle$FileHandle";
+    private static final String RESOURCE_HANDLE_098 =
+            "com.genir.renderer.overrides.loading.ResourceHandle";
     private static final String EXCLUDED_RESOURCE_PATH = "../starfarer.res/res";
 
     private static volatile RuntimeContext context;
@@ -61,16 +63,53 @@ public final class FileIndexHook {
         context = ctx;
     }
 
-    /**
-     * FR builds this lever's assumptions into the injected {@code F_SAME} frame and
-     * into the cached key normalization. Only the pinned 0.9.7 line is supported;
-     * anything else disables the transformer before it can emit unverifiable bytecode.
-     */
-    static boolean supportedFrVersion() {
-        return supportedFrVersion(frVersion());
+    /** 0.9.7 caches nested FileHandle data; 0.9.8 caches top-level ResourceHandle data. */
+    private enum HandleShape { NESTED_097, TOP_LEVEL_098 }
+
+    private static HandleShape handleShape(String version) {
+        String v = normalizeFrVersion(version);
+        if ("0.9.8".equals(v)) return HandleShape.TOP_LEVEL_098;
+        if ("0.9.7rc2".equals(v) || "0.9.7".equals(v)) return HandleShape.NESTED_097;
+        return null;
     }
 
-    static boolean supportedFrVersion(String version) {
+    /**
+     * FR builds this lever's assumptions into the injected {@code F_SAME} frame and
+     * into the cached key normalization. The 0.9.7 line is always supported; the
+     * 0.9.8 shape is supported but stays opt-in until the warm A/B ruling.
+     */
+    static boolean supportedFileIndexVersion() {
+        return supportedFileIndexVersion(frVersion());
+    }
+
+    static boolean supportedFileIndexVersion(String version) {
+        String v = normalizeFrVersion(version);
+        if ("0.9.8".equals(v) && !fr098Enabled()) return false;
+        return handleShape(v) != null;
+    }
+
+    /**
+     * Staging switch: 0.9.8 file index stays opt-in until Task 3's warm A/B.
+     * Task 5 flips the default after the ruling.
+     */
+    static boolean fr098Enabled() {
+        String prop = System.getProperty("hypernova.fileIndex.fr098");
+        return prop != null && Boolean.parseBoolean(prop);
+    }
+
+    static boolean fr098StagedOff() {
+        return "0.9.8".equals(normalizeFrVersion(frVersion())) && !fr098Enabled();
+    }
+
+    /**
+     * Lazy textures replay 0.9.7 lambda/thread semantics. 0.9.8 joins this set
+     * only after the ResourceLoaderLock bridge lands (Task 5).
+     */
+    static boolean supportedLazyFrVersion() {
+        return supportedLazyFrVersion(frVersion());
+    }
+
+    static boolean supportedLazyFrVersion(String version) {
         String v = normalizeFrVersion(version);
         return "0.9.7rc2".equals(v) || "0.9.7".equals(v);
     }
@@ -115,13 +154,13 @@ public final class FileIndexHook {
      * obfuscated location class, the resolved enum/String/boolean fields, and the
      * {@code FileHandle} constructor parameters. Any drift rejects the index.
      */
-    static String shapeStamp(List<Object> locations, ClassLoader loader) {
+    static String shapeStamp(String frVersion, List<Object> locations, ClassLoader loader) {
         try {
             if (locations == null || locations.isEmpty()) return null;
             Class<?> locationClass = locations.get(0).getClass();
             LocationFields fields = LOCATION_FIELDS.get(locationClass);
             if (fields == null) return null;
-            Constructor<?> ctor = fileHandleCtor(loader);
+            Constructor<?> ctor = fileHandleCtor(frVersion, loader);
             if (ctor == null) return null;
             StringBuilder out = new StringBuilder(locationClass.getSimpleName());
             out.append('|').append(fieldSignature(fields.type()));
@@ -180,11 +219,11 @@ public final class FileIndexHook {
             if (target == null || locations == null || locations.isEmpty()) return -1;
 
             String frVersion = frVersion();
-            if (!supportedFrVersion(frVersion)) {
+            if (!supportedFileIndexVersion(frVersion)) {
                 AgentLog.info("file index: unsupported FR version " + frVersion + "; full crawl");
                 return -1;
             }
-            String shapeStamp = shapeStamp(locations, outer.getClass().getClassLoader());
+            String shapeStamp = shapeStamp(frVersion, locations, outer.getClass().getClassLoader());
             if (shapeStamp == null) {
                 AgentLog.info("file index: cannot resolve runtime shape; full crawl");
                 return -1;
@@ -213,7 +252,7 @@ public final class FileIndexHook {
                 AgentLog.info("file index: directory changed [" + changed + "]; full crawl");
                 return -1;
             }
-            Constructor<?> ctor = fileHandleCtor(outer.getClass().getClassLoader());
+            Constructor<?> ctor = fileHandleCtor(frVersion, outer.getClass().getClassLoader());
             if (ctor == null) return -1;
 
             Map<Integer, List<FileIndex.Entry>> cached = new HashMap<>();
@@ -283,8 +322,8 @@ public final class FileIndexHook {
             List<Object> collector = (List<Object>) get(crawler, "collector");
             if (locations == null || collector == null || locations.isEmpty()) return;
             String frVersion = frVersion();
-            if (!supportedFrVersion(frVersion)) return;
-            String shapeStamp = shapeStamp(locations, outer.getClass().getClassLoader());
+            if (!supportedFileIndexVersion(frVersion)) return;
+            String shapeStamp = shapeStamp(frVersion, locations, outer.getClass().getClassLoader());
             if (shapeStamp == null) {
                 AgentLog.info("file index: cannot resolve runtime shape; index not saved");
                 return;
@@ -578,8 +617,13 @@ public final class FileIndexHook {
     private static void add(Map<String, List<Object>> target, Constructor<?> ctor,
                             Object location, String key, String path) throws Exception {
         if (key == null || key.isEmpty()) return;
-        target.computeIfAbsent(key, k -> new ArrayList<>())
-                .add(ctor.newInstance(new File(path), location));
+        // 0.9.8's ResourceHandle ctor preloads text by extension. Replaying
+        // thousands of handles on FR-Main-Loader must not synchronously read
+        // ~275 MB; getString() stays lazy and is still correct.
+        Object handle = ctor.getParameterCount() == 3
+                ? ctor.newInstance(new File(path), location, "")
+                : ctor.newInstance(new File(path), location);
+        target.computeIfAbsent(key, k -> new ArrayList<>()).add(handle);
     }
 
     /** Mirrors FR's saveFile key computation exactly. */
@@ -617,7 +661,11 @@ public final class FileIndexHook {
         }
     }
 
-    private static Constructor<?> fileHandleCtor(ClassLoader preferred) {
+    private static Constructor<?> fileHandleCtor(String frVersion, ClassLoader preferred) {
+        HandleShape shape = handleShape(frVersion);
+        if (shape == null) return null;
+        String className = shape == HandleShape.TOP_LEVEL_098
+                ? RESOURCE_HANDLE_098 : FH_CLASS_097;
         // FR and the game are normally on the system classpath, but the test runner
         // (and some launchers) load classes through a child loader. Try the loader
         // that owns FileLoaderFast first, then the context/system loaders.
@@ -626,10 +674,17 @@ public final class FileIndexHook {
                 preferred, context, ClassLoader.getSystemClassLoader()}) {
             if (loader == null) continue;
             try {
-                Class<?> cls = Class.forName(FH_CLASS, false, loader);
+                Class<?> cls = Class.forName(className, false, loader);
                 for (Constructor<?> ctor : cls.getConstructors()) {
                     Class<?>[] params = ctor.getParameterTypes();
-                    if (params.length == 2 && params[0] == File.class) return ctor;
+                    if (shape == HandleShape.TOP_LEVEL_098) {
+                        if (params.length == 3 && params[0] == File.class
+                                && params[2] == String.class) {
+                            return ctor;
+                        }
+                    } else if (params.length == 2 && params[0] == File.class) {
+                        return ctor;
+                    }
                 }
             } catch (Throwable ignored) {
                 // try the next loader; FR missing or class shape changed: fail open.

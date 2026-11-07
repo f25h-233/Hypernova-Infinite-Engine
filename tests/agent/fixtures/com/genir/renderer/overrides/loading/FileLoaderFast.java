@@ -11,10 +11,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** Test fixture with the same inner-class/method shape as FR 0.9.7. */
+/** Test fixture with both FR 0.9.7 (nested) and 0.9.8 (top-level) handle shapes. */
 public class FileLoaderFast {
     private final List<FileLoader.ResourceLocation> allLocations;
-    private final Map<String, List<ResourceHandle.FileHandle>> cachedFiles = new HashMap<>();
+    private final Map<String, List<Object>> cachedFiles = new HashMap<>();
 
     public FileLoaderFast(List<FileLoader.ResourceLocation> allLocations) {
         this.allLocations = allLocations;
@@ -24,13 +24,27 @@ public class FileLoaderFast {
         return new DirectoryCrawler().cacheLocations();
     }
 
-    /** Runs the crawl and saves on the same crawler instance (production shape). */
+    /** Runs the 0.9.7-shaped crawl and saves on the same crawler instance. */
     public int crawlAndSave() {
         DirectoryCrawler crawler = new DirectoryCrawler();
         int count = crawler.cacheLocations();
         FileIndexHook.save(crawler, count);
         FileIndexHook.awaitSavesForTest(30_000);
         return count;
+    }
+
+    /** Runs the 0.9.8-shaped crawl and saves on the same crawler instance. */
+    public int crawlAndSave098() {
+        DirectoryCrawler crawler = new DirectoryCrawler(true);
+        int count = crawler.cacheLocations();
+        FileIndexHook.save(crawler, count);
+        FileIndexHook.awaitSavesForTest(30_000);
+        return count;
+    }
+
+    /** Runs the 0.9.8-shaped crawl without saving (for tryLoad tests). */
+    public int crawl098() {
+        return new DirectoryCrawler(true).cacheLocations();
     }
 
     private String getLocationPath(FileLoader.ResourceLocation location) {
@@ -58,6 +72,15 @@ public class FileLoaderFast {
 
     private final class DirectoryCrawler {
         private final List<Object> collector = new ArrayList<>();
+        private final boolean topLevel;
+
+        private DirectoryCrawler() {
+            this(false);
+        }
+
+        private DirectoryCrawler(boolean topLevel) {
+            this.topLevel = topLevel;
+        }
 
         private int cacheLocations() {
             for (FileLoader.ResourceLocation location : allLocations) {
@@ -68,11 +91,11 @@ public class FileLoaderFast {
             for (Object item : collector) {
                 if (item instanceof List<?> list) {
                     for (Object handle : list) {
-                        saveFile((ResourceHandle.FileHandle) handle);
+                        saveFile(handle);
                         count++;
                     }
                 } else {
-                    saveFile((ResourceHandle.FileHandle) item);
+                    saveFile(item);
                     count++;
                 }
             }
@@ -80,16 +103,29 @@ public class FileLoaderFast {
         }
 
         private void walk(File file, FileLoader.ResourceLocation location) {
-            collector.add(new ResourceHandle.FileHandle(file, location));
+            collector.add(topLevel
+                    ? new ResourceHandle(file, location, "")
+                    : new ResourceHandle.FileHandle(file, location));
             File[] children = file.listFiles();
             if (children != null) {
                 for (File child : children) walk(child, location);
             }
         }
 
-        private void saveFile(ResourceHandle.FileHandle handle) {
-            String locationPath = new File(getLocationPath(handle.location)).getAbsolutePath();
-            String key = normalize(handle.file.getPath().replace(locationPath, ""));
+        private void saveFile(Object handle) {
+            File file;
+            FileLoader.ResourceLocation location;
+            if (handle instanceof ResourceHandle h) {
+                file = h.file;
+                location = h.location;
+            } else if (handle instanceof ResourceHandle.FileHandle h) {
+                file = h.file;
+                location = h.location;
+            } else {
+                return;
+            }
+            String locationPath = new File(getLocationPath(location)).getAbsolutePath();
+            String key = normalize(file.getPath().replace(locationPath, ""));
             if (key.isEmpty()) return;
             cachedFiles.computeIfAbsent(key, k -> new ArrayList<>()).add(handle);
         }
