@@ -124,3 +124,24 @@ def test_cli_status_returns_json(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     data = json.loads(r.stdout)
     assert data["version"] == "v0.9.5"
+
+
+def test_pins_cover_both_supported_versions():
+    assert set(fr_install.EXPECTED_PINS) == {"v0.9.7rc2", "v0.9.8"}
+    assert fr_install.EXPECTED_PINS["v0.9.8"]["fr.jar"] == (
+        "c7d91b0c8f7aaaa3380b52d6549681d75a93f6b626ad06a673002b845da04ffd")
+    assert fr_install.EXPECTED_PINS["v0.9.8"]["fr.agent.jar"] == (
+        "55eecda58608cf1c6a23466acc957bdb93d648d6800d7527769c07450a884cbb")
+
+
+def test_pins_for_infers_version_from_source(tmp_path):
+    src = make_src(tmp_path, "v0.9.8")
+    pins, version = fr_install.pins_for(src, None)
+    assert version == "v0.9.8"
+    assert pins == fr_install.EXPECTED_PINS["v0.9.8"]
+
+
+def test_pins_for_rejects_unknown_version(tmp_path):
+    src = make_src(tmp_path, "v0.9.9")
+    with pytest.raises(fr_install.FrInstallError):
+        fr_install.pins_for(src, None)

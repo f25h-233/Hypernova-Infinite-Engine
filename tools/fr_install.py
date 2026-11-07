@@ -5,7 +5,7 @@ Only ``fr.jar``, ``fr.agent.jar`` and ``fr.version.txt`` are touched.
 ``fr.vmparams`` and the launch profiles are never modified: they carry local
 memory settings and the Hypernova agent line.
 
-The 0.9.7rc2 pins are recorded below; pass ``--no-verify`` only for synthetic
+The 0.9.7rc2 / 0.9.8 pins are recorded below; pass ``--no-verify`` only for synthetic
 fixtures. A backup is created as ``<name>.bak-hypernova-<old-version>`` and is
 never overwritten with different content.
 """
@@ -27,11 +27,17 @@ CORE = "starsector-core"
 VERSION_CLASS = "com/genir/renderer/Version.class"
 VERSION_RE = re.compile(rb"v0\.9\.[0-9A-Za-z][0-9A-Za-z.\-]{0,19}")
 
-EXPECTED_VERSION = "v0.9.7rc2"
-EXPECTED_SHA256 = {
-    FR_JAR: "5f811d32eaeb4cc359a80ae5bae95c8ee3414d3f3786abb99996afaaa6e16703",
-    FR_AGENT: "3caea920626d666b275c8352ce1fb2f2393ff26816ec8aab89d705b2673ad7d4",
+EXPECTED_PINS = {
+    "v0.9.7rc2": {
+        FR_JAR: "5f811d32eaeb4cc359a80ae5bae95c8ee3414d3f3786abb99996afaaa6e16703",
+        FR_AGENT: "3caea920626d666b275c8352ce1fb2f2393ff26816ec8aab89d705b2673ad7d4",
+    },
+    "v0.9.8": {
+        FR_JAR: "c7d91b0c8f7aaaa3380b52d6549681d75a93f6b626ad06a673002b845da04ffd",
+        FR_AGENT: "55eecda58608cf1c6a23466acc957bdb93d648d6800d7527769c07450a884cbb",
+    },
 }
+DEFAULT_SRC = ".cache/fr098/release/fast-rendering-0.9.8"
 
 
 class FrInstallError(Exception):
@@ -103,6 +109,29 @@ def _validate_source(src: Path, expected: dict[str, str] | None,
     return version or "unknown"
 
 
+def pins_for(src: Path, version: str | None) -> tuple[dict[str, str], str]:
+    """Resolve the pinned hashes for the source tree's FR version.
+
+    Reads fr.version.txt when --version is omitted, then requires an entry in
+    EXPECTED_PINS. Unknown versions are fail-closed; --no-verify is the only
+    bypass and is reserved for synthetic fixtures.
+    """
+    if not src.is_dir():
+        raise FrInstallError(f"source directory not found: {src}")
+    if version is None:
+        version_file = src / FR_VERSION
+        if not version_file.is_file():
+            raise FrInstallError(f"source is missing {FR_VERSION}: {src}")
+        version = version_file.read_text(encoding="utf-8", errors="replace").strip() or None
+    if version is None:
+        raise FrInstallError(f"cannot determine FR version from: {src}")
+    pins = EXPECTED_PINS.get(version)
+    if pins is None:
+        known = ", ".join(sorted(EXPECTED_PINS))
+        raise FrInstallError(f"unsupported FR version: {version!r}; known: {known}")
+    return pins, version
+
+
 def _backup(path: Path, version: str) -> Path | None:
     if not path.exists():
         return None
@@ -116,8 +145,8 @@ def _backup(path: Path, version: str) -> Path | None:
     return backup
 
 
-def install(src: Path, game: Path, *, expected: dict[str, str] | None = EXPECTED_SHA256,
-            version: str | None = EXPECTED_VERSION, dry_run: bool = False) -> dict:
+def install(src: Path, game: Path, *, expected: dict[str, str] | None = None,
+            version: str | None = None, dry_run: bool = False) -> dict:
     core = game / CORE
     if not core.is_dir():
         raise FrInstallError(f"target directory not found: {core}")
@@ -213,11 +242,13 @@ def rollback(game: Path, *, to_version: str | None = None, dry_run: bool = False
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--game", required=True)
-    ap.add_argument("--src", default=".cache/fr097/fast-rendering-0.9.7rc2")
+    ap.add_argument("--src", default=DEFAULT_SRC)
+    ap.add_argument("--version", default=None,
+                    help="expected FR version; default: read fr.version.txt from --src")
     ap.add_argument("--action", choices=("install", "rollback", "status"), default="status")
     ap.add_argument("--to", default=None, help="rollback target version, e.g. v0.9.5")
     ap.add_argument("--no-verify", action="store_true",
-                    help="skip the pinned 0.9.7rc2 sha256/version checks (tests only)")
+                    help="skip the pinned sha256/version checks (tests only)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
     game = Path(args.game)
@@ -225,8 +256,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "status":
             data = status(game)
         elif args.action == "install":
-            expected = None if args.no_verify else EXPECTED_SHA256
-            version = None if args.no_verify else EXPECTED_VERSION
+            expected = None
+            version = None
+            if not args.no_verify:
+                expected, version = pins_for(Path(args.src), args.version)
             data = install(Path(args.src), game, expected=expected, version=version,
                            dry_run=args.dry_run)
         else:
