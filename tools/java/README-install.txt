@@ -1,8 +1,8 @@
-Hypernova 无限引擎 1.9.5 —— 安装说明
+Hypernova 无限引擎 1.9.6 —— 安装说明
 ======================================
 
 这个包里有两半东西。主 mod 放进 mods 就能用；可选的 Java agent 需要改启动参数，
-拿出来以后启动阶段的收益更大。主 mod 不依赖 agent，agent 不装也不会出问题。
+拿出来以后，启动阶段的优化才会生效。主 mod 不依赖 agent，agent 不装也不会出问题。
 
 
 一、主 mod（先做这个）
@@ -15,7 +15,7 @@ Hypernova 无限引擎 1.9.5 —— 安装说明
 
 最终路径应该长这样： 游戏目录\mods\hypernova_infinite_engine\mod_info.json
 
-如果你解压出来的是 hypernova-1.9.5\hypernova_infinite_engine\ 这种两层，
+如果你解压出来的是 hypernova-1.9.6\hypernova_infinite_engine\ 这种两层，
 把里面那层 hypernova_infinite_engine 拖到 mods\ 下面，否则游戏扫不到它。
 
 默认配置就能跑，不用改任何文件。

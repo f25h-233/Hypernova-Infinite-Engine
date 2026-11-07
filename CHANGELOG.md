@@ -15,7 +15,7 @@
 
 ### Fixed
 
-- 拆分 file index 与 lazy 的 FR 版本门禁，防止 0.9.8 上误开未适配的 lazy。
+- 拆分 file index 与 lazy 的 FR 版本门禁，避免在尚未适配的 FR 版本上误开 lazy。
 
 ## [1.9.5] - 2026-11-05
 

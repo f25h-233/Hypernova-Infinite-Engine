@@ -132,7 +132,7 @@ bash tools/java/build-mod.sh
 
 > 表里的数字是各里程碑在当时环境下的门禁结果，不代表所有 mod 集/硬件都能复现。
 
-最近一次全量验证（2026-11-07）：main 115/115、agent 217/216/1（1 个已知 Windows symlink 用例跳过）、pytest 511。
+最近一次全量验证（2026-11-07）：main 115/115、agent 217/216/1（1 个已知 Windows symlink 用例 aborted（环境性））、pytest 511。
 
 ## 版本策略
 
