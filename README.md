@@ -2,7 +2,7 @@
 
 Starsector 0.98a 的运行时纹理预取与兜底 mod，附带一个可选的启动期 Java agent。
 
-> **版本：1.9.7（2026-11-12）**
+> **版本：1.9.9（2026-11-12）**
 >
 > `1.0.0` 是“功能完善可用”的锚点（M2.8，2026-11-02：主 mod + agent +
 > manifest + lazy/DDS/LRU 全部落地）；之后 M4/M4.1/M6 的诊断、兼容性
@@ -29,6 +29,7 @@ Starsector 0.98a 的运行时纹理预取与兜底 mod，附带一个可选的�
 | `1.1.0`–`1.2.9` | M4 | frame-time probe / 会话报告 |
 | `1.3.0`–`1.4.2` | M4.1 | agent-side frame probe |
 | `1.5.0`–`1.9.3` | M6 | 汉化 / 中文输入 / 字体 / UI 兼容性审计与工具 |
+| **`1.9.9`** | 高清字体桥（2026-11-12） | 优化测试版 + FR：agent premain 让 DynFont 生成高清缓存，并把成对的 fnt/page 覆盖到 `graphics/fonts/`；原文件备份 `*.bak-hypernova-hd`；首次约 2–3 秒，之后复用；`-Dhypernova.fontHd=false` 关闭 |
 | **`1.9.7`** | manifest 生成提速（2026-11-12） | 图片尺寸持久缓存 + 并行探测 + 去掉重复磁盘校验；只加一个 mod 不再重扫全量 |
 | **`1.9.6`** | FR 0.9.8 适配（2026-11-07） | agent 文件索引支持 0.9.8；lazy/DDS 使用 ResourceLoaderLock；lazy 仍默认关闭 |
 | **`1.9.5`** | 健壮性修复（2026-11-05） | 玩家侧 manifest 生成容忍失效 DDSCache 记录与重复 ModID |
@@ -48,6 +49,7 @@ post-1.0 历史：9 个 minor（诊断、兼容性工具），最后一个 minor
 | agent 文件索引（FR FileLoaderFast） | **开** | `fileIndex.enabled` / `-Dhypernova.fileIndex`；0.9.8 上可用 `-Dhypernova.fileIndex.fr098=false` 单独关闭 |
 | agent Janino 脚本缓存 | **开** | `scripts.enabled` |
 | agent 法线图缓存补丁 | **开** | `textures.enabled` |
+| agent 高清字体桥（远星汉化优化测试版 + FR） | **开**（仅检测到 DynFont 时） | `-Dhypernova.fontHd=false`；只观察不写盘 `-Dhypernova.fontHd.dryRun=true` |
 | 纹理懒加载 | **关** | `textures.lazy.enabled=true` / `-Dhypernova.textures.lazy=true` |
 | DDS 懒加载 | 随懒加载 | `textures.lazy.dds` |
 | 显存淘汰 / LRU | **关** | `textures.lazy.eviction.enabled=true` |
@@ -106,7 +108,7 @@ python tools/install_agent.py --game <游戏目录> --env <profile>
 bash tools/java/build-mod.sh
 ```
 
-产物：`build/java/hypernova-1.9.7.zip`（含主 jar、agent jar、manifest、lazy-skip、README-install）。发行包固定使用 `Starsector-098-Base` 的 manifest；其它 mod 集在目标游戏目录就地生成。
+产物：`build/java/hypernova-1.9.9.zip`（含主 jar、agent jar、manifest、lazy-skip、README-install）。发行包固定使用 `Starsector-098-Base` 的 manifest；其它 mod 集在目标游戏目录就地生成。
 
 ## 回滚
 

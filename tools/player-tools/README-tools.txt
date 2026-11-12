@@ -32,6 +32,20 @@ agent 行删干净，然后你直接启动游戏。改了 mod 文件夹名字之
 游戏照常能玩。主 mod 的预取命中率会低——它靠 manifest 判断哪些贴图值得提前加载，
 而发行包里那份只认识原版贴图。agent 那一半不受影响。
 
+高清字体覆盖的还原
+------------------
+
+Hypernova agent 在远星汉化优化测试版（startup-optimization）上，会先让优化版
+自己生成高清字体缓存，再把成对的 *.fnt / *_0.png 覆盖到
+starsector-core\graphics\fonts\，原文件备份为 *.bak-hypernova-hd。
+
+想把字体退回原版：
+
+  restore-font-hd.bat    一键还原（不弹确认；还原后删除备份）
+
+注意：只要 agent 还装着，下次启动会重新生成并覆盖。要永久退回，先运行
+rollback-agent.bat 去掉 agent 行，再运行 restore-font-hd.bat。
+
 清单和你的 mod 集对不上时，懒加载会 fail-open（不跳过也不代理），不会崩。
 
 产物

@@ -1,4 +1,4 @@
-Hypernova 无限引擎 1.9.7 —— 安装说明
+Hypernova 无限引擎 1.9.9 —— 安装说明
 ======================================
 
 这个包里有两半东西。主 mod 放进 mods 就能用；可选的 Java agent 需要改启动参数，
@@ -15,7 +15,7 @@ Hypernova 无限引擎 1.9.7 —— 安装说明
 
 最终路径应该长这样： 游戏目录\mods\hypernova_infinite_engine\mod_info.json
 
-如果你解压出来的是 hypernova-1.9.7\hypernova_infinite_engine\ 这种两层，
+如果你解压出来的是 hypernova-1.9.9\hypernova_infinite_engine\ 这种两层，
 把里面那层 hypernova_infinite_engine 拖到 mods\ 下面，否则游戏扫不到它。
 
 默认配置就能跑，不用改任何文件。
@@ -75,6 +75,29 @@ Miko_Lite.txt 这几个都认），把 -javaagent 那一行插在 Fast Rendering
 装完打开 starsector.log 搜 hypernova，能看到启动行就是装上了。
 
 
+高清字体（远星汉化优化测试版）
+------------------------------
+
+如果你用的是远星汉化的“优化测试版”（startup-optimization 分支）并且装了大
+Fast Rendering，优化版自带的高清矢量字体在 FR 下本来会静默退回低清位图。
+1.9.9 的 agent 会在启动前让优化版自己生成高清字体缓存，并把成对的
+*.fnt / *_0.png 覆盖到 starsector-core\graphics\fonts\。
+
+首次启动会多花约 2–3 秒（生成字体缓存），以后复用缓存约 0.2 秒。
+
+原文件会备份为 *.bak-hypernova-hd。想退回原版字体：
+
+  hypernova-tools\restore-font-hd.bat
+
+只要 agent 还装着，下次启动会重新生成并覆盖；要永久退回，先运行
+rollback-agent.bat，再运行 restore-font-hd.bat。
+
+不想用这个功能：在启动参数里加 -Dhypernova.fontHd=false。
+只想看它准备改哪些文件、不写盘：加 -Dhypernova.fontHd.dryRun=true。
+
+日志在 saves\hypernova\scripts-agent.log 里搜 fontHd。
+
+
 四、默认值与开关
 ----------------
 
@@ -82,6 +105,7 @@ Miko_Lite.txt 这几个都认），把 -javaagent 那一行插在 Fast Rendering
 agent 文件索引           开    fileIndex.enabled
 agent Janino 脚本缓存    开    scripts.enabled
 agent 法线图缓存补丁     开    textures.enabled
+agent 高清字体桥          开    -Dhypernova.fontHd=false 关闭（仅优化测试版 + FR 生效）
 纹理懒加载               关    textures.lazy.enabled
 DDS 懒加载               跟随懒加载    textures.lazy.dds
 显存淘汰和 LRU           关    textures.lazy.eviction.enabled
@@ -97,6 +121,7 @@ DDS 懒加载               跟随懒加载    textures.lazy.dds
 主 mod    把 hypernova.json 里的 enabled 改成 false，或在 Mod 管理里取消勾选
 agent     删掉启动文件里 -javaagent:...hypernova.agent.jar 那一行
 懒加载    把对应的 enabled 改回 false，或加 -D...=false
+高清字体  hypernova-tools\restore-font-hd.bat（还原 graphics\fonts 下的原文件）
 
 所有路径都是 fail-open，配置或清单对不上时退回原版加载，不会崩。
 

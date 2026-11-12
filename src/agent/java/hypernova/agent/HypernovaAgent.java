@@ -1,5 +1,6 @@
 package hypernova.agent;
 
+import hypernova.agent.fonts.DynFontHd;
 import hypernova.agent.textures.LazyDrainTransformer;
 import hypernova.agent.textures.LazyGameThreadTransformer;
 import hypernova.agent.textures.LazyTextureConfig;
@@ -24,6 +25,17 @@ public final class HypernovaAgent {
                         + " hook Display.update, log every 600 frames");
             }
             StartupTimeline.start();
+            if (frPresent()) {
+                // 优化测试版：FR 绕过了 DynFontOverrides.openStream，高清字体缓存
+                // 永远不会生成。这里在游戏加载字体之前让优化版自己生成缓存，并把
+                // 成对的 fnt/图集覆盖到 graphics/fonts/（原文件备份 .bak-hypernova-hd）。
+                // 与 FR 版本无关；失败只记日志，游戏照常走原版位图。
+                try {
+                    DynFontHd.ensureApplied(ctx);
+                } catch (Throwable t) {
+                    AgentLog.fail("fontHd: bridge failed; continuing", t);
+                }
+            }
             FileIndexHook.setContext(ctx);
             if (frPresent()) {
                 if (!FileIndexHook.enabled()) {
