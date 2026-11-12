@@ -1,4 +1,4 @@
-Hypernova 无限引擎 1.9.6 —— 安装说明
+Hypernova 无限引擎 1.9.7 —— 安装说明
 ======================================
 
 这个包里有两半东西。主 mod 放进 mods 就能用；可选的 Java agent 需要改启动参数，
@@ -15,7 +15,7 @@ Hypernova 无限引擎 1.9.6 —— 安装说明
 
 最终路径应该长这样： 游戏目录\mods\hypernova_infinite_engine\mod_info.json
 
-如果你解压出来的是 hypernova-1.9.6\hypernova_infinite_engine\ 这种两层，
+如果你解压出来的是 hypernova-1.9.7\hypernova_infinite_engine\ 这种两层，
 把里面那层 hypernova_infinite_engine 拖到 mods\ 下面，否则游戏扫不到它。
 
 默认配置就能跑，不用改任何文件。
@@ -40,8 +40,10 @@ Windows 上不用装任何东西，那个批处理会用包里自带的 Python �
 只有 Git Bash / Linux 那条才需要系统里有 Python 3.8 或更新版本。
 
 它要扫一遍 mods\ 里所有贴图。原版规模十几秒，两三百个 mod 大概一两分钟
-（硬盘慢、杀软实时扫描开着会更久）。窗口里会一直刷进度行，屏幕不动是在干活，
-别急着关。
+（硬盘慢、杀软实时扫描开着会更久）。第一次跑、或者刚加了一大批新贴图时，
+要逐张读图片文件头，会慢一些；生成器会把尺寸记进 manifest-probe-cache-v1.json，
+以后再跑只处理新增或改动过的图片，只加一个 mod 不会重扫全量。窗口里会一直刷
+进度行，屏幕不动是在干活，别急着关。
 
 跑完重启游戏。以后加了新 mod，再跑一次。
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.9.7] - 2026-11-12
+
+### Fixed
+
+- 玩家侧 manifest 生成过慢（论坛反馈：没有 DDSCache 时 6.3 万张图要十分钟）：
+  - 新增 `manifest-probe-cache-v1.json`：按「路径 + 文件大小 + mtime」缓存图片
+    宽高。第二次生成不再逐张打开图片，只探测新增/改动过的文件；只加一个 mod
+    时也只处理它的新图。
+  - 图片文件头探测改为并行（默认 8 线程），冷缓存（几万张）时显著缩短等待。
+  - 元数据落盘校验改用已扫描的图片索引与 DDSCache 路径集合：`Path.is_file`
+    调用从约 30 万次降到约 0.8 万次，`is_dir` 从约 10.7 万次降到约 0.15 万次。
+    260 mods / 80,594 张图、DDSCache 完整时实测生成时间从 85–117 s 降到约 51 s。
+- `README-tools.txt` 补充生成耗时的前提（DDSCache 覆盖、硬盘/杀软）与缓存产物；
+  普通数据 CSV 改动 / 同尺寸换图不需要重新生成 manifest。
+
+### Changed
+
+- manifest 统计新增 `stats.probe`：`candidates` / `cache_hits` / `probes` /
+  `closure_cache_hits` / `closure_probes`，便于玩家侧排障。
+
 ## [1.9.6] - 2026-11-07
 
 ### Added

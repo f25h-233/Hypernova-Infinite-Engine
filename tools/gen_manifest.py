@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from manifest_builder import build_manifest, load_tier_overrides  # noqa: E402
+from probe_cache import CACHE_NAME as PROBE_CACHE_NAME  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,6 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-core", action="store_true")
     parser.add_argument("--no-l2", action="store_true")
     parser.add_argument("--variant-limit", type=int, default=0)
+    parser.add_argument("--probe-workers", type=int, default=8)
     parser.add_argument("--tiers", type=Path,
                         help='JSON: {"mods": {"<modId>": "L1|L2|L3"}}')
     args = parser.parse_args(argv)
@@ -34,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
         include_l2=not args.no_l2,
         variant_limit=args.variant_limit,
         tier_overrides=load_tier_overrides(args.tiers) if args.tiers else {},
+        probe_cache=args.out.parent / PROBE_CACHE_NAME,
+        probe_workers=args.probe_workers,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(

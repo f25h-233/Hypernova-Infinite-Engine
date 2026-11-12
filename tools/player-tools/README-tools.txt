@@ -38,20 +38,28 @@ agent 行删干净，然后你直接启动游戏。改了 mod 文件夹名字之
 ----
 
   data\config\hypernova\manifest-v1.json
+  data\config\hypernova\manifest-probe-cache-v1.json
   data\config\hypernova\lazy-skip-v1.txt
   data\config\hypernova\lazy-skip-v2.txt
 
 游戏目录下还会补一张占位图：
   starsector-core\graphics\hypernova\blank.png
 
-跑完重启游戏。以后装删了 mod，再跑一次就行。
+跑完重启游戏。以后装删了 mod，再跑一次就行。只改数值类 CSV、或者同尺寸替换
+图片，不需要重跑：manifest 只记贴图路径和尺寸，不读舰船/武器/势力这些数据。
+（改了图片尺寸，或者新增了贴图文件，才建议再跑一次。）
 
 要跑多久
 --------
 
-原版规模十几秒。装了两三百个 mod 的话一般一两分钟，硬盘慢、杀软实时扫描开着会更久。
-窗口里会一直有进度行（`[ 21.3s] 解析贴图头 12000/80594`），最底下一行还有条小鱼
-在游，游得慢不代表卡住。屏幕半天不动才值得怀疑。
+第一次跑（或刚加了一大批新贴图）要逐张读图片文件头，会慢一些：原版规模十几秒，
+两三百个 mod 在 SSD 上一般一两分钟；机械盘、杀软实时扫描开着会更久。窗口里会一直
+有进度行（`[ 21.3s] 解析贴图头 12000/80594`），最底下一行还有条小鱼在游，游得慢
+不代表卡住。
+
+生成器会把读到的尺寸写进 manifest-probe-cache-v1.json。以后再跑，没变过的图片
+直接复用缓存，只有新增/改动过的图片才重新读——只加一个 mod 不会再扫全量。如果
+你装了 VramOptimizer，DDS 缓存已经烘好时，生成也会更快。
 
 关于自带的 Python
 -----------------

@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gen_lazy_skip import build_skip, build_skip_v2, write_skip, write_skip_v2  # noqa: E402
 from manifest_builder import build_manifest, load_tier_overrides  # noqa: E402
+from probe_cache import CACHE_NAME as PROBE_CACHE_NAME  # noqa: E402
 from trim_manifest import trim  # noqa: E402
 from validate_manifest import Finding, validate  # noqa: E402
 
@@ -122,6 +123,7 @@ class InstallResult:
     skip_v2_file: Path | None = None
     skip_v2_count: int = 0
     warnings: list[str] = field(default_factory=list)
+    probe_cache: Path | None = None
 
 
 def install(
@@ -134,6 +136,8 @@ def install(
     include_l2: bool = True,
     max_l1: int = 8000,
     progress=None,
+    probe_cache: Path | None = None,
+    probe_workers: int = 8,
 ) -> InstallResult:
     def note(msg: str) -> None:
         if progress is not None:
@@ -141,6 +145,10 @@ def install(
 
     root = Path(game_root).resolve()
     target = Path(out) if out is not None else root / DEFAULT_REL
+    cache_path = (
+        Path(probe_cache) if probe_cache is not None
+        else target.parent / PROBE_CACHE_NAME
+    )
     built = build_manifest(
         root,
         scope=scope,
@@ -148,6 +156,8 @@ def install(
         include_l2=include_l2,
         tier_overrides=tiers or {},
         progress=progress,
+        probe_cache=cache_path,
+        probe_workers=probe_workers,
     )
     note("校验清单")
     findings = validate(built.manifest, root, max_l1=max_l1)
@@ -204,6 +214,7 @@ def install(
         skip_v2_file=skip_v2_file,
         skip_v2_count=skip_v2_count,
         warnings=list(built.warnings),
+        probe_cache=cache_path,
     )
 
 

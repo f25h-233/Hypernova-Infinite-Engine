@@ -92,7 +92,7 @@ DIST_TOOLS="$MODDIR/hypernova-tools"
 mkdir -p "$DIST_TOOLS"
 for f in install_manifest.py manifest_builder.py gen_lazy_skip.py trim_manifest.py \
          validate_manifest.py image_probe.py l1_core.py mod_index.py sprite_closure.py \
-         hn_json.py; do
+         hn_json.py probe_cache.py; do
   if [ ! -s "$ROOT_W/tools/$f" ]; then
     echo "FATAL: tools/$f 缺失或为空，manifest 生成工具不全" >&2
     exit 1

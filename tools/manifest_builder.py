@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ from image_probe import probe
 from l1_core import CoreAssets, core_assets_result
 from mod_index import (
     CORE_FOLDER,
+    IMAGE_SUFFIXES,
     MetadataEntry,
     MetadataIndex,
     ModScan,
@@ -22,6 +24,9 @@ from mod_index import (
     read_title_variants,
     scan_mods,
 )
+from probe_cache import key_for as probe_cache_key
+from probe_cache import load as load_probe_cache
+from probe_cache import save as save_probe_cache
 from sprite_closure import AssetLookup, build_closure, build_lookup
 
 SCHEMA = 1
@@ -88,12 +93,21 @@ class _MetadataResolver:
         enabled_folders: set[str],
         folder_by_modid: dict[str, str],
         folder_to_id: dict[str, str],
+        image_keys: set[tuple[str, str, str]] | None = None,
+        image_folders: set[tuple[str, str]] | None = None,
+        dds_paths: set[str] | None = None,
     ) -> None:
         self.root = Path(root)
         self.enabled_ids = enabled_ids
         self.enabled_folders = enabled_folders
         self.folder_by_modid = folder_by_modid
         self.folder_to_id = folder_to_id
+        # 已扫描的磁盘索引：把「文件是否存在」从逐条 stat 变成集合查询。
+        # None 表示索引不可用，退回原来的 is_file 检查。
+        self.image_keys = image_keys
+        self.image_folders = image_folders
+        self.dds_paths = dds_paths
+        self._folder_exists: dict[str, bool] = {}
         self._by_id: dict[str, list[Path]] = {}
         for mod_id, folders in scan.folders_by_id.items():
             key = mod_id.casefold()
@@ -113,7 +127,13 @@ class _MetadataResolver:
 
         def add(mod_id: str, folder: Path) -> None:
             key = _lexical_abs(folder).as_posix().casefold()
-            if key in seen or not folder.is_dir():
+            if key in seen:
+                return
+            exists = self._folder_exists.get(key)
+            if exists is None:
+                exists = folder.is_dir()
+                self._folder_exists[key] = exists
+            if not exists:
                 return
             seen.add(key)
             out.append((mod_id, folder))
@@ -140,7 +160,18 @@ class _MetadataResolver:
         rel = _safe_rel(me.rel)
         if rel is None:
             return None
+        is_image = Path(rel).suffix.casefold() in IMAGE_SUFFIXES
         for mod_id, folder in self.candidates(me):
+            if self.image_keys is not None and self.image_folders is not None and is_image:
+                key = (mod_id.casefold(), folder.name.casefold(), rel.casefold())
+                if key in self.image_keys:
+                    return _ResolvedMetadata(
+                        mod_id, rel, _lexical_abs(folder / rel), self._dds(me)
+                    )
+                if key[:2] in self.image_folders:
+                    # 该目录已被完整扫描过，没有这个文件 = 缓存记录已失效，
+                    # 不需要再为它做一次磁盘 stat。
+                    continue
             absolute = folder / rel
             if absolute.is_file():
                 return _ResolvedMetadata(
@@ -152,8 +183,47 @@ class _MetadataResolver:
         rel = _safe_rel(me.dds_rel)
         if rel is None:
             return None
+        key = rel.casefold()
+        if self.dds_paths is not None:
+            if key in self.dds_paths:
+                return _lexical_abs(self.root / rel)
+            if key.startswith("mods/ddscache/"):
+                # DDSCache 已被完整枚举；不在集合里就是文件真的没了。
+                return None
         path = _lexical_abs(self.root / rel)
         return path if path.is_file() else None
+
+
+def _image_index_keys(
+    lookup: AssetLookup,
+) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]]]:
+    """(modId, 文件夹, rel) 与已扫描目录集合，供 metadata 落盘校验使用。"""
+    keys: set[tuple[str, str, str]] = set()
+    folders: set[tuple[str, str]] = set()
+    for assets in lookup.images.values():
+        for asset in assets:
+            folder_key = (asset.mod_id.casefold(), asset.folder.name.casefold())
+            keys.add(folder_key + (asset.rel.casefold(),))
+            folders.add(folder_key)
+    return keys, folders
+
+
+def _dds_path_set(root: Path) -> set[str] | None:
+    """一次枚举 DDSCache 里的全部 DDS，替代逐条记录 7 万次 is_file。"""
+    cache = root / "mods" / "DDSCache"
+    if not cache.is_dir():
+        return None
+    out: set[str] = set()
+    for dirpath, _dirnames, filenames in os.walk(cache):
+        for fn in filenames:
+            if not fn.casefold().endswith(".dds"):
+                continue
+            try:
+                rel = (Path(dirpath) / fn).relative_to(root)
+            except ValueError:
+                continue
+            out.add(rel.as_posix().casefold())
+    return out
 
 
 def load_tier_overrides(path: Path) -> dict[str, str]:
@@ -261,14 +331,56 @@ def _entry(
     }
 
 
+class _ProbeMemo:
+    """所有 probe() 调用的统一入口：命中持久缓存时不打开文件。
+
+    L1/L2 闭包、L3 元数据、L3 磁盘图池都可能需要读图头；缓存必须覆盖全部
+    入口，否则第二次生成仍会打开 L1/L2 那一批图。
+    """
+
+    def __init__(self, entries: dict[str, tuple[int, int, int, int]],
+                 enabled: bool) -> None:
+        self.entries = entries
+        self.enabled = enabled
+        self.updates: dict[str, tuple[int, int, int, int]] = {}
+        self.hits = 0
+        self.probes = 0
+
+    def get(self, path: Path) -> tuple[int, int]:
+        if not self.enabled:
+            self.probes += 1
+            return probe(path)
+        try:
+            stat = path.stat()
+        except OSError:
+            stat = None
+        key = probe_cache_key(path)
+        if stat is not None:
+            cached = self.entries.get(key) or self.updates.get(key)
+            if (
+                cached is not None
+                and cached[0] == stat.st_size
+                and cached[1] == stat.st_mtime_ns
+            ):
+                self.hits += 1
+                return (cached[2], cached[3])
+        self.probes += 1
+        wh = probe(path)
+        if stat is not None:
+            self.updates[key] = (stat.st_size, stat.st_mtime_ns, wh[0], wh[1])
+        return wh
+
+
 def _sprite_entry(
     rel: str,
     lookup: AssetLookup,
     metadata: MetadataIndex,
     resolver: _MetadataResolver,
     include_core: bool = True,
+    probe_fn=None,
 ) -> tuple[dict | None, set[tuple[str, str]]]:
     """解析一条 sprite 引用；磁盘上找不到原图时返回 None（调用方跳过并记账）。"""
+    probe_image = probe if probe_fn is None else probe_fn
     owner = pick(lookup.images.get(rel.casefold()) or [])
     meta: MetadataEntry | None = None
     resolved: _ResolvedMetadata | None = None
@@ -307,14 +419,14 @@ def _sprite_entry(
         ):
             w, h = meta.width, meta.height
         else:
-            w, h = probe(absolute)
+            w, h = probe_image(absolute)
         keys.add((owner.mod_id.casefold(), rel.casefold()))
     elif resolved is not None and meta is not None:
         absolute = resolved.absolute
         mod_id = resolved.mod_id
         w, h = meta.width, meta.height
         if w <= 0 or h <= 0:
-            w, h = probe(absolute)
+            w, h = probe_image(absolute)
     else:
         return None, keys
 
@@ -331,10 +443,12 @@ def _sprite_entry(
     )
 
 
-def _metadata_entry(me: MetadataEntry, resolved: _ResolvedMetadata) -> dict:
+def _metadata_entry(me: MetadataEntry, resolved: _ResolvedMetadata,
+                    probe_fn=None) -> dict:
+    probe_image = probe if probe_fn is None else probe_fn
     w, h = me.width, me.height
     if w <= 0 or h <= 0:
-        w, h = probe(resolved.absolute)
+        w, h = probe_image(resolved.absolute)
     baked = resolved.dds is not None
     src = "dds_metadata" if (me.width > 0 and me.height > 0) else (
         "header_probe" if w and h else "spec_scan"
@@ -359,14 +473,24 @@ def build_manifest(
     variant_limit: int = 0,
     tier_overrides: dict[str, str] | None = None,
     progress=None,
+    probe_cache: Path | None = None,
+    probe_workers: int = 8,
 ) -> BuildResult:
-    """progress: 可选回调，签名 (str) -> None，用于给玩家侧显示进度。"""
+    """progress: 可选回调，签名 (str) -> None，用于给玩家侧显示进度。
+
+    probe_cache: 图片文件头缓存路径；None 表示不读写缓存（测试/一次性调用）。
+    probe_workers: 并行探测线程数；1 表示完全串行。
+    """
 
     def note(msg: str) -> None:
         if progress is not None:
             progress(msg)
 
     root = Path(game_root).resolve()
+    cache_state = (
+        load_probe_cache(probe_cache, root) if probe_cache is not None else {}
+    )
+    memo = _ProbeMemo(cache_state, enabled=probe_cache is not None)
     note("扫描 mod 目录")
     enabled = load_enabled_ids(root)
     scan = scan_mods(root, enabled, include_core=include_core)
@@ -388,8 +512,11 @@ def build_manifest(
     known_ids = {
         ("core" if m.is_core else m.mod_id).casefold() for m in scan.mods
     }
+    image_keys, image_folders = _image_index_keys(lookup)
+    dds_paths = _dds_path_set(root) if metadata.entries else None
     resolver = _MetadataResolver(
-        root, scan, enabled_ids, enabled_folders, folder_by_modid, folder_to_id
+        root, scan, enabled_ids, enabled_folders, folder_by_modid, folder_to_id,
+        image_keys=image_keys, image_folders=image_folders, dds_paths=dds_paths,
     )
 
     l1: list[dict] = []
@@ -403,7 +530,8 @@ def build_manifest(
             return
         seen_paths.add(key)
         entry, meta_keys = _sprite_entry(
-            rel, lookup, metadata, resolver, include_core=include_core
+            rel, lookup, metadata, resolver, include_core=include_core,
+            probe_fn=memo.get,
         )
         if entry is None:
             unresolved_refs.append(rel)
@@ -431,7 +559,8 @@ def build_manifest(
                 continue
             seen_paths.add(key)
             entry, meta_keys = _sprite_entry(
-                ref.rel, lookup, metadata, resolver, include_core=include_core
+                ref.rel, lookup, metadata, resolver, include_core=include_core,
+                probe_fn=memo.get,
             )
             if entry is None:
                 unresolved_refs.append(ref.rel)
@@ -488,7 +617,7 @@ def build_manifest(
         if key in seen_meta:
             continue
         seen_meta.add(key)
-        add_l3(_metadata_entry(me, resolved))
+        add_l3(_metadata_entry(me, resolved, probe_fn=memo.get))
 
     scope_images = []
     core_images = []
@@ -506,13 +635,87 @@ def build_manifest(
     all_images = scope_images + core_images
     probe_total = len(all_images)
     note(f"解析贴图头（{probe_total} 张）")
+
+    # 先筛出真正需要读文件头的图片：DDSCache 已覆盖的、前面层已收录的都不必再开。
+    pending: list[tuple[int, object]] = []
     for probe_index, asset in enumerate(all_images):
-        if progress is not None and probe_index and probe_index % 2000 == 0:
-            progress(f"解析贴图头 {probe_index}/{probe_total}")
         key = (asset.mod_id.casefold(), asset.rel.casefold())
         if key in meta_keys or asset.rel.casefold() in seen_paths:
             continue
-        w, h = probe(asset.absolute)
+        pending.append((probe_index, asset))
+
+    hits: dict[int, tuple[int, int]] = {}
+    todo: list[tuple[int, object, tuple[int, int] | None]] = []
+    for probe_index, asset in pending:
+        stat = None
+        if probe_cache is not None:
+            try:
+                stat = asset.absolute.stat()
+            except OSError:
+                stat = None
+        hit = None
+        if stat is not None and cache_state:
+            cached = cache_state.get(probe_cache_key(asset.absolute))
+            if (
+                cached is not None
+                and cached[0] == stat.st_size
+                and cached[1] == stat.st_mtime_ns
+            ):
+                hit = (cached[2], cached[3])
+        if hit is not None:
+            hits[probe_index] = hit
+        else:
+            todo.append((probe_index, asset, stat))
+
+    probes: dict[int, tuple[int, int]] = {}
+    if todo:
+        workers = max(1, int(probe_workers or 1))
+        done = len(hits)
+        if workers > 1 and len(todo) > 1:
+            # 文件 I/O 在 Python 里会释放 GIL；线程池对冷缓存（几万张）收益最大。
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                results = pool.map(
+                    probe, [asset.absolute for _index, asset, _stat in todo]
+                )
+                for (probe_index, _asset, _stat), wh in zip(todo, results):
+                    probes[probe_index] = wh
+                    done += 1
+                    if progress is not None and done % 2000 == 0:
+                        progress(f"解析贴图头 {done}/{probe_total}")
+        else:
+            for probe_index, asset, _stat in todo:
+                probes[probe_index] = probe(asset.absolute)
+                done += 1
+                if progress is not None and done % 2000 == 0:
+                    progress(f"解析贴图头 {done}/{probe_total}")
+
+    if probe_cache is not None:
+        # 只保留当前磁盘上仍存在的图片，避免缓存随换 mod 无限增长。
+        valid_keys = {
+            probe_cache_key(asset.absolute)
+            for assets in lookup.images.values()
+            for asset in assets
+        }
+        new_cache = {
+            key: value for key, value in cache_state.items() if key in valid_keys
+        }
+        for probe_index, asset, stat in todo:
+            wh = probes.get(probe_index)
+            if stat is None or wh is None:
+                continue
+            new_cache[probe_cache_key(asset.absolute)] = (
+                stat.st_size, stat.st_mtime_ns, wh[0], wh[1]
+            )
+        for key, value in memo.updates.items():
+            if key in valid_keys:
+                new_cache[key] = value
+        save_probe_cache(probe_cache, root, new_cache)
+
+    for probe_index, asset in pending:
+        wh = hits.get(probe_index)
+        if wh is None:
+            wh = probes.get(probe_index, (0, 0))
+        w, h = wh
         add_l3(
             _entry(
                 asset.mod_id,
@@ -602,9 +805,7 @@ def build_manifest(
         str(entry["path"]).casefold()
         for entries in (l1, l2, l3)
         for entry in entries
-        if entry.get("baked")
-        and entry.get("ddsPath")
-        and Path(str(entry["ddsPath"])).is_file()
+        if entry.get("baked") and entry.get("ddsPath")
     }
     expected = [
         (me, resolved) for me, resolved in live_meta if resolved.dds is not None
@@ -702,6 +903,13 @@ def build_manifest(
             "metadata_parse_errors": metadata.parse_errors,
             "core_parse_errors": core.parse_errors,
             "core_parse_errors_skipped": not include_core,
+            "probe": {
+                "candidates": len(pending),
+                "cache_hits": len(hits),
+                "probes": len(todo),
+                "closure_cache_hits": memo.hits,
+                "closure_probes": memo.probes,
+            },
             "source_mode": "disk_scan" if meta_all == 0 else "dds_metadata",
             "precedence": "enabled_order_then_core",
         },

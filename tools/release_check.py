@@ -43,6 +43,7 @@ TOOL_FILES = (
     "hypernova-tools/mod_index.py",
     "hypernova-tools/sprite_closure.py",
     "hypernova-tools/hn_json.py",
+    "hypernova-tools/probe_cache.py",
     "hypernova-tools/python/python.exe",
     "hypernova-tools/python/python312.zip",
 )
