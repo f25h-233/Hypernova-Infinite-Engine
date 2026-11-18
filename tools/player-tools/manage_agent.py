@@ -27,7 +27,10 @@ import time
 from pathlib import Path
 
 MARKER = "hypernova.agent.jar"
-FR_MARKER = "fr.agent.jar"
+# FR 的 -javaagent 行：<= 0.9.8 是独立的 fr.agent.jar，>= 1.0.0 合并进 fr.jar。
+# 只认前者会让 1.0.x 玩家的 agent 落到主类锚点、插到 FR 之后，纹理补丁静默失效。
+FR_MARKERS = ("fr.agent.jar", "fr.jar")
+FR_MARKER = FR_MARKERS[0]  # 兼容旧引用
 MAIN_CLASS = "com.fs.starfarer.StarfarerLauncher"
 AGENT_REL = Path("jars") / "hypernova.agent.jar"
 MAX_BYTES = 512 * 1024
@@ -108,7 +111,9 @@ def patch(lines: list[str], canonical: str) -> list[str] | None:
     body = [line for line in lines if MARKER not in line]
     anchor = None
     for i, line in enumerate(body):
-        if FR_MARKER in line and line.lstrip().startswith("-javaagent:"):
+        if not line.lstrip().startswith("-javaagent:"):
+            continue
+        if any(m in line for m in FR_MARKERS):
             anchor = i
             break
     if anchor is None:

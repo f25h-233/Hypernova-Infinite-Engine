@@ -354,8 +354,21 @@ class FileIndexHookTest {
         assertTrue(FileIndexHook.supportedFileIndexVersion("v0.9.7"));
         assertTrue(FileIndexHook.supportedFileIndexVersion("0.9.8"));
         assertTrue(FileIndexHook.supportedFileIndexVersion("v0.9.8"));
+        // 1.0.0/1.0.1 keep the 0.9.8 ResourceHandle shape; verified with the real
+        // jars (5/5 clean launches on the Base install).
+        assertTrue(FileIndexHook.supportedFileIndexVersion("1.0.0"));
+        assertTrue(FileIndexHook.supportedFileIndexVersion("v1.0.0"));
+        assertTrue(FileIndexHook.supportedFileIndexVersion("1.0.1"));
+        assertTrue(FileIndexHook.supportedFileIndexVersion("v1.0.1"));
+        // 1.0.2rc1 moved fileCount/getImageFileCount and reserves texture ids
+        // from it; replaying an index zeroes that reserve and crashes startup.
+        assertFalse(FileIndexHook.supportedFileIndexVersion("1.0.2rc1"));
+        assertFalse(FileIndexHook.supportedFileIndexVersion("v1.0.2rc1"));
+        assertFalse(FileIndexHook.supportedFileIndexVersion("1.1.0"));
         System.setProperty("hypernova.fileIndex.fr098", "false");
         assertFalse(FileIndexHook.supportedFileIndexVersion("0.9.8"));
+        assertFalse(FileIndexHook.supportedFileIndexVersion("1.0.1"),
+                "the 0.9.8-family switch also gates 1.0.0/1.0.1");
         System.clearProperty("hypernova.fileIndex.fr098");
         assertTrue(FileIndexHook.supportedFileIndexVersion(" 0.9.7rc2\n"));
         assertFalse(FileIndexHook.supportedFileIndexVersion("0.9.5"));
@@ -366,6 +379,9 @@ class FileIndexHookTest {
         // Stage 2: lazy joins 0.9.8 after the executorLock bridge.
         assertTrue(FileIndexHook.supportedLazyFrVersion("0.9.7rc2"));
         assertTrue(FileIndexHook.supportedLazyFrVersion("0.9.8"));
+        // The 1.0.x line is not opened for lazy/DDS: default off and unverified.
+        assertFalse(FileIndexHook.supportedLazyFrVersion("1.0.0"));
+        assertFalse(FileIndexHook.supportedLazyFrVersion("1.0.1"));
     }
 
     @Test
@@ -403,6 +419,45 @@ class FileIndexHookTest {
         assertEquals("com.genir.renderer.overrides.loading.ResourceHandle",
                 replay.getClass().getName(),
                 "0.9.8 replay must build the top-level ResourceHandle");
+    }
+
+    @Test
+    void buildsThenLoadsFromIndex101() throws Exception {
+        // FR 1.0.0/1.0.1 ship the same top-level ResourceHandle as 0.9.8; the
+        // real jars were smoke-tested 5/5. This pins the shape wiring.
+        Files.writeString(ctx.gameRoot().resolve("starsector-core/fr.version.txt"), "v1.0.1");
+        Object loc = location(tmp.resolve("game/mods/mod1"));
+        FileLoaderFast first = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
+        int built = first.crawlAndSave098();
+        assertTrue(built > 0, "1.0.1 fixture crawl must find files");
+
+        FileLoaderFast second = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
+        int loaded = FileIndexHook.tryLoad(crawlerOf(second));
+        assertTrue(loaded > 0, "1.0.1 index must produce a hit");
+        assertEquals(mapOf(first).keySet(), mapOf(second).keySet(),
+                "1.0.1 index must replay every cached file key");
+        Object replay = mapOf(second).values().iterator().next().get(0);
+        assertEquals("com.genir.renderer.overrides.loading.ResourceHandle",
+                replay.getClass().getName(),
+                "1.0.1 replay must build the top-level ResourceHandle");
+    }
+
+    @Test
+    void indexFrom098DoesNotReplayUnder101() throws Exception {
+        // The handle shape is identical, but the version is part of the index
+        // header: a stale 0.9.8 index must fail open, never replay blind.
+        System.setProperty("hypernova.fileIndex.fr098", "true");
+        Files.writeString(ctx.gameRoot().resolve("starsector-core/fr.version.txt"), "v0.9.8");
+        Object loc = location(tmp.resolve("game/mods/mod1"));
+        FileLoaderFast first = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
+        assertTrue(first.crawlAndSave098() > 0);
+
+        Files.writeString(ctx.gameRoot().resolve("starsector-core/fr.version.txt"), "v1.0.1");
+        FileLoaderFast second = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
+        assertEquals(-1, FileIndexHook.tryLoad(crawlerOf(second)),
+                "a 0.9.8 index must not replay under 1.0.1");
+        assertTrue(mapOf(second).isEmpty(), "rejected index must not pollute cachedFiles");
+        assertTrue(crawl(second) > 0, "FR's own crawl must still run");
     }
 
     @Test

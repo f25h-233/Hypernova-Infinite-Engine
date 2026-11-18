@@ -8,6 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import install_agent as ia
 
 FR = "-javaagent:fr.agent.jar\n"
+# FR >= 1.0.0 merged the agent into fr.jar; both spellings are valid anchors.
+FR_1X = "-javaagent:fr.jar\n"
 
 
 def test_patch_inserts_before_fr_and_is_idempotent():
@@ -15,6 +17,29 @@ def test_patch_inserts_before_fr_and_is_idempotent():
     out = ia.patch_lines(lines)
     assert out == ["-Xmx10g\n", ia.AGENT_LINE + "\n", FR, "-classpath\n"]
     assert ia.patch_lines(out) == out
+
+
+def test_patch_inserts_before_fr_1x_line():
+    # 1.0.x launch files carry -javaagent:fr.jar; the agent must still land
+    # *before* it, otherwise the texture patch's SHA guard no-ops silently.
+    lines = ["-Xmx10g\n", FR_1X, ia.MAIN_CLASS]
+    out = ia.patch_lines(lines)
+    assert out == ["-Xmx10g\n", ia.AGENT_LINE + "\n", FR_1X, ia.MAIN_CLASS]
+    assert ia.patch_lines(out) == out
+
+
+def test_patch_migrates_agent_after_fr_1x_line():
+    lines = [FR_1X, ia.AGENT_LINE + "\n", ia.MAIN_CLASS]
+    out = ia.patch_lines(lines)
+    assert out == [ia.AGENT_LINE + "\n", FR_1X, ia.MAIN_CLASS]
+
+
+def test_patch_accepts_either_fr_spelling():
+    for line in ia.FR_LINES:
+        assert ia.is_fr_line(line)
+        assert ia.is_fr_line("  " + line + "\n")
+    assert not ia.is_fr_line(ia.AGENT_LINE)
+    assert not ia.is_fr_line("-classpath\n")
 
 
 def test_patch_migrates_agent_that_follows_fr():

@@ -63,12 +63,31 @@ public final class FileIndexHook {
         context = ctx;
     }
 
-    /** 0.9.7 caches nested FileHandle data; 0.9.8 caches top-level ResourceHandle data. */
+    /**
+     * 0.9.7 caches nested FileHandle data; 0.9.8 and the 1.0.x line cache the
+     * top-level {@code ResourceHandle(File, ResourceLocation, String)}.
+     */
     private enum HandleShape { NESTED_097, TOP_LEVEL_098 }
+
+    /**
+     * Versions whose {@code ResourceHandle} is the top-level three-argument data
+     * class. FR 1.0.0 and 1.0.1 keep it byte-for-byte identical to 0.9.8's.
+     *
+     * <p>1.0.2rc1+ is deliberately excluded. It moved {@code fileCount} to the
+     * outer {@code FileLoaderFast}, added {@code getImageFileCount()}, and
+     * {@code ResourceLoaderState.initMain} now reserves texture ids up front
+     * ({@code texGenerator.reserve(imageCount)}). Replaying an index skips the
+     * crawl that fills {@code fileCount}, so the reserve size collapses to zero
+     * and the texture workers race {@code glGenTextures()} outside
+     * {@code ResourceLoaderLock} — measured as a null return from
+     * {@code Executor.get} and a startup crash 2 times in 6 launches.
+     */
+    private static final Set<String> TOP_LEVEL_HANDLE_VERSIONS =
+            Set.of("0.9.8", "1.0.0", "1.0.1");
 
     private static HandleShape handleShape(String version) {
         String v = normalizeFrVersion(version);
-        if ("0.9.8".equals(v)) return HandleShape.TOP_LEVEL_098;
+        if (TOP_LEVEL_HANDLE_VERSIONS.contains(v)) return HandleShape.TOP_LEVEL_098;
         if ("0.9.7rc2".equals(v) || "0.9.7".equals(v)) return HandleShape.NESTED_097;
         return null;
     }
@@ -76,8 +95,8 @@ public final class FileIndexHook {
     /**
      * FR builds this lever's assumptions into the injected {@code F_SAME} frame and
      * into the cached key normalization. The 0.9.7 line is always supported; the
-     * 0.9.8 shape is supported and on by default after Task 3's warm A/B ruling
-     * ({@code -Dhypernova.fileIndex.fr098=false} opts out).
+     * 0.9.8 shape (shared by 1.0.0/1.0.1) is supported and on by default after
+     * Task 3's warm A/B ruling ({@code -Dhypernova.fileIndex.fr098=false} opts out).
      */
     static boolean supportedFileIndexVersion() {
         return supportedFileIndexVersion(frVersion());
@@ -85,13 +104,15 @@ public final class FileIndexHook {
 
     static boolean supportedFileIndexVersion(String version) {
         String v = normalizeFrVersion(version);
-        if ("0.9.8".equals(v) && !fr098Enabled()) return false;
+        if (TOP_LEVEL_HANDLE_VERSIONS.contains(v) && !fr098Enabled()) return false;
         return handleShape(v) != null;
     }
 
     /**
      * 0.9.8 file index is on by default after Task 3's warm A/B ruling;
-     * {@code -Dhypernova.fileIndex.fr098=false} opts out.
+     * {@code -Dhypernova.fileIndex.fr098=false} opts out. 1.0.0/1.0.1 share the
+     * 0.9.8 handle shape and are always on; 1.0.2rc1+ stays unsupported (see
+     * {@link #TOP_LEVEL_HANDLE_VERSIONS}).
      */
     static boolean fr098Enabled() {
         String prop = System.getProperty("hypernova.fileIndex.fr098");
@@ -99,7 +120,8 @@ public final class FileIndexHook {
     }
 
     static boolean fr098StagedOff() {
-        return "0.9.8".equals(normalizeFrVersion(frVersion())) && !fr098Enabled();
+        return TOP_LEVEL_HANDLE_VERSIONS.contains(normalizeFrVersion(frVersion()))
+                && !fr098Enabled();
     }
 
     /** Lazy textures support the 0.9.7 line and 0.9.8 (executorLock bridge). */
@@ -107,6 +129,13 @@ public final class FileIndexHook {
         return supportedLazyFrVersion(frVersion());
     }
 
+    /**
+     * Lazy/DDS stays on the versions whose {@code DDSIntegration} shape the
+     * bridge was written against. FR 1.0.0/1.0.1 keep it, but the whole lazy
+     * path is off by default and has only menu-path evidence, so the 1.0.x line
+     * is not opened here without its own gate run. 1.0.2rc1 changed
+     * {@code commitTexture(TextureData)} to {@code commitTexture(int, TextureData)}.
+     */
     static boolean supportedLazyFrVersion(String version) {
         String v = normalizeFrVersion(version);
         return "0.9.7rc2".equals(v) || "0.9.7".equals(v) || "0.9.8".equals(v);

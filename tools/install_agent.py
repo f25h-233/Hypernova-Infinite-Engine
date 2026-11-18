@@ -8,6 +8,9 @@ transformer registered after FR sees rewritten bytes, its hash guard no longer
 matches the locked vanilla class, and the patch silently no-ops. The transformer
 chain order must therefore be scripts -> FR.
 
+FR moved its agent from ``fr.agent.jar`` into ``fr.jar`` in 1.0.0rc1; both
+spellings are accepted as the anchor (see ``FR_LINES``).
+
 Legacy installs placed the agent after FR; patch_lines() migrates them by
 removing the old line and re-inserting it before FR. Writes LF line endings
 (argfiles must be LF) and is idempotent. A backup is kept as *.bak-hypernova.
@@ -24,8 +27,20 @@ import sys
 from pathlib import Path
 
 AGENT_LINE = "-javaagent:../mods/hypernova_infinite_engine/jars/hypernova.agent.jar"
-FR_LINE = "-javaagent:fr.agent.jar"
+# 启动文件里 FR 的 -javaagent 行有两条历史：
+#   FR <= 0.9.8   独立 agent jar : -javaagent:fr.agent.jar
+#   FR >= 1.0.0   合并进 fr.jar  : -javaagent:fr.jar
+# 1.0.0rc1 起独立 fr.agent.jar 被移除（agent 类与 ASM 都内嵌进 fr.jar）。
+# 两条都认；只认旧的那条会让 1.0.x 玩家落到主类锚点，agent 插到 FR 之后，
+# 纹理补丁的 SHA 守卫失配，功能静默失效（不崩溃，所以很难发现）。
+FR_LINES = ("-javaagent:fr.agent.jar", "-javaagent:fr.jar")
+FR_LINE = FR_LINES[0]  # 兼容旧调用方/测试的常量名
 MAIN_CLASS = "com.fs.starfarer.StarfarerLauncher"
+
+
+def is_fr_line(line: str) -> bool:
+    """FR 自己的 -javaagent 行（旧的不带 fr.jar 的写法也算）。"""
+    return line.strip() in FR_LINES
 
 
 # 每个 env 对应哪个启动参数文件。**必须与实际用的 .bat 一致**：
@@ -66,11 +81,12 @@ def _assert_main_class_last(lines: list[str]) -> None:
 def patch_lines(lines: list[str]) -> list[str]:
     fr_idx = None
     for i, line in enumerate(lines):
-        if line.strip() == FR_LINE:
+        if is_fr_line(line):
             fr_idx = i
             break
     if fr_idx is None:
-        raise SystemExit(f"FR agent line not found; expected: {FR_LINE}")
+        raise SystemExit(
+            f"FR agent line not found; expected one of: {', '.join(FR_LINES)}")
 
     agent_indices = [i for i, line in enumerate(lines) if line.strip() == AGENT_LINE]
     if len(agent_indices) == 1 and agent_indices[0] < fr_idx:

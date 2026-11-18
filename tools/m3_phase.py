@@ -22,7 +22,7 @@ from pathlib import Path
 
 SESSION_RE = __import__("re").compile(
     r"^\s*(\d+)\s+\[[^\]]+\]\s+INFO\s+com\.genir\.renderer\.agent\.Agent\s+"
-    r"-\s+Fast Rendering: v0\.9\.")
+    r"-\s+Fast Rendering: v\d+\.")
 MENU_RE = __import__("re").compile(
     r"^\s*(\d+)\s+\[[^\]]+\]\s+INFO\s+sound\.H\s+"
     r"-\s+Playing music with id \[miscallenous_main_menu\.ogg\]")

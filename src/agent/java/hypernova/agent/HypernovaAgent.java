@@ -44,7 +44,7 @@ public final class HypernovaAgent {
                     AgentLog.info("file index: disabled for FR version "
                             + FileIndexHook.frVersion()
                             + (FileIndexHook.fr098StagedOff()
-                            ? " (0.9.8 disabled by -Dhypernova.fileIndex.fr098=false)"
+                            ? " (0.9.8/1.0.x disabled by -Dhypernova.fileIndex.fr098=false)"
                             : " (unsupported)"));
                 } else {
                     instrumentation.addTransformer(new FileIndexTransformer(), false);

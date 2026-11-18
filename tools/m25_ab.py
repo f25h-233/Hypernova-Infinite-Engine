@@ -28,7 +28,7 @@ LAZY_RE = re.compile(
     r"lazy probe: summary .*?skipped=(\d+) proxies=(\d+) materialized=(\d+) "
     r"deferred=(\d+).*?failed=(\d+) disabled=(\d+)")
 LAZY_KEYS = ("skipped", "proxies", "materialized", "deferred", "failed", "disabled")
-SESSION_ANCHOR = b"Fast Rendering: v0.9."
+SESSION_ANCHOR = b"Fast Rendering: v"
 SMOKE_TIMEOUT_S = 600
 MIN_FREE_MB = 12 * 1024
 

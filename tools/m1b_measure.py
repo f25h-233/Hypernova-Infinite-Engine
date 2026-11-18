@@ -13,9 +13,9 @@ import re
 import sys
 from pathlib import Path
 
-# Prefix match: FR 0.9.5 logs "v0.9.5", FR 0.9.7rc2 logs "v0.9.7rc2".
+# Prefix match: FR logs "v0.9.5", "v0.9.7rc2", "v1.0.1", ...
 # A version-pinned anchor silently stops finding sessions after an FR upgrade.
-SESSION_ANCHOR = "Fast Rendering: v0.9."
+SESSION_ANCHOR = "Fast Rendering: v"
 MENU_ANCHOR = "Playing music with id [miscallenous_main_menu.ogg]"
 AGENT_ANCHOR = "hypernova agent premain"
 TS = re.compile(r"^(\d+) ")

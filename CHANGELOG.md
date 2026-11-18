@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.9.10] - 2026-11-18
+
+### Added
+
+- 支持 Fast Rendering **1.0.0 / 1.0.1**：
+  - agent 文件索引的版本门禁扩展到这版线。1.0.0/1.0.1 的
+    `ResourceHandle(File, ResourceLocation, String)` 与 0.9.8 逐字相同，
+    索引写入/回放形状不变。基座实测 1.0.1 开索引 5/5 正常到主菜单。
+- `fr_install.py` 认识 1.0.x：从 1.0.0rc1 起上游删掉了独立的 `fr.agent.jar`，
+  agent 类与 ASM 都内嵌进 `fr.jar`。安装/回滚会按目标版本的 `files_for()`
+  决定要拷哪些 jar，并把启动文件里的 `-javaagent` 行重指到正确载体
+  （旧 → 新、新 → 旧都处理），每个被改的文件留 `.bak-hypernova-<旧版本>`。
+  `--no-repoint` 可跳过重指。
+
+### Fixed
+
+- `install_agent.py` / `manage_agent.py` 不再只认 `-javaagent:fr.agent.jar`。
+  1.0.x 的启动文件写的是 `-javaagent:fr.jar`，只认旧写法时 agent 会被插到
+  FR 之后，纹理补丁按原类 SHA 匹配失败、静默失效。
+- 测量/冒烟脚本的会话锚点从 `Fast Rendering: v0.9.` 放宽到 `Fast Rendering: v`，
+  否则升到 1.0.x 后所有 A/B 与冒烟都找不到会话起点。
+- `build-agent.sh` 取内嵌 ASM 时先试 `fr.agent.jar` 再试 `fr.jar`，
+  1.0.x 环境下不再构建失败。
+
+### Known issues
+
+- **FR 1.0.2rc1 不支持文件索引**：该版本新增
+  `texGenerator.reserve(FileLoaderFast.getImageFileCount())`，而计数只在真实
+  目录枚举时填充；索引命中跳过枚举会让预分配塌成 0，纹理线程随后在
+  `ResourceLoaderLock` 外并发 `glGenTextures()`，实测启动期 6 次里 2 次崩溃。
+  agent 在该版本上自动 fail-open 走完整枚举（游戏正常，无索引收益）。
+- FR 1.0.x 的 lazy/DDS 未开启：默认本来就是关的，且 1.0.2rc1 改了
+  `DDSIntegration.commitTexture` 的签名，反射桥需要单独适配后才能开。
+
 ## [1.9.7] - 2026-11-12
 
 ### Fixed

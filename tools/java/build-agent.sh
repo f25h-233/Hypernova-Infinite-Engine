@@ -9,7 +9,19 @@ GAME="$ROOT_W/Starsector-098-Base/starsector-core"
 OUT="$ROOT_W/build/agent"
 mkdir -p "$OUT/lib" "$OUT/classes" "$OUT/asm"
 if [ ! -f "$OUT/lib/asm-9.1.jar" ]; then
-  unzip -p "$GAME/fr.agent.jar" asm-9.1.jar > "$OUT/lib/asm-9.1.jar"
+  # FR <= 0.9.8 把 ASM 放在独立的 fr.agent.jar；1.0.0rc1 起内嵌进 fr.jar。
+  # 两个位置都试，避免换 FR 版本后 agent 构建直接失败。
+  for src in "$GAME/fr.agent.jar" "$GAME/fr.jar"; do
+    [ -f "$src" ] || continue
+    if unzip -p "$src" asm-9.1.jar > "$OUT/lib/asm-9.1.jar" 2>/dev/null \
+        && [ -s "$OUT/lib/asm-9.1.jar" ]; then
+      break
+    fi
+  done
+  if [ ! -s "$OUT/lib/asm-9.1.jar" ]; then
+    echo "FATAL: 找不到内嵌的 asm-9.1.jar（试过 fr.agent.jar 和 fr.jar）" >&2
+    exit 1
+  fi
 fi
 # 注意：UnZip 6.00 的 `unzip 'org/*'` 会静默匹配 0 个条目（不报错），
 # 必须用 -x 排除法从根展开全部条目，否则 agent jar 里的 ASM 是空的。

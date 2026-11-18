@@ -25,7 +25,7 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 from smoke_run import PROFILES, free_physical_mb, kill_pid, wait_dead  # noqa: E402
 
-SESSION_ANCHOR = b"Fast Rendering: v0.9."
+SESSION_ANCHOR = b"Fast Rendering: v"
 SUMMARY = "lazy probe: summary "
 REQUIRED_SUMMARY_KEYS = (
     "queue", "failed", "disabled", "dimMismatch", "main",

@@ -31,7 +31,7 @@ from pathlib import Path
 
 SUMMARY_MARKER = "lazy probe: summary"
 AGENT_SESSION_ANCHOR = "hypernova agent premain"
-SESSION_ANCHOR = "Fast Rendering: v0.9."
+SESSION_ANCHOR = "Fast Rendering: v"
 TEXTURE_ERRORS = (
     "Failed to load texture",
     "VerifyError",
