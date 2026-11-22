@@ -157,3 +157,35 @@ Prepatcher 0.18.9，A 另加 MixinLib）、`-Xmx4096m`、warm（首轮建缓存�
    而 Hypernova 的 `install_agent.py` 匹配的是不带引号的形式；重新生成启动档后
    要重新插 Hypernova agent，并确认顺序是 `Hypernova → FR → Prepatcher`。
 
+
+## 7. 路线 A 的纹理补丁为什么打不上（2026-11-23 查清）
+
+**不是 agent 顺序问题**（顺序只是让 Hypernova 能插进去，插进去也不会生效）。
+真正原因是 **MixinFR 自己也改写了同一个类**：
+
+```
+[mixinlib.log]
+[MixinGovernance] WARN potential conflict: target=org.dark.shaders.util.TextureData
+                  declared by 2 mixins [GLNormalMapBudgetMixin, FrNormalTakeoverMixin]
+[main/Audit] APPLY mixin=GLNormalMapBudgetMixin  target=org.dark.shaders.util.TextureData
+[main/Audit] APPLY mixin=FrNormalTakeoverMixin  target=org.dark.shaders.util.TextureData
+[main/Transform] target org.dark.shaders.util.TextureData 50438 -> 92696
+```
+
+Hypernova 的 `TextureCacheTransformer` 按**精确 source SHA** 匹配三个变体
+（GraphicsLib 1.12.1 `6a4302bc…`、1.12.2 `3b939e21…`、以及其 patched 版本）。
+MixinFR 把 `TextureData` 从 50,438 字节改写成 92,696 字节后，这个 SHA 不存在于白名单，
+于是每次都是：
+
+```
+textures: unsupported GraphicsLib TextureData (sha256=…); lazy normal cache disabled for this version
+```
+
+**这属于设计内降级（fail-open），不是崩溃**：A 路线上 textures/normal-cache 一直没生效，
+只有 scripts cache 生效。两条路线共用的 `Graphics.jar` SHA 相同（`c4ed41ac…`），
+所以差异确实来自 MixinFR 的运行期改写，不是 mod 文件不同。
+
+**结论**：A 路线上不要指望纹理补丁。真想要纹理补丁就用路线 B。
+若要支持 A，需要为「MixinFR 改写后的 TextureData」再生成一个变体——但那要跟着
+MixinFR 的每次更新重做，且两个 mixin 的最终形状由 Fabric 的顺序决定，不保证稳定。
+**本项目不做这个适配。**
