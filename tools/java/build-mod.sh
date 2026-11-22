@@ -102,7 +102,7 @@ done
 # 三支 .bat 保持纯 ASCII（中文文案在 run_*.py 里）：cmd.exe 逐字节解析批处理，
 # UTF-8 中文在非 65001 代码页下会被撕成命令。这里只统一成 CRLF，对已是 CRLF 的
 # checkout 幂等。
-for bat in generate-manifest.bat install-agent.bat rollback-agent.bat restore-font-hd.bat setup-agent.bat; do
+for bat in generate-manifest.bat install-agent.bat rollback-agent.bat restore-font-hd.bat setup-agent.bat check-setup.bat; do
   sed -e 's/\r$//' -e 's/$/\r/' "$ROOT_W/tools/player-tools/$bat" > "$DIST_TOOLS/$bat"
 done
 cp "$ROOT_W/tools/player-tools/generate-manifest.sh" "$DIST_TOOLS/generate-manifest.sh"
@@ -113,6 +113,8 @@ cp "$ROOT_W/tools/player-tools/manage_font_hd.py" "$DIST_TOOLS/manage_font_hd.py
 cp "$ROOT_W/tools/player-tools/run_font_hd.py" "$DIST_TOOLS/run_font_hd.py"
 cp "$ROOT_W/tools/player-tools/setup_agent.py" "$DIST_TOOLS/setup_agent.py"
 cp "$ROOT_W/tools/player-tools/run_setup_agent.py" "$DIST_TOOLS/run_setup_agent.py"
+cp "$ROOT_W/tools/player-tools/check_setup.py" "$DIST_TOOLS/check_setup.py"
+cp "$ROOT_W/tools/player-tools/run_check_setup.py" "$DIST_TOOLS/run_check_setup.py"
 cp "$ROOT_W/tools/player-tools/README-tools.txt" "$DIST_TOOLS/README-tools.txt"
 # 玩家机器不一定有 Python。内置 python.org 官方 embeddable 运行时（压缩后约 11MB），
 # 双击批处理零安装即可运行。版本与 SHA256 固定在 tools/player-tools/fetch_python_embed.py。
@@ -177,6 +179,9 @@ need = [
     "hypernova-tools/setup-agent.bat",
     "hypernova-tools/setup_agent.py",
     "hypernova-tools/run_setup_agent.py",
+    "hypernova-tools/check-setup.bat",
+    "hypernova-tools/check_setup.py",
+    "hypernova-tools/run_check_setup.py",
     "hypernova-tools/rollback-agent.bat",
     "hypernova-tools/restore-font-hd.bat",
     "hypernova-tools/manage_agent.py",
