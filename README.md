@@ -2,7 +2,7 @@
 
 Starsector 0.98a 的运行时纹理预取与兜底 mod，附带一个可选的启动期 Java agent。
 
-> **版本：1.9.10（2026-11-18）**
+> **版本：1.9.11（2026-11-22）**
 >
 > `1.0.0` 是“功能完善可用”的锚点（M2.8，2026-11-02：主 mod + agent +
 > manifest + lazy/DDS/LRU 全部落地）；之后 M4/M4.1/M6 的诊断、兼容性
@@ -29,6 +29,7 @@ Starsector 0.98a 的运行时纹理预取与兜底 mod，附带一个可选的�
 | `1.1.0`–`1.2.9` | M4 | frame-time probe / 会话报告 |
 | `1.3.0`–`1.4.2` | M4.1 | agent-side frame probe |
 | `1.5.0`–`1.9.3` | M6 | 汉化 / 中文输入 / 字体 / UI 兼容性审计与工具 |
+| **`1.9.11`** | FR 1.0.2 稳定版（2026-11-22） | 索引重放时补齐 FR `FileLoaderFast.fileCount`（含目录计数），使 1.0.2 的 `reserve(getImageFileCount())` 拿到真实图片数；基座实测 10/10 无崩溃；`fr_install` 加 `v1.0.2` pin |
 | **`1.9.10`** | FR 1.0.x 适配（2026-11-18） | 文件索引支持 FR 1.0.0 / 1.0.1；安装器按版本处理「agent 内嵌进 fr.jar」并重指启动行；1.0.2rc1 自动 fail-open |
 | **`1.9.9`** | 高清字体桥（2026-11-12） | 优化测试版 + FR：agent premain 让 DynFont 生成高清缓存，并把成对的 fnt/page 覆盖到 `graphics/fonts/`；原文件备份 `*.bak-hypernova-hd`；首次约 2–3 秒，之后复用；`-Dhypernova.fontHd=false` 关闭 |
 | **`1.9.7`** | manifest 生成提速（2026-11-12） | 图片尺寸持久缓存 + 并行探测 + 去掉重复磁盘校验；只加一个 mod 不再重扫全量 |
@@ -47,7 +48,7 @@ post-1.0 历史：9 个 minor（诊断、兼容性工具），最后一个 minor
 | 模块 | 默认 | 开关 |
 |---|---:|---|
 | 主 mod 运行期预取/兜底 | **开** | `hypernova.json` → `enabled` |
-| agent 文件索引（FR FileLoaderFast） | **开** | `fileIndex.enabled` / `-Dhypernova.fileIndex`；0.9.8 / 1.0.0 / 1.0.1 上可用 `-Dhypernova.fileIndex.fr098=false` 单独关闭 |
+| agent 文件索引（FR FileLoaderFast） | **开** | `fileIndex.enabled` / `-Dhypernova.fileIndex`；0.9.8 / 1.0.0 / 1.0.1 / 1.0.2 上可用 `-Dhypernova.fileIndex.fr098=false` 单独关闭 |
 | agent Janino 脚本缓存 | **开** | `scripts.enabled` |
 | agent 法线图缓存补丁 | **开** | `textures.enabled` |
 | agent 高清字体桥（远星汉化优化测试版 + FR） | **开**（仅检测到 DynFont 时） | `-Dhypernova.fontHd=false`；只观察不写盘 `-Dhypernova.fontHd.dryRun=true` |
@@ -65,7 +66,7 @@ post-1.0 历史：9 个 minor（诊断、兼容性工具），最后一个 minor
 |---|---|
 | Starsector | 0.98a-RC8 |
 | Java | 17+（游戏自带 JRE 17 可运行；JDK 28 已验证） |
-| Fast Rendering | 0.9.7rc2 / 0.9.8 / 1.0.0 / 1.0.1（软依赖；agent 的 file index 支持 0.9.7 / 0.9.7rc2 / 0.9.8 / 1.0.0 / 1.0.1，lazy 仍只支持 0.9.7 / 0.9.7rc2 / 0.9.8） |
+| Fast Rendering | 0.9.7rc2 / 0.9.8 / 1.0.0 / 1.0.1 / 1.0.2（软依赖；agent 的 file index 支持 0.9.7 / 0.9.7rc2 / 0.9.8 / 1.0.0 / 1.0.1 / 1.0.2，lazy 仍只支持 0.9.7 / 0.9.7rc2 / 0.9.8） |
 | VramOptimizer | 1.0.45（测试环境） |
 | GraphicsLib | 1.12.1 / 1.12.2（agent 纹理补丁按原类 SHA-256 分别支持；其它版本降级为不修改，不崩溃） |
 
@@ -73,10 +74,15 @@ post-1.0 历史：9 个 minor（诊断、兼容性工具），最后一个 minor
 - **FR 1.0.x 换了 agent 载体**：从 1.0.0rc1 起不再有独立的 `fr.agent.jar`，启动参数要写
   `-javaagent:fr.jar`。还写 `-javaagent:fr.agent.jar` 的启动文件在 1.0.x 上会让 JVM 找不到 jar 而拒绝启动；
   `python tools/fr_install.py --action install` 会顺带把启动文件里这一行改过来（留 `.bak-hypernova-*` 备份）。
-- **FR 1.0.2rc1 暂不支持 file index**：它新增了按图片数量预分配纹理 id
-  （`texGenerator.reserve(getImageFileCount())`），而该计数只在真实目录枚举时填充。索引命中会跳过枚举，
-  预分配塌成 0，纹理线程随后在锁外并发 `glGenTextures()`，表现为启动期随机崩溃（实测 6 次里 2 次）。
-  agent 在这个版本上自动 fail-open 走完整枚举，游戏正常但少了索引收益。1.0.0 / 1.0.1 无此问题。
+- **FR 1.0.2 / 1.0.2rc1 的 `reserve(getImageFileCount())` 已处理**：1.0.2rc1 起
+  `ResourceLoaderState.initMain` 会按图片数量预分配纹理 id，而该计数只在真实目录枚举时填充。
+  索引命中跳过枚举后预分配塌成 0，纹理线程会在锁外并发 `glGenTextures()`，表现为启动期随机崩溃
+  （1.0.2rc1 实测 6 次里 2 次；**1.0.2 稳定版实测 4 次里 1 次崩**，签名是
+  `ArrayIndexOutOfBoundsException` at `bridge.context.Frame.add` 或 `Executor.get` 返回 null）。
+  **1.9.11 起 1.0.2 正式版可用索引**：agent 在重放索引时把 FR `FileLoaderFast.fileCount` 按扩展名
+  （含目录的 `""`）重新填好，与真实 crawl 的计数一致（基座实测 `images=5466` 与内层
+  `getImageFileCount()` 读数相同），**10/10 次启动无崩溃**。
+  `1.0.2rc1` 本身仍不在白名单（它是崩溃时用的那个构建），装 1.0.2 正式版即可。
 - FR 0.9.8 上的 lazy/DDS 仅在菜单路径做过 selftest（真实进程内 materialize→evict→re-materialize）；读档/战役场景未验证。
 - 汉化测试版 / ChineseInputFix / 字体 UI 的兼容性审计见 [`docs/m6-results.md`](docs/m6-results.md)。
 - 本仓库**不包含** Starsector 游戏文件、汉化包或第三方 mod 文件。

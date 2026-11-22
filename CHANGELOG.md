@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.9.11] - 2026-11-22
+
+### Added
+
+- 支持 Fast Rendering **1.0.2 正式版**（2026-11-18）。1.0.2 沿用 0.9.8 的
+  `ResourceHandle(File, ResourceLocation, String)` 形状，但**保留了** 1.0.2rc1 的
+  `texGenerator.reserve(getImageFileCount())` 预分配。
+- `fr_install.py` 增加 `v1.0.2` 的 SHA-256 pin
+  （`7aba2a13…b349b3`），安装/回滚与 1.0.0/1.0.1 同路径。
+
+### Fixed
+
+- **索引重放现在会重建 FR 的 `FileLoaderFast.fileCount`。**
+  1.0.2 在加载纹理前按图片数量预分配纹理 id，而该计数只由真实目录枚举累加。
+  索引命中跳过枚举时计数为 0，纹理线程在 `ResourceLoaderLock` 之外并发
+  `glGenTextures()`，表现为启动期随机崩溃。实测（基座，FR 1.0.2）：
+
+  | 配置 | 通过率 |
+  |---|---|
+  | 索引开，无补偿 | 3/4（`ArrayIndexOutOfBoundsException` at `Frame.add`） |
+  | 索引开，只按索引 entries 补偿（images=2119） | 5/8（`Executor.get` 返回 null） |
+  | 索引开，entries + 目录 + crawl 口径补偿（images=5466） | **10/10** |
+
+  补偿同时覆盖重放出来的文件 key 与索引记录的目录（FR 对目录也按扩展名 `""`
+  计数），日志会打印 `refilled file counts ... images=N, outerImages=N`
+  供交叉核对。
+
+### Known issues
+
+- **FR 1.0.2rc1 仍不在白名单**：它是实测崩溃用的那个构建；装 1.0.2 正式版即可。
+- FR 1.0.x 的 lazy/DDS 仍未开启（默认关闭，且 `DDSIntegration.commitTexture`
+  签名已变为 `(String,int,TextureData)`，需要单独适配）。
+- 12-mod 基座上文件索引**没有可测收益**（开 7.5–8.9 s vs 关 7.0–8.0 s）；
+  收益仍应在 256-mod 量级，本轮不做收益结论。
+
 ## [1.9.10] - 2026-11-18
 
 ### Added

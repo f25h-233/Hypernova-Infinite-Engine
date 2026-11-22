@@ -246,16 +246,18 @@ def test_cli_status_returns_json(tmp_path):
 
 def test_pins_cover_all_supported_versions():
     assert set(fr_install.EXPECTED_PINS) == {
-        "v0.9.7rc2", "v0.9.8", "v1.0.0", "v1.0.1"}
+        "v0.9.7rc2", "v0.9.8", "v1.0.0", "v1.0.1", "v1.0.2"}
     assert fr_install.EXPECTED_PINS["v0.9.8"]["fr.jar"] == (
         "c7d91b0c8f7aaaa3380b52d6549681d75a93f6b626ad06a673002b845da04ffd")
     assert fr_install.EXPECTED_PINS["v0.9.8"]["fr.agent.jar"] == (
         "55eecda58608cf1c6a23466acc957bdb93d648d6800d7527769c07450a884cbb")
     # 1.0.x ships no fr.agent.jar: the agent classes live inside fr.jar.
-    for v in ("v1.0.0", "v1.0.1"):
+    for v in ("v1.0.0", "v1.0.1", "v1.0.2"):
         assert set(fr_install.EXPECTED_PINS[v]) == {"fr.jar"}
     assert fr_install.EXPECTED_PINS["v1.0.1"]["fr.jar"] == (
         "150ebc21f0191acb4c1452aaa809f3fc129f98933d9e7c8f5b366e2888291187")
+    assert fr_install.EXPECTED_PINS["v1.0.2"]["fr.jar"] == (
+        "7aba2a13e3d9af8f0b3c06a792ed8398171b437bb2f66e5a8784b65f1ab349b3")
 
 
 def test_pins_for_infers_version_from_source(tmp_path):

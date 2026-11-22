@@ -72,6 +72,31 @@ PROFILES = {
         "vmparams": "fr.vmparams",
         "cwd": "starsector-core",
     },
+    # 路线 A（MixinFR）小集测试根：优化版本体 + MixinFR 官方 install.bat
+    # （它自己改根 vmparams）+ Hypernova agent 行内插入（vmparams 是单行，
+    # 按行插入会拆行，starsector.exe 读不了）。
+    # launch_a.vmparams 是 launchDirect 用的 argfile：只把首 token java.exe 去掉，
+    # 其余与 vmparams 完全一致（启动方式差异，不涉及 FR/agent 内容）。
+    "a-test": {
+        "game": "SS098_Hypernova_Compat_AuditTest/install/optimized-a-test",
+        "java": "jre/bin/java.exe",
+        "vmparams": "launch_a.vmparams",
+        "cwd": "starsector-core",
+        # MixinFR 是双 JVM 引导：launcher 先退出再拉起游戏 JVM。
+        # 不能把 launcher 退出当作失败，测量/停止要针对游戏 JVM 的 PID。
+        "two_jvm": True,
+    },
+    # 路线 B（Java 28 + FR 0.9.8）小集测试根：优化版本体 + FR 0.9.8 官方文件
+    # + Mikohime 0.8.3 非交互配置（`Configure_Me.cmd --non-interactive`，
+    # MIKO_FAST_RENDERING=1 让它写 `-javaagent:fr.agent.jar` + classpath 含 fr.jar）
+    # + Hypernova agent 插在 FR 之前。
+    # Miko 的 argfile 在**游戏根目录**，cwd 是 starsector-core → 必须写 ../Miko_Simple.txt。
+    "b-test": {
+        "game": "SS098_Hypernova_Compat_AuditTest/install/optimized-b-test",
+        "java": "jdk-28+13/bin/java.exe",
+        "vmparams": "../Miko_Simple.txt",
+        "cwd": "starsector-core",
+    },
     # Miko 的 vmparams 在**游戏根目录**，cwd 是 starsector-core，
     # 所以必须写 ../Miko_Simple.txt（照抄 LaunchMiko.ps1 的参数）。
     "miko-simple": {
@@ -140,19 +165,28 @@ def read_tail(log_path: Path, offset: int) -> bytes:
 
 
 def wait_for_menu(log_path: Path, offset: int, timeout_s: float,
-                  proc: subprocess.Popen) -> float | None:
+                  proc: subprocess.Popen, allow_early_exit: bool = False,
+                  ) -> tuple[float | None, str]:
     """增量读日志等主菜单。
 
     260mods 的日志能到 40 MB+；每轮把 offset 之后的内容整个重读会越来越慢
     （实测 0.5s 轮询下，后期每次读取数十 MB）。这里维护一个游标，只读新增部分，
     并用 overlap 处理锚点跨两次读取边界的情况。
+
+    ``allow_early_exit``：MixinFR 是**双 JVM** 引导——第一个 JVM（launcher）
+    加载 bridge agent 后自己退出，再拉起真正跑游戏的第二个 JVM。所以
+    ``proc.poll()`` 非空**不能**当作"到不了主菜单"，必须继续读日志等锚点。
+    B 路线（单 JVM）保持原语义：进程退出即失败，不白等 300 秒。
+
+    返回 ``(menu_seconds | None, reason)``；reason 区分超时与进程提前退出，
+    避免把两种情况都写成误导性的 "menu-timeout"。
     """
     t0 = time.time()
     cursor = offset
     overlap = b""
     while time.time() - t0 < timeout_s:
-        if proc.poll() is not None:
-            return None
+        if proc.poll() is not None and not allow_early_exit:
+            return None, "process-exited"
         try:
             size = log_path.stat().st_size
             # 日志被重写（新一轮启动/轮转）时 size 会小于 cursor。
@@ -170,12 +204,12 @@ def wait_for_menu(log_path: Path, offset: int, timeout_s: float,
                 cursor += len(chunk)
                 # 拼上一轮末尾，避免锚点被切在两块之间
                 if MENU_ANCHOR in overlap + chunk:
-                    return time.time() - t0
+                    return time.time() - t0, "menu"
                 overlap = chunk[-len(MENU_ANCHOR):]
         except OSError:
             pass
         time.sleep(0.5)
-    return None
+    return None, "menu-timeout"
 
 
 def agent_log_for(game: Path) -> Path:
@@ -268,6 +302,47 @@ def wait_dead(pid: int, timeout_s: float) -> bool:
     return False
 
 
+def child_java_pids(parent_pid: int, cwd_hint: str) -> list[int]:
+    """找出由 ``parent_pid`` 派生的 java.exe 进程（MixinFR 双 JVM 的第二个）。
+
+    只用 WMI 的 ParentProcessId，不做命令行嗅探：父进程退出后 Windows 仍保留
+    ParentProcessId 记录，所以 launcher 已死也能找到它拉起的游戏 JVM。
+    额外用工作目录/命令行里的安装根做一层归属过滤，避免误伤别的 Starsector 实例。
+    """
+    ps = (
+        "Get-CimInstance Win32_Process -Filter \"Name='java.exe'\" | "
+        "ForEach-Object { \"$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.CommandLine)\" }"
+    )
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                           capture_output=True, text=True, timeout=30)
+    except Exception:
+        return []
+    out: list[int] = []
+    for line in (r.stdout or "").splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) < 3:
+            continue
+        try:
+            pid, ppid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        if ppid == parent_pid and cwd_hint.lower() in parts[2].lower():
+            out.append(pid)
+    return out
+
+
+def find_game_jvm(parent_pid: int, cwd_hint: str, timeout_s: float) -> int | None:
+    """双 JVM 引导：等 launcher 拉起游戏 JVM 并返回它的 PID。"""
+    t0 = time.time()
+    while time.time() - t0 < timeout_s:
+        kids = child_java_pids(parent_pid, cwd_hint)
+        if kids:
+            return kids[0]
+        time.sleep(0.5)
+    return None
+
+
 def graceful_stop(proc: subprocess.Popen, wait_s: float = 40.0) -> str:
     """先请求关闭（让 shutdown hook 落盘），再兜底强杀。
 
@@ -275,8 +350,13 @@ def graceful_stop(proc: subprocess.Popen, wait_s: float = 40.0) -> str:
     窗口消息循环可响应 CTRL_CLOSE），所以 15 秒后直接升级 /F。
     shutdown hook 在强杀时**不会**执行——这意味着缓存落盘只能靠
     CacheWriter 的稳定窗口，不能依赖退出时 flush。这一点已记入验收口径。
+
+    ``proc`` 只用来取 PID；双 JVM 场景由调用方传**游戏 JVM**的 PID。
     """
-    pid = proc.pid
+    return graceful_stop_pid(proc.pid, wait_s)
+
+
+def graceful_stop_pid(pid: int, wait_s: float = 40.0) -> str:
     if not pid_alive(pid):
         return "already-exited"
     kill_pid(pid, force=False)
@@ -517,21 +597,37 @@ def one_round(cfg: dict, game: Path, args) -> dict:
     print(f">>> 直接启动（launchDirect），自动等待主菜单……")
     print(f"{'='*60}", flush=True)
 
-    menu_s = wait_for_menu(logp, offset, args.wait_menu, proc)
+    menu_s, why = wait_for_menu(logp, offset, args.wait_menu, proc,
+                                allow_early_exit=cfg.get("two_jvm", False))
+    # 双 JVM（MixinFR）：launcher JVM 会先退出并拉起游戏 JVM。测量与停止都必须
+    # 针对真正跑游戏的那个 PID——旧实现对 launcher 的 PID 发 taskkill（rc=128），
+    # 游戏 JVM 留在后台继续加载，于是出现"报 menu-timeout 但日志其实已到主菜单"。
+    game_pid = proc.pid
+    if cfg.get("two_jvm", False):
+        found = find_game_jvm(proc.pid, str(game), 120.0)
+        if found is not None:
+            game_pid = found
+            print(f">>> 双 JVM 引导：launcher pid={proc.pid} → 游戏 JVM pid={game_pid}")
+        else:
+            print(f">>> 双 JVM 引导：未找到游戏 JVM（launcher pid={proc.pid} 仍存活？"
+                  f" alive={pid_alive(proc.pid)}）", flush=True)
+
     if menu_s is None:
-        kill_pid(proc.pid, True)
-        if wait_dead(proc.pid, 20):
+        kill_pid(game_pid, True)
+        if wait_dead(game_pid, 20):
             clear_pid_file(pid_file)
-        return {"ok": False, "reason": "menu-timeout",
-                "elapsed": time.time() - t0}
+        if game_pid != proc.pid and pid_alive(proc.pid):
+            kill_pid(proc.pid, True)
+        return {"ok": False, "reason": why, "elapsed": time.time() - t0,
+                "game_pid": game_pid}
 
     print(f">>> 主菜单到达：{menu_s:.1f}s（从进程启动算）")
 
-    read_menu = io_read_bytes(proc.pid)
-    ws_menu = process_memory_mb(proc.pid)
-    private_menu = process_private_mb(proc.pid)
+    read_menu = io_read_bytes(game_pid)
+    ws_menu = process_memory_mb(game_pid)
+    private_menu = process_private_mb(game_pid)
     gpu_menu = gpu_memory_mb()
-    gpu_proc_dedicated_menu, gpu_proc_shared_menu = process_gpu_memory_mb(proc.pid)
+    gpu_proc_dedicated_menu, gpu_proc_shared_menu = process_gpu_memory_mb(game_pid)
     free_menu = free_physical_mb()
     print(f">>> 内存：ws={_round_mb(ws_menu)}MB private={_round_mb(private_menu)}MB "
           f"gpu_sys={_round_mb(gpu_menu)}MB "
@@ -542,12 +638,14 @@ def one_round(cfg: dict, game: Path, args) -> dict:
         print(f">>> 停留 {args.linger:.0f}s（给 CacheWriter 稳定窗口）")
         time.sleep(args.linger)
 
-    read_exit = io_read_bytes(proc.pid)
-    ws_exit = process_memory_mb(proc.pid)
-    private_exit = process_private_mb(proc.pid)
-    gpu_proc_dedicated_exit, gpu_proc_shared_exit = process_gpu_memory_mb(proc.pid)
+    read_exit = io_read_bytes(game_pid)
+    ws_exit = process_memory_mb(game_pid)
+    private_exit = process_private_mb(game_pid)
+    gpu_proc_dedicated_exit, gpu_proc_shared_exit = process_gpu_memory_mb(game_pid)
     free_exit = free_physical_mb()
-    how = graceful_stop(proc)
+    how = graceful_stop_pid(game_pid)
+    if game_pid != proc.pid and pid_alive(proc.pid):
+        kill_pid(proc.pid, True)
     wall = time.time() - t0
     print(f">>> 退出方式：{how}；总墙钟 {wall:.1f}s")
 
@@ -559,6 +657,7 @@ def one_round(cfg: dict, game: Path, args) -> dict:
         "menu_s": round(menu_s, 1),
         "wall_s": round(wall, 1),
         "stop": how,
+        "game_pid": game_pid,
         "read_bytes_menu": read_menu,
         "read_bytes_exit": read_exit,
         "ws_menu_mb": _round_mb(ws_menu),

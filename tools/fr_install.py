@@ -55,6 +55,12 @@ EXPECTED_PINS = {
     "v1.0.1": {
         FR_JAR: "150ebc21f0191acb4c1452aaa809f3fc129f98933d9e7c8f5b366e2888291187",
     },
+    # v1.0.2 stable (2026-11-18): still one embedded-agent fr.jar, and it still
+    # reserves texture ids from getImageFileCount(). The agent refills that map
+    # during index replay, which is what makes the file index usable here.
+    "v1.0.2": {
+        FR_JAR: "7aba2a13e3d9af8f0b3c06a792ed8398171b437bb2f66e5a8784b65f1ab349b3",
+    },
 }
 DEFAULT_SRC = ".cache/fr098/release/fast-rendering-0.9.8"
 

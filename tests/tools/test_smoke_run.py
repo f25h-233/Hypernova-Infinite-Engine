@@ -176,7 +176,7 @@ def test_one_round_records_memory_samples(tmp_path, monkeypatch):
         pid = 424242
 
     monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **k: FakeProc())
-    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: 12.5)
+    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: (12.5, "menu"))
     monkeypatch.setattr(smoke, "io_read_bytes", lambda pid: 7)
     monkeypatch.setattr(smoke, "process_memory_mb", lambda pid: 1234.56)
     monkeypatch.setattr(smoke, "process_private_mb", lambda pid: 2345.67)
@@ -184,6 +184,7 @@ def test_one_round_records_memory_samples(tmp_path, monkeypatch):
     monkeypatch.setattr(smoke, "process_gpu_memory_mb", lambda pid: (3500.0, 100.0))
     monkeypatch.setattr(smoke, "free_physical_mb", lambda: 15000.0)
     monkeypatch.setattr(smoke, "graceful_stop", lambda proc: "forced")
+    monkeypatch.setattr(smoke, "graceful_stop_pid", lambda pid: "forced")
     monkeypatch.setattr(smoke.time, "sleep", lambda seconds: None)
 
     args = argparse.Namespace(start_res="1707x1067", fullscreen=False,
@@ -240,19 +241,19 @@ def test_one_round_writes_and_clears_pid_file(tmp_path, monkeypatch):
     class FakeProc:
         pid = 424242
 
-    def fake_stop(proc):
+    def fake_stop(pid):
         seen["pid"] = pid_file.read_text(encoding="utf-8")
         return "forced"
 
     monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **k: FakeProc())
-    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: 12.5)
+    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: (12.5, "menu"))
     monkeypatch.setattr(smoke, "io_read_bytes", lambda pid: 7)
     monkeypatch.setattr(smoke, "process_memory_mb", lambda pid: 1234.56)
     monkeypatch.setattr(smoke, "process_private_mb", lambda pid: 2345.67)
     monkeypatch.setattr(smoke, "gpu_memory_mb", lambda: 4096.0)
     monkeypatch.setattr(smoke, "process_gpu_memory_mb", lambda pid: (3500.0, 100.0))
     monkeypatch.setattr(smoke, "free_physical_mb", lambda: 15000.0)
-    monkeypatch.setattr(smoke, "graceful_stop", fake_stop)
+    monkeypatch.setattr(smoke, "graceful_stop_pid", fake_stop)
     monkeypatch.setattr(smoke.time, "sleep", lambda seconds: None)
 
     args = argparse.Namespace(start_res="1707x1067", fullscreen=False,
@@ -291,9 +292,9 @@ def test_one_round_keeps_pid_file_when_stop_still_running(tmp_path, monkeypatch)
     pid_file = tmp_path / "round.pid"
 
     monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **k: _FakeProc())
-    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: 12.5)
+    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: (12.5, "menu"))
     _stub_round_metrics(monkeypatch)
-    monkeypatch.setattr(smoke, "graceful_stop", lambda proc: "still-running")
+    monkeypatch.setattr(smoke, "graceful_stop_pid", lambda pid: "still-running")
 
     row = smoke.one_round(cfg, game, _one_round_args(pid_file))
     assert row["ok"] is False
@@ -310,7 +311,7 @@ def test_menu_timeout_keeps_pid_file_when_game_survives(tmp_path, monkeypatch):
     calls = []
 
     monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **k: _FakeProc())
-    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: None)
+    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: (None, "menu-timeout"))
     monkeypatch.setattr(smoke, "kill_pid",
                         lambda pid, force: calls.append((pid, force)))
     monkeypatch.setattr(smoke, "wait_dead", lambda pid, timeout: False)
@@ -331,7 +332,7 @@ def test_menu_timeout_clears_pid_file_when_game_dies(tmp_path, monkeypatch):
     calls = []
 
     monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **k: _FakeProc())
-    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: None)
+    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: (None, "menu-timeout"))
     monkeypatch.setattr(smoke, "kill_pid",
                         lambda pid, force: calls.append((pid, force)))
     monkeypatch.setattr(smoke, "wait_dead", lambda pid, timeout: True)
@@ -342,3 +343,71 @@ def test_menu_timeout_clears_pid_file_when_game_dies(tmp_path, monkeypatch):
     assert row["reason"] == "menu-timeout"
     assert calls == [(424242, True)]
     assert not pid_file.exists()
+
+
+def test_two_jvm_profile_measures_and_stops_the_game_jvm(tmp_path, monkeypatch):
+    """MixinFR 双 JVM：launcher 先退出，测量/停止必须针对游戏 JVM。
+
+    旧实现用 launcher 的 PID 测量并 taskkill（rc=128），游戏 JVM 留在后台，
+    于是出现"报 menu-timeout 但日志其实已到主菜单"。
+    """
+    game = tmp_path / "game"
+    (game / "starsector-core").mkdir(parents=True)
+    cfg = {"java": "jre/java", "vmparams": "vm.txt", "cwd": "starsector-core",
+           "two_jvm": True}
+
+    class FakeProc:
+        pid = 1111
+
+    sampled: list[int] = []
+
+    def fake_mem(pid):
+        sampled.append(pid)
+        return 100.0
+
+    monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **k: FakeProc())
+    monkeypatch.setattr(smoke, "wait_for_menu", lambda *a, **k: (9.0, "menu"))
+    monkeypatch.setattr(smoke, "find_game_jvm", lambda *a, **k: 2222)
+    monkeypatch.setattr(smoke, "pid_alive", lambda pid: False)
+    monkeypatch.setattr(smoke, "io_read_bytes", lambda pid: 0)
+    monkeypatch.setattr(smoke, "process_memory_mb", fake_mem)
+    monkeypatch.setattr(smoke, "process_private_mb", lambda pid: 100.0)
+    monkeypatch.setattr(smoke, "gpu_memory_mb", lambda: 0.0)
+    monkeypatch.setattr(smoke, "process_gpu_memory_mb", lambda pid: (0.0, 0.0))
+    monkeypatch.setattr(smoke, "free_physical_mb", lambda: 0.0)
+    stopped: list[int] = []
+    monkeypatch.setattr(smoke, "graceful_stop_pid", lambda pid: stopped.append(pid) or "forced")
+    monkeypatch.setattr(smoke.time, "sleep", lambda seconds: None)
+
+    args = argparse.Namespace(start_res="1707x1067", fullscreen=False,
+                              jvm_arg=[], wait_menu=1, linger=0)
+    row = smoke.one_round(cfg, game, args)
+
+    assert row["ok"] is True
+    assert row["game_pid"] == 2222
+    assert stopped == [2222]
+    assert sampled and set(sampled) == {2222}
+
+
+def test_wait_for_menu_survives_launcher_exit_only_for_two_jvm(tmp_path, monkeypatch):
+    """allow_early_exit=True 时进程退出不中止等待；单 JVM 仍立即判失败。"""
+    log = tmp_path / "starsector.log"
+    log.write_bytes(b"")
+
+    class DeadProc:
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(smoke.time, "sleep", lambda seconds: None)
+
+    # 单 JVM：立刻返回 process-exited，不白等
+    got, why = smoke.wait_for_menu(log, 0, 30.0, DeadProc())
+    assert got is None and why == "process-exited"
+
+    # 双 JVM：进程退出后继续轮询日志，直到锚点出现
+    def write_anchor(_seconds):
+        log.write_bytes(b"...Playing music with id [miscallenous_main_menu.ogg]...")
+
+    monkeypatch.setattr(smoke.time, "sleep", write_anchor)
+    got, why = smoke.wait_for_menu(log, 0, 30.0, DeadProc(), allow_early_exit=True)
+    assert why == "menu" and got is not None

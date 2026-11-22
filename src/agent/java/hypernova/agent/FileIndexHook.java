@@ -71,19 +71,27 @@ public final class FileIndexHook {
 
     /**
      * Versions whose {@code ResourceHandle} is the top-level three-argument data
-     * class. FR 1.0.0 and 1.0.1 keep it byte-for-byte identical to 0.9.8's.
+     * class. FR 1.0.0, 1.0.1 and the 1.0.2 stable release keep it byte-for-byte
+     * identical to 0.9.8's.
      *
-     * <p>1.0.2rc1+ is deliberately excluded. It moved {@code fileCount} to the
-     * outer {@code FileLoaderFast}, added {@code getImageFileCount()}, and
+     * <p>1.0.2rc1+ (including the v1.0.2 stable release) moved {@code fileCount}
+     * to the outer {@code FileLoaderFast}, added {@code getImageFileCount()}, and
      * {@code ResourceLoaderState.initMain} now reserves texture ids up front
-     * ({@code texGenerator.reserve(imageCount)}). Replaying an index skips the
-     * crawl that fills {@code fileCount}, so the reserve size collapses to zero
-     * and the texture workers race {@code glGenTextures()} outside
-     * {@code ResourceLoaderLock} — measured as a null return from
-     * {@code Executor.get} and a startup crash 2 times in 6 launches.
+     * ({@code texGenerator.reserve(imageCount)}). Replaying an index without
+     * refilling {@code fileCount} collapses that reserve to zero and the texture
+     * workers race {@code glGenTextures()} outside {@code ResourceLoaderLock}.
+     * {@link #refillFileCount} replays the per-extension counts the crawl would
+     * have recorded, which is what makes 1.0.2 safe to index.
      */
     private static final Set<String> TOP_LEVEL_HANDLE_VERSIONS =
-            Set.of("0.9.8", "1.0.0", "1.0.1");
+            Set.of("0.9.8", "1.0.0", "1.0.1", "1.0.2");
+
+    /**
+     * Versions where the crawl also maintains the outer {@code FileLoaderFast.fileCount}
+     * map that {@code getImageFileCount()} reads. 1.0.2rc1 introduced it; every
+     * 1.0.2+ release (and the 1.0.2 stable) keeps it.
+     */
+    private static final Set<String> FILE_COUNT_VERSIONS = Set.of("1.0.2");
 
     private static HandleShape handleShape(String version) {
         String v = normalizeFrVersion(version);
@@ -106,6 +114,14 @@ public final class FileIndexHook {
         String v = normalizeFrVersion(version);
         if (TOP_LEVEL_HANDLE_VERSIONS.contains(v) && !fr098Enabled()) return false;
         return handleShape(v) != null;
+    }
+
+    /**
+     * True when the FR version maintains {@code FileLoaderFast.fileCount} and
+     * therefore expects index replay to refill it before {@code getImageFileCount()}.
+     */
+    static boolean needsFileCountRefill(String version) {
+        return FILE_COUNT_VERSIONS.contains(normalizeFrVersion(version));
     }
 
     /**
@@ -313,6 +329,14 @@ public final class FileIndexHook {
             if (total == 0) return -1;
             target.clear();
             target.putAll(loaded);
+            // 1.0.2+ reserves texture ids from getImageFileCount(), which reads the
+            // per-extension counts the crawl would have written. Replaying the
+            // index skips the crawl, so refill them or the reserve collapses to
+            // zero and texture workers race glGenTextures() outside the lock.
+            if (needsFileCountRefill(frVersion) && !refillFileCount(outer, index, loaded)) {
+                AgentLog.info("file index: cannot refill file counts; full crawl");
+                return -1;
+            }
             LOADED.add(crawler);
             LAST_LOADED.set(total);
             AgentLog.info("file index: loaded mod_entries=" + index.entries().size()
@@ -323,6 +347,110 @@ public final class FileIndexHook {
             AgentLog.fail("file index load failed; falling back to full crawl", t);
             return -1;
         }
+    }
+
+    /**
+     * Replays the per-extension counts FR's crawl records in
+     * {@code FileLoaderFast$DirectoryCrawler.makeNewRosurceHandle}.
+     *
+     * <p>FR 1.0.2's {@code ResourceLoaderState.initMain} calls
+     * {@code texGenerator.reserve(getImageFileCount())} before any texture is
+     * loaded. The count is the sum of {@code fileCount}'s image extensions, and
+     * it is only ever filled by the crawl. An index replay skips the crawl, so
+     * without this the reserve is 0 and the {@code FR-Texture-Loader} threads
+     * race {@code glGenTextures()} -> {@code ResourceGenerator.get} ->
+     * {@code Executor.wait} outside {@code ResourceLoaderLock}. Measured on
+     * FR v1.0.2 with a spoofed 1.0.1 version string: 1 crash in 4 launches,
+     * {@code ArrayIndexOutOfBoundsException: Index 2 out of bounds for length 2}
+     * at {@code bridge.context.Frame.add}.
+     *
+     * <p>Counting must mirror every {@code makeNewRosurceHandle} call the crawl
+     * makes, including the ones for <b>directories</b> (extension {@code ""}) —
+     * FR enumerates directory objects as handles too. Counting only index
+     * entries therefore under-counts (a real Base crawl logged png 5168 vs a
+     * 2119 image count from entries alone) and the reserve stays too small.
+     * The replayed {@code loaded} map plus the index's recorded directory set
+     * reproduces the same per-extension tallies.
+     *
+     * <p>Excluded locations are skipped, matching {@code isExcludedLocation}.
+     * Returns false when the map cannot be reached; the caller then falls back
+     * to a full crawl.
+     */
+    static boolean refillFileCount(Object outer, FileIndex index,
+                                   Map<String, List<Object>> loaded) {
+        try {
+            Object counts = get(outer, "fileCount");
+            if (!(counts instanceof Map<?, ?> map)) return false;
+            Map<String, Integer> perExtension = new HashMap<>();
+            // Replayed/crawled files: the replay's own key set is the same set
+            // FR's crawl would have collected for those locations.
+            if (loaded != null) {
+                for (String key : loaded.keySet()) {
+                    perExtension.merge(fileExtension(key), 1, Integer::sum);
+                }
+            }
+            // Directories counted by the crawl: the index records every crawled
+            // directory path (including empty leaves), so their extension is "".
+            for (FileIndex.Dir dir : index.dirs()) {
+                if (isExcludedDirectoryPath(dir.path())) continue;
+                perExtension.merge(fileExtension(dir.path()), 1, Integer::sum);
+            }
+            synchronized (map) {
+                @SuppressWarnings("unchecked")
+                Map<String, AtomicInteger> target = (Map<String, AtomicInteger>) map;
+                target.clear();
+                for (Map.Entry<String, Integer> e : perExtension.entrySet()) {
+                    target.computeIfAbsent(e.getKey(), k -> new AtomicInteger())
+                            .addAndGet(e.getValue());
+                }
+            }
+            int images = imageCountForTest(perExtension);
+            int dirs = perExtension.getOrDefault("", 0);
+            AgentLog.info("file index: refilled file counts for " + perExtension.size()
+                    + " extensions, dirs=" + dirs + ", images=" + images
+                    + ", outerImages=" + outerImageCount(outer));
+            return true;
+        } catch (Throwable t) {
+            AgentLog.fail("file index: file count refill failed", t);
+            return false;
+        }
+    }
+
+    /** Reads {@code FileLoaderFast.getImageFileCount()} after the refill; -1 when absent. */
+    private static int outerImageCount(Object outer) {
+        try {
+            java.lang.reflect.Method m = outer.getClass().getDeclaredMethod("getImageFileCount");
+            m.setAccessible(true);
+            return (Integer) m.invoke(outer);
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    /** The crawl never enumerates these, so their directories must not count. */
+    private static boolean isExcludedDirectoryPath(String path) {
+        return EXCLUDED_RESOURCE_PATH.equals(path);
+    }
+
+    /** Mirrors FR's {@code getFileExtension}: last dot after the last separator. */
+    static String fileExtension(String path) {
+        if (path == null || path.isEmpty()) return "";
+        int separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+        int dot = path.lastIndexOf('.');
+        if (dot <= separator || dot == path.length() - 1) return "";
+        return path.substring(dot + 1);
+    }
+
+    private static int imageCountForTest(Map<String, Integer> perExtension) {
+        int imageCount = 0;
+        for (Map.Entry<String, Integer> e : perExtension.entrySet()) {
+            switch (e.getKey()) {
+                case "png", "jpg", "jpeg", "webp" -> imageCount += e.getValue();
+                default -> {
+                }
+            }
+        }
+        return imageCount;
     }
 
     /**

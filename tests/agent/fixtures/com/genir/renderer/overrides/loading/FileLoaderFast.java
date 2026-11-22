@@ -15,9 +15,24 @@ import java.util.Map;
 public class FileLoaderFast {
     private final List<FileLoader.ResourceLocation> allLocations;
     private final Map<String, List<Object>> cachedFiles = new HashMap<>();
+    // FR 1.0.2rc1+ keeps per-extension counts here; ResourceLoaderState reserves
+    // texture ids from getImageFileCount(), so index replay must refill it.
+    private final Map<String, java.util.concurrent.atomic.AtomicInteger> fileCount = new HashMap<>();
 
     public FileLoaderFast(List<FileLoader.ResourceLocation> allLocations) {
         this.allLocations = allLocations;
+    }
+
+    public int getImageFileCount() {
+        int imageCount = 0;
+        for (Map.Entry<String, java.util.concurrent.atomic.AtomicInteger> entry : fileCount.entrySet()) {
+            switch (entry.getKey()) {
+                case "png", "jpg", "jpeg", "webp" -> imageCount += entry.getValue().get();
+                default -> {
+                }
+            }
+        }
+        return imageCount;
     }
 
     public int crawl() {
@@ -82,6 +97,20 @@ public class FileLoaderFast {
             this.topLevel = topLevel;
         }
 
+        private void countFile(File file) {
+            String extension = fileExtension(file.getPath());
+            fileCount.computeIfAbsent(extension,
+                    k -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
+        }
+
+        private String fileExtension(String path) {
+            if (path == null || path.isEmpty()) return "";
+            int separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+            int dot = path.lastIndexOf('.');
+            if (dot <= separator || dot == path.length() - 1) return "";
+            return path.substring(dot + 1);
+        }
+
         private int cacheLocations() {
             for (FileLoader.ResourceLocation location : allLocations) {
                 if (isExcludedLocation(location)) continue;
@@ -103,6 +132,7 @@ public class FileLoaderFast {
         }
 
         private void walk(File file, FileLoader.ResourceLocation location) {
+            countFile(file);
             collector.add(topLevel
                     ? new ResourceHandle(file, location, "")
                     : new ResourceHandle.FileHandle(file, location));

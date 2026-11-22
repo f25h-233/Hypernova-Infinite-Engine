@@ -72,3 +72,6 @@ SS098_Hypernova_Compat_AuditTest/evidence/**/manifest-v1.json
 # 审计运行证据整体不入库（已跟踪的历史证据保留）
 SS098_Hypernova_Compat_AuditTest/evidence/
 SS098_Hypernova_Compat_AuditTest/menu-smoke/
+
+# ---- 分发指南草稿（正文可入库，但 _upstream 的第三方二进制不入库）----
+Starsector-098-distribution-guide/_upstream/

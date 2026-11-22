@@ -360,8 +360,16 @@ class FileIndexHookTest {
         assertTrue(FileIndexHook.supportedFileIndexVersion("v1.0.0"));
         assertTrue(FileIndexHook.supportedFileIndexVersion("1.0.1"));
         assertTrue(FileIndexHook.supportedFileIndexVersion("v1.0.1"));
-        // 1.0.2rc1 moved fileCount/getImageFileCount and reserves texture ids
-        // from it; replaying an index zeroes that reserve and crashes startup.
+        // 1.0.2 stable keeps the 0.9.8 ResourceHandle shape AND still reserves
+        // texture ids from getImageFileCount(); the index refills that map
+        // (FileIndexHook.refillFileCount) instead of skipping it. Verified on
+        // the Base install: spoofed as 1.0.1 it crashed 1/4 launches at
+        // Frame.add before the refill existed.
+        assertTrue(FileIndexHook.supportedFileIndexVersion("1.0.2"));
+        assertTrue(FileIndexHook.supportedFileIndexVersion("v1.0.2"));
+        // Release candidates are deliberately NOT whitelisted: they are the
+        // builds that actually crashed during testing, and their fileCount
+        // shape was still being iterated on.
         assertFalse(FileIndexHook.supportedFileIndexVersion("1.0.2rc1"));
         assertFalse(FileIndexHook.supportedFileIndexVersion("v1.0.2rc1"));
         assertFalse(FileIndexHook.supportedFileIndexVersion("1.1.0"));
@@ -458,6 +466,48 @@ class FileIndexHookTest {
                 "a 0.9.8 index must not replay under 1.0.1");
         assertTrue(mapOf(second).isEmpty(), "rejected index must not pollute cachedFiles");
         assertTrue(crawl(second) > 0, "FR's own crawl must still run");
+    }
+
+    @Test
+    void replayRefillsPerExtensionFileCountFor102() throws Exception {
+        // FR 1.0.2's ResourceLoaderState.initMain reserves texture ids from
+        // getImageFileCount(); replay must reproduce the crawl's counts or the
+        // reserve is 0 and texture workers race glGenTextures().
+        Files.writeString(ctx.gameRoot().resolve("starsector-core/fr.version.txt"), "v1.0.2");
+        Object loc = location(tmp.resolve("game/mods/mod1"));
+        FileLoaderFast first = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
+        assertTrue(first.crawlAndSave098() > 0, "1.0.2 fixture crawl must find files");
+
+        FileLoaderFast second = new FileLoaderFast(List.of((FileLoader.ResourceLocation) loc));
+        assertTrue(FileIndexHook.tryLoad(crawlerOf(second)) > 0, "1.0.2 index must hit");
+        Map<String, Integer> counts = fileCountMapOf(second);
+        assertEquals(1, counts.get("png"), "one png must be counted");
+        assertEquals(1, counts.get("json"), "one json must be counted");
+        assertTrue(counts.getOrDefault("", 0) > 0,
+                "crawled directories are counted with an empty extension");
+        assertFalse(counts.isEmpty(), "replay must not leave fileCount empty");
+    }
+
+    @Test
+    void fileExtensionMatchesFrRules() {
+        assertEquals("png", FileIndexHook.fileExtension("dir/a.png"));
+        assertEquals("json", FileIndexHook.fileExtension("dir\\b.json"));
+        assertEquals("", FileIndexHook.fileExtension("dir/noext"));
+        assertEquals("", FileIndexHook.fileExtension("dir.trailing."));
+        assertEquals("", FileIndexHook.fileExtension("dir/a"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Integer> fileCountMapOf(FileLoaderFast fast) throws Exception {
+        Field f = FileLoaderFast.class.getDeclaredField("fileCount");
+        f.setAccessible(true);
+        Map<String, java.util.concurrent.atomic.AtomicInteger> raw =
+                (Map<String, java.util.concurrent.atomic.AtomicInteger>) f.get(fast);
+        Map<String, Integer> out = new java.util.HashMap<>();
+        for (Map.Entry<String, java.util.concurrent.atomic.AtomicInteger> e : raw.entrySet()) {
+            out.put(e.getKey(), e.getValue().get());
+        }
+        return out;
     }
 
     @Test
