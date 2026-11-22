@@ -236,3 +236,50 @@ com.fs.starfarer.StarfarerLauncher
 但**允许任何人任意使用、修改、接手维护，无需授权**。
 源码随发行包提供（`src/` 是 CFR 反编译产物，不是原始源码，改动需靠逆向）。
 因此本项目**可以**在需要时接手这一块，不受上游掣肘。
+
+## 9. StarsectorParallel 0.1.0 与 paraFrame 1.0.0（2026-11-23）
+
+这两个经常被搞混，性质完全不同：
+
+| | StarsectorParallel 0.1.0 | paraFrame 1.0.0 |
+|---|---|---|
+| 类型 | **MixinLib 的 mixin mod**，改引擎热点 | **纯 Java 库**，零游戏依赖 |
+| 依赖 | `MixinLib`（required） | 无 |
+| 归属 | 仅路线 A | 两条都可装 |
+| 单独安装效果 | 部分生效 | **零效果**（作者明说） |
+
+### StarsectorParallel 在路线 A 的实测
+
+启动正常（16.0 s），线程池**确实起来了**：
+
+```
+[sparallel-worker-15/Diag:...] TransformDiagnostics - seq=4147 kind=target
+    class=com.fs.starfarer.api.combat.PhaseCloakSystemAPI thread=sparallel-worker-15#154
+```
+
+但主热点注入失败：
+
+```
+[MixinFR-ForceInjectProbe] PROBE target=com.fs.starfarer.combat.CombatEngine
+    loaded=true declaredMethods=307 mixinHandlers=0
+    mixins=[io.github.GerBetria.inject.mixin.hotspots.CombatAiHotspotMixin]
+    verdict=NOT-INJECTED
+```
+
+原因写在上游 README 里：**「汉化包改动了目标类时，对应注入点会优雅跳过（退回原版路径，不崩溃）」**。
+优化测试版改过 `starfarer_obf.jar`，`CombatEngine` 的匹配因此落空。
+
+**口径**：A 路线上它是**部分生效**（线程池运行，战斗 AI 热点未接管），
+不是「完全有效」也不是「完全无效」。关单个子系统的开关：
+`-Dsparallel.c1/c3/g3/e5/e7=false`，整体关 `-Dsparallel.master=false`。
+
+**路线 B 不能装**：它 `isRequired` 依赖 `MixinLib`，而 B 用原生 FR，没有 MixinLib。
+
+### paraFrame 的定位
+
+它的价值不在当下，而在**给后续 javaagent mod 生态打地基**。按前置库（同 LazyLib/MagicLib）处理：
+放进两条路线的标准步骤，提前装好，将来依赖它的 mod 可直接启用。
+
+**未实测**：本地没有 `paraFrame-1.0.0.zip`（论坛附件需登录），
+所以「在两条路线上能正常加载」这一点**尚未实机验证**。
+按设计它是纯库（无 agent、零游戏依赖、Java 8 字节码），预期无风险，但没有证据前不写成「已验证」。
