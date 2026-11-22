@@ -78,10 +78,11 @@
 | ChineseInputFix 2.0.0 | ✅ | ✅ | — | 日志实测加载 v2.2 组件 |
 | VramOptimizer 1.0.45/1.0.51 | ✅ | ✅ | — | 1.0.48「Oats for genir」与 FR 联动；基座每会话一条 `SetDDSTextureParamaters` `NoSuchMethodException` 属已知预期 |
 | BoxUtil 1.6.3 | ✅ | ✅ | — | FR readme 声明 1.6.0+ 需 OpenGL 4.5 |
-| GraphicsLib 1.12.2 | ✅ | ✅ | — | 纹理补丁按类 SHA 选变体 |
+| GraphicsLib 1.12.2 | ✅ | ✅ | — | 纹理补丁按类 SHA 选变体；**目录名 `shaderLib`**（`GraphicsLib` 与之同 id 同 jar，只能留一份） |
 | MixinFR 1.2.5 | 需手动顺序 | ✅ | `MixinLib-bridge → Hypernova` | 单行 vmparams 用 `install-agent.bat` 会被拆行，建议手动插 |
 | StarsectorParallel 0.1.0 | ✅ | ✅ | — | 依赖 MixinLib；`CombatAiHotspotMixin` 在 FR 0.9.5 下 `NOT-INJECTED` |
-| Prepatcher 0.18.9 | 未测 | 未测 | `Hypernova → FR → Prepatcher` | Java 28 未在作者声明内，实验项 |
+| **Prepatcher 0.18.9（B，plain FR）** | ✅ | ✅ | `Hypernova → FR → Prepatcher` | 实测 `status=transformer-installed`、**15 classes / 21 patches / 0 skipped** |
+| **Prepatcher 0.18.9（A，MixinFR）** | ❌ **空转** | — | `MixinLib-bridge → Hypernova → Prepatcher` | `status=runtime-unavailable`、**patchedClasses=0 / appliedPatches=0**，原因 `Starsector runtime is unavailable ... com.fs.starfarer.api.Global`；游戏能启动但补丁一个都没打 |
 
 ## 4. 汉化优化测试版 × FR
 
@@ -116,15 +117,26 @@
 | | A | B |
 |---|---|---|
 | 启动 | `jre/bin/java.exe` + `launch_a.vmparams`（`starsector.exe` 读的单行 `vmparams` 行内插 agent） | `jdk-28+13/bin/java.exe` + `../Miko_Simple.txt`（Mikohime 0.8.3 非交互生成） |
-| 组件 | MixinFR **1.2.5**（内置 FR 0.9.5）+ JRE **17** + VOpt **1.0.51** + Hypernova **1.9.11** | FR **0.9.8**（双 jar）+ Temurin **28+13-ea** + Mikohime **v0.8.3** + VOpt **1.0.51** + Hypernova **1.9.11** |
-| 本机实测（3 轮） | **14.5 / 13.0 / 14.0 s，中位 14.0 s** | **8.5 / 8.0 / 7.5 s，中位 8.0 s** |
-| agent 状态 | scripts cache 命中（116 条 / 3–4 ms）；`textures patched`；`file index: disabled for FR 0.9.5`（设计门禁） | scripts cache 命中（116 条 / 1 ms）；`textures patched`；`file index` 写入 3754 / 加载 15657（513 dirs） |
-| 进程 GPU | 1098–1100 MB | 1114 MB |
+| 组件 | MixinFR **1.2.5**（内置 FR 0.9.5）+ JRE **17** + VOpt **1.0.51** + Hypernova **1.9.11** + Prepatcher **0.18.9** | FR **0.9.8**（双 jar）+ Temurin **28+13-ea** + Mikohime **v0.8.3** + VOpt **1.0.51** + Hypernova **1.9.11** + Prepatcher **0.18.9** |
+| 本机实测（3 轮，装 Prepatcher） | **13.5 / 13.5 / 12.5 s，中位 13.5 s** | **8.5 / 8.0 / 8.5 s，中位 8.5 s** |
+| 本机实测（3 轮，不装 Prepatcher） | 14.5 / 13.0 / 14.0 s，中位 14.0 s | 8.5 / 8.0 / 7.5 s，中位 8.0 s |
+| Prepatcher 实效 | **空转**：`runtime-unavailable`，0 classes / 0 patches | 生效：`transformer-installed`，**15 classes / 21 patches / 0 skipped** |
+| agent 状态 | scripts cache 命中（116 条 / 3–4 ms）；`textures patched`；`file index: disabled for FR 0.9.5`（设计门禁） | scripts cache 命中（116 条 / 1 ms）；`textures patched`；`file index` 写入 3771 / 加载 15657（513–519 dirs） |
+| 进程 GPU | 1114 MB | 1116 MB |
 
 口径：12-mod 小集（BoxUtil **1.6.3** / ChineseInputFix 2.0 / lunalib / LazyLib / MagicLib /
-Particle Engine / RetroLib / shaderLib(GraphicsLib 1.12.2) / VOpt 1.0.51 / Hypernova 1.9.11，
-A 另加 MixinLib）、`-Xmx4096m`、warm（首轮建缓存）。**B 比 A 快 ~6 s，但这是 12-mod 小集单机
-3 轮，不能外推到 256 全量**（M7 的 59.2 s / 465 s 是 FR 0.9.7rc2 的旧环境）。
+Particle Engine / RetroLib / shaderLib(GraphicsLib 1.12.2) / VOpt 1.0.51 / Hypernova 1.9.11 /
+Prepatcher 0.18.9，A 另加 MixinLib）、`-Xmx4096m`、warm（首轮建缓存）。
+
+**两条路线的汉化都已核对**：`starfarer_obf.jar` = `8d4de3c9…`、`fs.sound_obf.jar` = `14562a3e…`，
+`localization_version.json` = 「远行星号中文汉化包 2026.10.15 / startup-optimization / zh-Hans」，
+与母本 `optimized-2026.10.15` 逐项一致。
+
+**Prepatcher 的差异幅度在噪声内**（A −0.5 s、B +0.5 s，各 3 轮），不能当作收益或损失结论。
+真正的区别是**有没有生效**：A 0 个补丁，B 21 个补丁。
+
+**B 比 A 快 ~5 s，但这是 12-mod 小集单机 3 轮，不能外推到 256 全量**
+（M7 的 59.2 s / 465 s 是 FR 0.9.7rc2 的旧环境）。
 
 已确认的踩坑（本轮修复）：
 
@@ -137,4 +149,11 @@ A 另加 MixinLib）、`-Xmx4096m`、warm（首轮建缓存）。**B 比 A 快 ~
    FR 官方 readme 复制文件，再让工具改版本/重指启动行。
 5. **VOpt 的 gh-proxy 下载会被截断**：断点续传会把 zip 拼坏（50,820,261 vs 官方 49,763,493）。
    **必须用 `testzip()` 校验体积与完整性**，损坏就整份重下。
+6. **Prepatcher 在 A（MixinFR）上是空转**：agent 能加载、游戏能启动，但
+   `prepatcher.log` 报 `Starsector runtime is unavailable; no bytecode patches registered:
+   com.fs.starfarer.api.Global`，`status=runtime-unavailable`、0 classes / 0 patches。
+   **不要因为"游戏起来了"就认为 A 的 Prepatcher 生效**——必须看这两行。
+7. **Mikohime 的 Prepatcher 集成会写带引号的 agent 行**（`"-javaagent:...jar"`），
+   而 Hypernova 的 `install_agent.py` 匹配的是不带引号的形式；重新生成启动档后
+   要重新插 Hypernova agent，并确认顺序是 `Hypernova → FR → Prepatcher`。
 
