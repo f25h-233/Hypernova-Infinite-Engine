@@ -189,3 +189,46 @@ textures: unsupported GraphicsLib TextureData (sha256=…); lazy normal cache di
 若要支持 A，需要为「MixinFR 改写后的 TextureData」再生成一个变体——但那要跟着
 MixinFR 的每次更新重做，且两个 mixin 的最终形状由 Fabric 的顺序决定，不保证稳定。
 **本项目不做这个适配。**
+
+## 8. active-stats 1.0 在两条路线上的实测（2026-11-23）
+
+active-stats 是生态里目前**唯一做「大地图内帧数」**的 javaagent（商品循环剔除 + 高倍速合并）。
+它是 `Premain-Class` agent，因此和 Prepatcher 一样受路线差异影响。
+
+| | A（MixinFR） | B（plain FR） |
+|---|---|---|
+| 能否加载 | **否** | **是** |
+| 日志证据 | `load fail com.fs.starfarer.api.combat.MutableStatWithTempMods: ClassNotFoundException` → `resolve: tempMods=false advance=false avail=false tradeMod=false -> resolved=false` → `resolve failed, transformer not installed` | `resolve: tempMods=true advance=true avail=true tradeMod=true -> resolved=true` → `[transform] MutableStatWithTempMods -> OK 3817 -> 3942` |
+| 游戏是否仍能启动 | 是（fail-open） | 是 |
+
+**根因（与 Prepatcher 同一个）**：MixinFR 用 `TargetClassLoader` 重新定义游戏类
+（`[Diag:DEFINE_OK] class=com.fs.starfarer.StarfarerLauncher loader=TargetClassLoader ... starfarer_obf.jar`）。
+所有在 `premain` 阶段用 `Class.forName` 找游戏类的 agent，此刻都看不到那些类。
+
+### agent 顺序（B 路线，实测可用）
+
+```
+-javaagent:../mods/hypernova_infinite_engine/jars/hypernova.agent.jar
+-javaagent:fr.agent.jar
+-javaagent:active-stats.jar
+"-javaagent:../mods/StarsectorPrepatcher/agent/StarsectorPrepatcherAgent.jar"
+com.fs.starfarer.StarfarerLauncher
+```
+
+三条硬约束叠在一起：
+
+1. **Hypernova 必须在 FR 之前**（纹理补丁按 FR 改写前的 SHA 匹配）
+2. **active-stats 必须在 FR 之后**（要重算 FR 改写过的栈帧，`COMPUTE_FRAMES`）
+3. **Prepatcher 必须是最后一个 javaagent**——否则它直接报
+   `cannot prove a safe configured bytecode route on Java 28. Prepatcher is not the last javaagent;
+   prepatcherAgentIndex=2, javaAgentCount=4` 并拒绝启动
+
+把 active-stats 放在 Prepatcher **后面**会让游戏**起不来**（实测：进程直接退出、无主菜单）。
+放在 Prepatcher **前面**则两者都正常（实测 9.0 s 到主菜单，与不装时一致）。
+
+### 关于维护
+
+作者在发布帖明确表示：这是他用 AI 辅助的「随手之作」，**自己不会再维护**，
+但**允许任何人任意使用、修改、接手维护，无需授权**。
+源码随发行包提供（`src/` 是 CFR 反编译产物，不是原始源码，改动需靠逆向）。
+因此本项目**可以**在需要时接手这一块，不受上游掣肘。
