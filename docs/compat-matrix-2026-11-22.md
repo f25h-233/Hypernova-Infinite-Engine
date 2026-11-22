@@ -185,7 +185,11 @@ textures: unsupported GraphicsLib TextureData (sha256=…); lazy normal cache di
 只有 scripts cache 生效。两条路线共用的 `Graphics.jar` SHA 相同（`c4ed41ac…`），
 所以差异确实来自 MixinFR 的运行期改写，不是 mod 文件不同。
 
-**结论**：A 路线上不要指望纹理补丁。真想要纹理补丁就用路线 B。
+**结论**：A 路线的**懒加载法线缓存**不生效（`textures: patch resources loaded` 本身是成功的，
+失效的只是 `lazy normal cache` 那一条分支）。需要它就选路线 B。
+
+**这是 MixinFR 的架构取舍，不是缺陷**：它为了在优化测试版上做深度集成（高清字体、
+输入法修复、FR 内嵌）接管了类加载，代价就是其它 javaagent 与同名类改写插不进来。
 若要支持 A，需要为「MixinFR 改写后的 TextureData」再生成一个变体——但那要跟着
 MixinFR 的每次更新重做，且两个 mixin 的最终形状由 Fabric 的顺序决定，不保证稳定。
 **本项目不做这个适配。**
